@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 from abc import ABC, abstractmethod
 from typing import Any, Sequence
+
+logger = logging.getLogger(__name__)
 
 
 class LLMProvider(ABC):
@@ -25,11 +28,23 @@ class LLMProvider(ABC):
         for attempt in range(retries):
             try:
                 return await func(*args, **kwargs)
-            except Exception:
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if not self._is_retryable_error(exc):
+                    raise
                 if attempt == retries - 1:
                     raise
+                logger.warning("Transient LLM provider error: %s", exc)
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 30.0)
+
+    @staticmethod
+    def _is_retryable_error(exc: Exception) -> bool:
+        if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+            return True
+        name = exc.__class__.__name__.lower()
+        return any(token in name for token in ("rate", "timeout", "connection", "api"))
 
 
 class DeterministicFallbackMixin:

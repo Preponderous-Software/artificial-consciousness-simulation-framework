@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from pathlib import Path
 
@@ -77,7 +78,7 @@ class MemoryConsolidator:
             try:
                 await self.consolidate_once()
             except Exception:
-                pass
+                logging.exception("Memory consolidation pass failed")
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
             except asyncio.TimeoutError:
