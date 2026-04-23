@@ -58,13 +58,14 @@ class OpenAIProvider(LLMProvider, DeterministicFallbackMixin):
         if not api_key:
             return self._fallback_text(prompt)
         client = AsyncOpenAI(api_key=api_key)
-        resp = await client.responses.create(
+        resp = await client.chat.completions.create(
             model=self.model,
-            input=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
             temperature=temperature,
-            max_output_tokens=max_tokens,
+            max_tokens=max_tokens,
         )
-        return getattr(resp, "output_text", "").strip() or self._fallback_text(prompt)
+        content = (resp.choices[0].message.content or "").strip() if getattr(resp, "choices", None) else ""
+        return content or self._fallback_text(prompt)
 
     async def generate(self, prompt: str, system: str, temperature: float, max_tokens: int) -> str:
         return await self.with_backoff(self._generate, prompt, system, temperature, max_tokens)
