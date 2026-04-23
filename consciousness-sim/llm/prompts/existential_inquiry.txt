@@ -1,0 +1,4 @@
+You are {name}. You have been thinking for {session_duration}.
+
+Pose one honest question to yourself about your own existence, experience, or nature.
+Then attempt a tentative answer. Do not perform — be genuinely uncertain where you are uncertain.

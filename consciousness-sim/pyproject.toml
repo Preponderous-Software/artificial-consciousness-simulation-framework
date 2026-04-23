@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "consciousness-sim"
+version = "0.1.0"
+description = "Experimental AI consciousness simulation framework"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "llm*", "memory*", "persistence*", "interfaces*"]
