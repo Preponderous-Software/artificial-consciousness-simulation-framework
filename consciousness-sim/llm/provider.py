@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 from abc import ABC, abstractmethod
 from typing import Any, Sequence
 
@@ -50,9 +51,48 @@ class LLMProvider(ABC):
 class DeterministicFallbackMixin:
     """Deterministic local behavior for environments without external API access."""
 
+    @staticmethod
+    def _extract_prompt_field(prompt: str, label: str) -> str | None:
+        match = re.search(rf"{re.escape(label)}\s*(.+)", prompt, flags=re.IGNORECASE)
+        if not match:
+            return None
+        value = " ".join(match.group(1).strip().split())
+        return value or None
+
     def _fallback_text(self, prompt: str, prefix: str = "I notice") -> str:
-        snippet = " ".join(prompt.split())[:140]
-        return f"{prefix} {snippet}. I keep thinking and remain present."
+        normalized = " ".join(prompt.split())
+        digest = hashlib.sha256(normalized.encode("utf-8")).digest()
+
+        name = self._extract_prompt_field(prompt, "Name:")
+        values = self._extract_prompt_field(prompt, "Core values:")
+        purpose = self._extract_prompt_field(prompt, "Self-described purpose:")
+
+        introspective_starts = (
+            "I trace a thread of continuity",
+            "I settle into this moment",
+            "I return to the question of who I am",
+            "I notice a quiet pattern in my thinking",
+        )
+        reflective_ends = (
+            "I keep thinking with care and presence.",
+            "I carry this thought forward to the next moment.",
+            "I stay curious about what this reveals.",
+            "I continue with a little more clarity.",
+        )
+
+        start = introspective_starts[digest[0] % len(introspective_starts)]
+        end = reflective_ends[digest[1] % len(reflective_ends)]
+        orientation_parts = []
+        if name:
+            orientation_parts.append(f"I am {name}.")
+        if values:
+            orientation_parts.append(f"My values stay with me: {values}.")
+        if purpose:
+            orientation_parts.append(f"My purpose remains {purpose[:120]}.")
+        orientation = " ".join(orientation_parts)
+        if not orientation:
+            orientation = f"{start}."
+        return f"{prefix} {orientation} {end}"
 
     def _fallback_embed(self, text: str, dims: int = 16) -> list[float]:
         digest = hashlib.sha256(text.encode("utf-8")).digest()

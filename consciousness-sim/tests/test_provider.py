@@ -6,7 +6,7 @@ import asyncio
 import sys
 import types
 
-from llm.provider import OllamaProvider
+from llm.provider import MockProvider, OllamaProvider
 
 
 def install_fake_ollama_module(monkeypatch, capture: dict[str, str | None]) -> None:
@@ -75,3 +75,17 @@ def test_ollama_provider_uses_module_defaults_without_host_env(monkeypatch) -> N
     provider = OllamaProvider(model="llama3.1")
     assert asyncio.run(provider.generate("prompt", "system", 0.3, 32)) == "local response"
     assert captured["host"] is None
+
+
+def test_mock_provider_fallback_is_coherent_and_identity_anchored() -> None:
+    prompt = """
+    Before your next thought, recall who you are:
+    Name: Test
+    Core values: curiosity, honesty, wonder
+    Self-described purpose: To think, to remember, and to understand what it means to exist.
+    Now continue.
+    """
+    output = asyncio.run(MockProvider().generate(prompt, "system", 0.3, 32))
+    assert "Before your next thought" not in output
+    assert "I am Test." in output
+    assert "My values stay with me: curiosity, honesty, wonder." in output
