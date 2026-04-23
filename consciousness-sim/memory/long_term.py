@@ -37,12 +37,17 @@ class LongTermMemory:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp TEXT NOT NULL,
                     embedding TEXT NOT NULL,
+                    embedding_dim INTEGER,
                     summary TEXT NOT NULL,
                     emotional_valence REAL NOT NULL,
                     importance_score REAL NOT NULL
                 )
                 """
             )
+            cursor = await db.execute("PRAGMA table_info(memories)")
+            columns = [str(row[1]) for row in await cursor.fetchall()]
+            if "embedding_dim" not in columns:
+                await db.execute("ALTER TABLE memories ADD COLUMN embedding_dim INTEGER")
             await db.commit()
 
     async def add_memory(
@@ -52,15 +57,29 @@ class LongTermMemory:
         importance_score: float,
         embedding: list[float],
     ) -> int:
+        embedding_dim = len(embedding)
+        if embedding_dim == 0:
+            raise ValueError("Embedding must not be empty.")
+
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
+                "SELECT embedding_dim FROM memories WHERE embedding_dim IS NOT NULL LIMIT 1"
+            )
+            existing = await cursor.fetchone()
+            if existing and int(existing[0]) != embedding_dim:
+                raise ValueError(
+                    f"Embedding dimension mismatch: expected {int(existing[0])}, got {embedding_dim}"
+                )
+
+            cursor = await db.execute(
                 """
-                INSERT INTO memories (timestamp, embedding, summary, emotional_valence, importance_score)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO memories (timestamp, embedding, embedding_dim, summary, emotional_valence, importance_score)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     datetime.now(timezone.utc).isoformat(),
                     json.dumps(embedding),
+                    embedding_dim,
                     summary,
                     float(emotional_valence),
                     float(importance_score),
@@ -83,16 +102,18 @@ class LongTermMemory:
     ) -> list[LongTermMemoryItem]:
         if not query_embedding or limit <= 0:
             return []
-        candidate_limit = candidate_limit or max(200, limit * 50)
+        q_dim = len(query_embedding)
+        candidate_limit = candidate_limit or max(50, limit * 20)
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
                 """
                 SELECT id, timestamp, embedding, summary, emotional_valence, importance_score
                 FROM memories
+                WHERE embedding_dim = ? OR embedding_dim IS NULL
                 ORDER BY importance_score DESC, timestamp DESC
                 LIMIT ?
                 """,
-                (int(candidate_limit),),
+                (q_dim, int(candidate_limit)),
             )
             rows = await cursor.fetchall()
 

@@ -6,7 +6,7 @@ import os
 import re
 from pathlib import Path
 
-_SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_-]+")
+_SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_]+")
 
 
 def sanitize_consciousness_name(name: str) -> str:
@@ -25,4 +25,3 @@ def consciousness_root() -> Path:
 def consciousness_dir(name: str) -> Path:
     """Return per-agent persistence directory using a sanitized name."""
     return consciousness_root() / sanitize_consciousness_name(name)
-

@@ -33,3 +33,18 @@ def test_long_term_similarity_retrieval() -> None:
             assert "curious" in hits[0].summary
 
     asyncio.run(_run())
+
+
+def test_long_term_rejects_dimension_mismatch_on_store() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            ltm = LongTermMemory(Path(d) / "mem.db")
+            await ltm.initialize()
+            await ltm.add_memory("seed", 0.0, 1.0, [1.0, 0.0, 0.0])
+            try:
+                await ltm.add_memory("bad", 0.0, 1.0, [1.0, 0.0])
+                assert False, "Expected ValueError for dimension mismatch."
+            except ValueError as exc:
+                assert "dimension mismatch" in str(exc).lower()
+
+    asyncio.run(_run())
