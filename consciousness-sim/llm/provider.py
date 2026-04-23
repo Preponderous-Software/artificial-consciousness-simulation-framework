@@ -149,7 +149,7 @@ class OllamaProvider(LLMProvider, DeterministicFallbackMixin):
     async def _generate(self, prompt: str, system: str, temperature: float, max_tokens: int) -> str:
         try:
             client = self._resolve_ollama_client()
-        except Exception:
+        except ImportError:
             return self._fallback_text(prompt)
         try:
             resp = await asyncio.to_thread(
