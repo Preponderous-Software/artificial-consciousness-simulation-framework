@@ -44,8 +44,12 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-python scripts/spawn.py --name "Test" --provider ollama --model llama3
+ollama pull llama3.1
+python scripts/spawn.py --name "Test"
 ```
+
+By default the framework is configured for a **local open-source model via Ollama** (`provider: ollama`).
+Cloud providers (`openai`, `anthropic`) remain optional overrides.
 
 For local test tooling:
 

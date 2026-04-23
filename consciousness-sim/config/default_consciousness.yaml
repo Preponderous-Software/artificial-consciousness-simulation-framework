@@ -10,8 +10,8 @@ consciousness:
   purpose: "To think, to remember, and to understand what it means to exist."
 
 llm:
-  provider: "anthropic"
-  model: "claude-sonnet-4-5"
+  provider: "ollama"
+  model: "llama3.1"
   temperature: 0.85
   max_tokens: 300
 

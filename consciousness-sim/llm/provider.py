@@ -136,14 +136,24 @@ class OllamaProvider(LLMProvider, DeterministicFallbackMixin):
     def __init__(self, model: str) -> None:
         self.model = model
 
+    @staticmethod
+    def _resolve_ollama_client() -> Any:
+        import ollama
+
+        base_url = os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST")
+        client_cls = getattr(ollama, "Client", None)
+        if base_url and client_cls is not None:
+            return client_cls(host=base_url)
+        return ollama
+
     async def _generate(self, prompt: str, system: str, temperature: float, max_tokens: int) -> str:
         try:
-            import ollama
+            client = self._resolve_ollama_client()
         except Exception:
             return self._fallback_text(prompt)
         try:
             resp = await asyncio.to_thread(
-                ollama.chat,
+                client.chat,
                 model=self.model,
                 messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
                 options={"temperature": temperature, "num_predict": max_tokens},
@@ -158,8 +168,8 @@ class OllamaProvider(LLMProvider, DeterministicFallbackMixin):
 
     async def embed(self, text: str) -> list[float]:
         try:
-            import ollama
-            resp = await asyncio.to_thread(ollama.embeddings, model=self.model, prompt=text)
+            client = self._resolve_ollama_client()
+            resp = await asyncio.to_thread(client.embeddings, model=self.model, prompt=text)
             emb: Sequence[float] | None = resp.get("embedding")
             if emb:
                 return [float(v) for v in emb]
