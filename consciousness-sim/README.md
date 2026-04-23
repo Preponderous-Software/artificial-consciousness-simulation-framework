@@ -47,6 +47,13 @@ cp .env.example .env
 python scripts/spawn.py --name "Test" --provider ollama --model llama3
 ```
 
+For local test tooling:
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q tests
+```
+
 ## Configuration Guide (`config/default_consciousness.yaml`)
 
 - `consciousness.name`: default identity name (overridden by CLI)

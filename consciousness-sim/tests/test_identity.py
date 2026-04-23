@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from core.identity import IdentityDocument
+from persistence.paths import sanitize_consciousness_name
 from persistence.state_manager import StateManager
 
 
@@ -23,11 +25,9 @@ def test_identity_round_trip() -> None:
     assert restored.mood["curiosity"] == 0.7
 
 
-def test_state_manager_persists_identity(tmp_path) -> None:
+def test_state_manager_persists_identity(tmp_path, monkeypatch) -> None:
     async def _run() -> None:
-        import os
-
-        os.environ["CONSCIOUSNESS_HOME"] = str(tmp_path)
+        monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
         manager = StateManager("Aria")
         payload = {"identity": {"name": "Aria"}, "short_term": [], "thought_count": 3}
         await manager.save(payload)
@@ -37,3 +37,10 @@ def test_state_manager_persists_identity(tmp_path) -> None:
         assert loaded["thought_count"] == 3
 
     asyncio.run(_run())
+
+
+def test_state_manager_sanitizes_name(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    manager = StateManager("../escape")
+    assert manager.path == Path(tmp_path) / "escape" / "state.json"
+    assert sanitize_consciousness_name("../escape") == "escape"

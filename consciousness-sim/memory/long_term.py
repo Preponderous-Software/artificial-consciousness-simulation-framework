@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import aiosqlite
 import numpy as np
@@ -74,10 +75,24 @@ class LongTermMemory:
             row = await cursor.fetchone()
             return int(row[0]) if row else 0
 
-    async def similarity_search(self, query_embedding: list[float], limit: int = 3) -> list[LongTermMemoryItem]:
+    async def similarity_search(
+        self,
+        query_embedding: list[float],
+        limit: int = 3,
+        candidate_limit: int | None = None,
+    ) -> list[LongTermMemoryItem]:
+        if not query_embedding or limit <= 0:
+            return []
+        candidate_limit = candidate_limit or max(200, limit * 50)
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
-                "SELECT id, timestamp, embedding, summary, emotional_valence, importance_score FROM memories"
+                """
+                SELECT id, timestamp, embedding, summary, emotional_valence, importance_score
+                FROM memories
+                ORDER BY importance_score DESC, timestamp DESC
+                LIMIT ?
+                """,
+                (int(candidate_limit),),
             )
             rows = await cursor.fetchall()
 
@@ -85,10 +100,20 @@ class LongTermMemory:
             return []
 
         q = np.array(query_embedding, dtype=float)
+        if q.size == 0:
+            return []
         q_norm = np.linalg.norm(q)
         scored: list[tuple[float, LongTermMemoryItem]] = []
         for row in rows:
-            emb = np.array(json.loads(row[2]), dtype=float)
+            try:
+                emb_raw: Any = json.loads(row[2])
+                if not isinstance(emb_raw, list):
+                    continue
+                emb = np.array(emb_raw, dtype=float)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if emb.size == 0 or emb.shape != q.shape:
+                continue
             denom = (np.linalg.norm(emb) * q_norm) or 1.0
             sim = float(np.dot(emb, q) / denom)
             scored.append(

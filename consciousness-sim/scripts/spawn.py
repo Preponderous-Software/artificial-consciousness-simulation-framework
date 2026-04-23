@@ -37,9 +37,15 @@ def main(name: str, provider: str | None, model: str | None) -> None:
             base["llm"]["provider"] = provider
         if model:
             base["llm"]["model"] = model
-        tmp = Path(tempfile.gettempdir()) / f"{name}_consciousness.yaml"
-        tmp.write_text(yaml.safe_dump(base), encoding="utf-8")
-        config_path = tmp
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            suffix=".yaml",
+            prefix="consciousness_override_",
+            delete=False,
+        ) as tmp:
+            yaml.safe_dump(base, tmp)
+            config_path = Path(tmp.name)
 
     mind = Consciousness(name=name, config_path=str(config_path))
     cli = ConsciousnessCLI(mind)

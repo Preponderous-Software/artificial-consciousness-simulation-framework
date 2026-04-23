@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -17,14 +16,14 @@ import asyncio
 import click
 
 from persistence.journal import Journal
+from persistence.paths import consciousness_dir
 
 
 @click.command()
 @click.option("--name", required=True, type=str, help="Consciousness name")
 @click.option("--limit", default=20, type=int, help="Number of recent events")
 def main(name: str, limit: int) -> None:
-    root = Path(os.path.expanduser(os.getenv("CONSCIOUSNESS_HOME", "~/.consciousness")))
-    journal = Journal(root / name / "journal.jsonl")
+    journal = Journal(consciousness_dir(name) / "journal.jsonl")
 
     async def _run() -> None:
         events = await journal.recent(limit=limit)

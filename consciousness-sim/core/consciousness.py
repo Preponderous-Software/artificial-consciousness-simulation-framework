@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable
 import yaml
 
 from core.identity import IdentityDocument
+from core.inner_voice import InnerVoice
 from core.reflection import ReflectionEngine
 from core.thought_loop import ThoughtLoop
 from llm.provider import build_provider
@@ -20,6 +21,7 @@ from memory.episodic import EpisodicMemory
 from memory.long_term import LongTermMemory
 from memory.short_term import ShortTermMemory
 from persistence.journal import Journal
+from persistence.paths import consciousness_dir
 from persistence.state_manager import StateManager
 
 EventHandler = Callable[[dict[str, Any]], Awaitable[None] | None]
@@ -39,7 +41,7 @@ class Consciousness:
         mem_cfg = self.config["memory"]
         cons_cfg = self.config["consciousness"]
 
-        base = Path.home() / ".consciousness" / name
+        base = consciousness_dir(name)
         self.provider = build_provider(llm_cfg["provider"], llm_cfg["model"])
         self.identity = IdentityDocument(
             name=name,
@@ -102,6 +104,8 @@ class Consciousness:
         restored = await self.state_manager.load()
         if restored:
             self.identity = IdentityDocument.from_dict(dict(restored.get("identity", {})))
+            self.thought_loop.identity = self.identity
+            self.thought_loop.inner_voice = InnerVoice(self.identity.name)
             for item in restored.get("short_term", []):
                 if isinstance(item, dict):
                     self.short_term.add(str(item.get("kind", "thought")), str(item.get("content", "")))
@@ -130,7 +134,7 @@ class Consciousness:
 
     async def request_reflection(self) -> str:
         text = await self.thought_loop.reflection_engine.shallow_reflection(
-            self.name,
+            self.identity.name,
             self.short_term.render_for_prompt(),
         )
         self.short_term.add("reflection", text)

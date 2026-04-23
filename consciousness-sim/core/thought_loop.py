@@ -47,7 +47,7 @@ class ThoughtLoop:
         self.thought_prompt_path = thought_prompt_path
         self.identity_anchor_path = identity_anchor_path
         self.reflection_probability = reflection_probability
-        self.existential_every_n = existential_every_n
+        self.existential_every_n = max(0, int(existential_every_n))
         self.inner_voice = InnerVoice(identity.name)
 
     async def run_cycle(self, thought_count: int) -> ThoughtCycleResult:
@@ -86,7 +86,7 @@ class ThoughtLoop:
             self.short_term.add("reflection", reflection_text)
             await self.episodic.append("reflection", reflection_text)
 
-        if thought_count > 0 and thought_count % self.existential_every_n == 0:
+        if self.existential_every_n > 0 and thought_count > 0 and thought_count % self.existential_every_n == 0:
             existential_text = await self.reflection_engine.existential_inquiry(self.identity.name, f"{thought_count} thoughts")
             self.short_term.add("existential", existential_text)
             await self.episodic.append("existential", existential_text)

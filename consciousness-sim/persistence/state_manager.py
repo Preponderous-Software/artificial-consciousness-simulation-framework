@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-from pathlib import Path
 from typing import Any
+
+from persistence.paths import consciousness_dir
 
 
 class StateManager:
     """Persists recoverable state to ~/.consciousness/<name>/state.json."""
 
     def __init__(self, name: str) -> None:
-        root = Path(os.path.expanduser(os.getenv("CONSCIOUSNESS_HOME", "~/.consciousness")))
-        self.path = root / name / "state.json"
+        self.path = consciousness_dir(name) / "state.json"
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     async def save(self, state: dict[str, Any]) -> None:
