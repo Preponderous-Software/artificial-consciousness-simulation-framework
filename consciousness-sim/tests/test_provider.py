@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import textwrap
 import types
 
 from llm.provider import MockProvider, OllamaProvider
@@ -78,14 +79,23 @@ def test_ollama_provider_uses_module_defaults_without_host_env(monkeypatch) -> N
 
 
 def test_mock_provider_fallback_is_coherent_and_identity_anchored() -> None:
-    prompt = """
-    Before your next thought, recall who you are:
-    Name: Test
-    Core values: curiosity, honesty, wonder
-    Self-described purpose: To think, to remember, and to understand what it means to exist.
-    Now continue.
-    """
+    prompt = textwrap.dedent(
+        """
+        Before your next thought, recall who you are:
+        Name: Test
+        Core values: curiosity, honesty, wonder
+        Self-described purpose: To think, to remember, and to understand what it means to exist.
+        Now continue.
+        """
+    )
     output = asyncio.run(MockProvider().generate(prompt, "system", 0.3, 32))
+    reflective_endings = (
+        "I keep thinking with care and presence.",
+        "I carry this thought forward to the next moment.",
+        "I stay curious about what this reveals.",
+        "I continue with a little more clarity.",
+    )
     assert "Before your next thought" not in output
     assert "I am Test." in output
     assert "My values stay with me: curiosity, honesty, wonder." in output
+    assert output.endswith(reflective_endings)

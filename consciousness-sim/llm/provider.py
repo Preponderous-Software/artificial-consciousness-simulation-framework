@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Sequence
 
 logger = logging.getLogger(__name__)
+MAX_FALLBACK_PURPOSE_LENGTH = 120
 
 
 class LLMProvider(ABC):
@@ -52,11 +53,16 @@ class DeterministicFallbackMixin:
     """Deterministic local behavior for environments without external API access."""
 
     @staticmethod
+    def _normalize_whitespace(text: str) -> str:
+        return " ".join(text.strip().split())
+
+    @staticmethod
     def _extract_prompt_field(prompt: str, label: str) -> str | None:
-        match = re.search(rf"{re.escape(label)}\s*(.+)", prompt, flags=re.IGNORECASE)
+        # Prompt templates define labeled fields on single lines.
+        match = re.search(rf"{re.escape(label)}\s*([^\n]+)", prompt, flags=re.IGNORECASE)
         if not match:
             return None
-        value = " ".join(match.group(1).strip().split())
+        value = DeterministicFallbackMixin._normalize_whitespace(match.group(1))
         return value or None
 
     def _fallback_text(self, prompt: str, prefix: str = "I notice") -> str:
@@ -88,7 +94,9 @@ class DeterministicFallbackMixin:
         if values:
             orientation_parts.append(f"My values stay with me: {values}.")
         if purpose:
-            orientation_parts.append(f"My purpose remains {purpose[:120]}.")
+            truncated = purpose[:MAX_FALLBACK_PURPOSE_LENGTH]
+            ellipsis = "..." if len(purpose) > MAX_FALLBACK_PURPOSE_LENGTH else ""
+            orientation_parts.append(f"My purpose remains {truncated}{ellipsis}.")
         orientation = " ".join(orientation_parts)
         if not orientation:
             orientation = f"{start}."
