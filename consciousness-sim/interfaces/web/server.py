@@ -14,6 +14,7 @@ import json
 import logging
 import os
 from collections.abc import AsyncGenerator
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,12 +33,15 @@ app = FastAPI(title="Consciousness Dashboard", docs_url=None, redoc_url=None)
 _registry: dict[str, Any] = {}
 # Per-instance SSE queues: name -> list of Queue (one per connected client)
 _sse_queues: dict[str, list[asyncio.Queue[dict[str, Any]]]] = {}
+# Start times for in-process instances
+_started_at: dict[str, str] = {}
 
 
 def register(mind: Any) -> None:
     """Hook a running Consciousness instance into the live event stream."""
     name = mind.name
     _registry[name] = mind
+    _started_at[name] = datetime.now(timezone.utc).isoformat()
     _sse_queues.setdefault(name, [])
 
     async def _broadcast(payload: dict[str, Any]) -> None:
@@ -73,20 +77,35 @@ async def list_instances() -> list[dict[str, Any]]:
         except (json.JSONDecodeError, OSError):
             continue
 
+        identity = state.get("identity", {})
+        name = identity.get("name", d.name)
+
+        # Determine online status and start time
         pid_path = d / "pid"
-        online = False
-        if pid_path.exists():
+        online = name in _registry
+        started_at: str | None = _started_at.get(name)
+
+        if not online and pid_path.exists():
             try:
                 pid = int(pid_path.read_text().strip())
                 os.kill(pid, 0)
                 online = True
+                # Use pid file mtime as proxy for process start time
+                if started_at is None:
+                    started_at = datetime.fromtimestamp(
+                        pid_path.stat().st_mtime, tz=timezone.utc
+                    ).isoformat()
             except (ProcessLookupError, OSError, ValueError):
                 pass
-        # Instances registered in this process are always online
-        identity = state.get("identity", {})
-        name = identity.get("name", d.name)
-        if name in _registry:
-            online = True
+
+        # For offline instances use state.json mtime as "last seen" time
+        if started_at is None and state_path.exists():
+            try:
+                started_at = datetime.fromtimestamp(
+                    state_path.stat().st_mtime, tz=timezone.utc
+                ).isoformat()
+            except OSError:
+                pass
 
         result.append({
             "name": name,
@@ -95,6 +114,7 @@ async def list_instances() -> list[dict[str, Any]]:
             "mood": identity.get("mood", {}),
             "self_concept": identity.get("self_concept", ""),
             "values": identity.get("values", []),
+            "started_at": started_at,
         })
 
     return result
@@ -109,13 +129,18 @@ async def stream_events(name: str) -> StreamingResponse:
 
     journal = Journal(consciousness_dir(name) / "journal.jsonl")
     history = await journal.recent(limit=50)
+    # Whether this instance can deliver live events (i.e. is co-located)
+    is_live = name in _registry
 
     async def generate() -> AsyncGenerator[str, None]:
-        # Replay journal history so the client has context immediately
+        # Tag history events so the client can style them differently
         for entry in history:
-            yield f"data: {json.dumps(entry)}\n\n"
+            yield f"data: {json.dumps({**entry, '_history': True})}\n\n"
 
-        # Stream live events; heartbeat every 25 s to keep the connection alive
+        # Signal end of history and whether live events will follow
+        yield f"data: {json.dumps({'type': 'history_end', 'live': is_live})}\n\n"
+
+        # Stream live events; heartbeat every 25 s to keep connection alive
         try:
             while True:
                 try:
@@ -154,7 +179,7 @@ async def start(port: int) -> None:
         access_log=False,
     )
     server = uvicorn.Server(config)
-    # install=False so uvicorn doesn't hijack signal handlers
+    # Prevent uvicorn from hijacking signal handlers already installed
     server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
     asyncio.create_task(server.serve())
     logger.info("Web dashboard available at http://localhost:%d", port)

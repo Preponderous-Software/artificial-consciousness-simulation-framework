@@ -12,13 +12,14 @@
       --surface:     #161820;
       --border:      #2a2d3a;
       --text:        #c8cad4;
-      --muted:       #5a5d6e;
+      --muted:       #8b8fa8;   /* raised from #5a5d6e — WCAG AA on --bg */
       --accent:      #7c83ff;
       --reflect:     #b48eff;
       --online:      #4ade80;
       --offline:     #f87171;
       --thought-bg:  #1a1d26;
       --pill-bg:     #1e2130;
+      --history-opacity: 0.6;
     }
 
     html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Georgia', serif; font-size: 15px; line-height: 1.6; }
@@ -27,23 +28,37 @@
     .shell { display: flex; flex-direction: column; height: 100vh; }
 
     header {
-      display: flex; align-items: center; gap: 12px;
-      padding: 10px 20px; border-bottom: 1px solid var(--border);
-      background: var(--surface); flex-shrink: 0;
+      display: flex; align-items: center; gap: 0;
+      padding: 0; border-bottom: 1px solid var(--border);
+      background: var(--surface); flex-shrink: 0; overflow: hidden;
     }
-    header h1 { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-style: normal; font-family: monospace; }
-    #instance-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    /* Scrollable tab strip — no wrapping */
+    #instance-tabs {
+      display: flex; gap: 0; flex: 1; min-width: 0;
+      overflow-x: auto; scrollbar-width: none;
+    }
+    #instance-tabs::-webkit-scrollbar { display: none; }
 
     .tab {
-      padding: 4px 14px; border-radius: 20px; border: 1px solid var(--border);
-      cursor: pointer; font-size: 13px; font-family: monospace; transition: background .15s, border-color .15s;
-      background: transparent; color: var(--muted);
+      display: flex; align-items: center; gap: 7px;
+      padding: 12px 18px; border: none; border-right: 1px solid var(--border);
+      cursor: pointer; font-size: 13px; font-family: monospace;
+      background: transparent; color: var(--muted); white-space: nowrap;
+      transition: background .15s, color .15s; flex-shrink: 0;
     }
-    .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-    .tab .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; background: var(--offline); }
+    .tab:hover { background: var(--thought-bg); color: var(--text); }
+    .tab.active { background: var(--bg); color: var(--text); border-bottom: 2px solid var(--accent); }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--offline); flex-shrink: 0; }
     .tab.online .dot { background: var(--online); }
 
-    #status-indicator { margin-left: auto; font-size: 12px; font-family: monospace; color: var(--muted); }
+    #header-right {
+      display: flex; align-items: center; gap: 12px;
+      padding: 0 16px; flex-shrink: 0; border-left: 1px solid var(--border);
+      height: 100%; min-width: 120px;
+    }
+    #current-name { font-size: 13px; font-family: monospace; color: var(--text); font-weight: bold; }
+    #status-indicator { font-size: 12px; font-family: monospace; color: var(--muted); }
     #status-indicator.connected { color: var(--online); }
     #status-indicator.error     { color: var(--offline); }
 
@@ -52,24 +67,52 @@
     /* ── stream panel ── */
     #stream-panel { flex: 3; display: flex; flex-direction: column; border-right: 1px solid var(--border); overflow: hidden; }
     #stream-panel h2 { padding: 10px 16px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-family: monospace; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-    #thought-stream { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; scroll-behavior: smooth; }
+    #thought-stream { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 
-    .bubble {
-      background: var(--thought-bg); border-radius: 6px; padding: 12px 14px;
-      border-left: 3px solid var(--border); font-size: 14px;
-      animation: fadein .4s ease; cursor: pointer; transition: border-color .2s;
+    /* History separator */
+    .history-sep {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 11px; font-family: monospace; color: var(--muted); padding: 4px 0;
     }
-    .bubble:hover { border-color: var(--accent); }
+    .history-sep::before, .history-sep::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+    /* Thought bubbles */
+    .bubble {
+      background: var(--thought-bg); border-radius: 6px; padding: 11px 14px;
+      border-left: 3px solid var(--border); font-size: 14px;
+      animation: fadein .35s ease; cursor: pointer;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .bubble:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--border); }
     .bubble.reflection { border-left-color: var(--reflect); font-style: italic; }
     .bubble.identity_shift { border-left-color: var(--online); }
-    .bubble .meta { font-size: 11px; color: var(--muted); font-family: monospace; margin-bottom: 5px; }
-    .bubble .body { white-space: pre-wrap; word-break: break-word; }
-    .bubble .body.collapsed { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+    .bubble.history { opacity: var(--history-opacity); }
 
-    @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    .bubble .meta {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 11px; color: var(--muted); font-family: monospace; margin-bottom: 6px;
+    }
+    .bubble .meta .left { display: flex; gap: 6px; }
+    .bubble .chevron { font-size: 10px; transition: opacity .15s; opacity: .5; user-select: none; }
+    .bubble:hover .chevron { opacity: 1; }
+
+    .bubble .body { white-space: pre-wrap; word-break: break-word; }
+    .bubble .body.collapsed {
+      display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+    }
+
+    /* Scroll-anchor hint */
+    #scroll-hint {
+      position: sticky; bottom: 8px; align-self: center;
+      background: var(--accent); color: #fff; font-size: 11px; font-family: monospace;
+      padding: 4px 12px; border-radius: 20px; cursor: pointer; display: none;
+      box-shadow: 0 2px 8px rgba(0,0,0,.4);
+    }
+
+    @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
     /* ── sidebar ── */
-    #sidebar { flex: 1; min-width: 240px; max-width: 320px; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 20px; }
+    #sidebar { flex: 1; min-width: 240px; max-width: 310px; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 20px; }
 
     .sidebar-section h3 { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-family: monospace; margin-bottom: 10px; }
 
@@ -84,31 +127,27 @@
     .mood-label { width: 90px; font-size: 12px; font-family: monospace; color: var(--muted); flex-shrink: 0; }
     .mood-track { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
     .mood-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width .6s ease; }
-    .mood-val { width: 34px; font-size: 11px; font-family: monospace; color: var(--muted); text-align: right; }
 
-    #status-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 13px; }
+    #status-grid { display: grid; grid-template-columns: auto 1fr; gap: 5px 10px; font-size: 13px; }
     .stat-label { color: var(--muted); font-family: monospace; font-size: 12px; }
     .stat-value { font-family: monospace; }
-
-    #memory-list { display: flex; flex-direction: column; gap: 6px; }
-    .memory-item { font-size: 13px; color: var(--muted); padding: 6px 8px; background: var(--thought-bg); border-radius: 4px; border-left: 2px solid var(--border); }
-    .memory-item.thought   { border-left-color: var(--accent); }
-    .memory-item.reflection { border-left-color: var(--reflect); }
 
     #no-instance { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--muted); font-style: italic; font-size: 14px; }
 
     @media (max-width: 700px) {
       main { flex-direction: column; }
-      #sidebar { max-width: none; border-top: 1px solid var(--border); border-right: none; }
+      #sidebar { max-width: none; border-top: 1px solid var(--border); }
     }
   </style>
 </head>
 <body>
 <div class="shell">
   <header>
-    <h1>&#9632; consciousness</h1>
     <div id="instance-tabs"></div>
-    <span id="status-indicator">connecting…</span>
+    <div id="header-right">
+      <span id="current-name"></span>
+      <span id="status-indicator">—</span>
+    </div>
   </header>
   <main id="main-area">
     <div id="no-instance">Select an instance above to begin observing.</div>
@@ -120,12 +159,16 @@
 
 const $ = id => document.getElementById(id);
 
-let currentName = null;
-let sse = null;
-let startedAt = null;
-let uptimeTimer = null;
+let currentName  = null;
+let currentOnline = false;
+let instanceStartedAt = null;   // ISO string from API (instance process start)
+let sse          = null;
+let uptimeTimer  = null;
+let thoughtCount = 0;
+let ltMemories   = 0;
+let lastReflection = "never";
 
-// ── instance tabs ──────────────────────────────────────────────────────────
+// ── instance tabs ─────────────────────────────────────────────────────────
 
 async function loadInstances() {
   try {
@@ -133,8 +176,12 @@ async function loadInstances() {
     const instances = await res.json();
     renderTabs(instances);
     if (!currentName && instances.length > 0) {
-      const online = instances.find(i => i.online) || instances[0];
-      selectInstance(online.name, instances);
+      const first = instances.find(i => i.online) || instances[0];
+      selectInstance(first.name, instances);
+    } else if (currentName) {
+      // Keep indicator in sync if the current instance changed online state
+      const cur = instances.find(i => i.name === currentName);
+      if (cur) currentOnline = cur.online;
     }
   } catch (e) {
     console.error("Failed to load instances", e);
@@ -147,31 +194,37 @@ function renderTabs(instances) {
   for (const inst of instances) {
     const tab = document.createElement("button");
     tab.className = "tab" + (inst.online ? " online" : "") + (inst.name === currentName ? " active" : "");
-    tab.innerHTML = `<span class="dot"></span>${inst.name}`;
+    tab.title = inst.online ? "Online" : "Offline — showing last known state";
+    tab.innerHTML = `<span class="dot"></span>${esc(inst.name)}`;
     tab.onclick = () => selectInstance(inst.name, instances);
     container.appendChild(tab);
   }
 }
 
 function selectInstance(name, instances) {
-  currentName = name;
+  const inst = instances.find(i => i.name === name) || {};
+  currentName        = name;
+  currentOnline      = inst.online ?? false;
+  instanceStartedAt  = inst.started_at ?? null;
+  thoughtCount       = inst.thought_count ?? 0;
+  ltMemories         = 0;
+  lastReflection     = "never";
+
+  $("current-name").textContent = name;
   renderTabs(instances);
   buildLayout();
-  connectSSE(name);
-  const inst = instances.find(i => i.name === name);
-  if (inst) {
-    updateSidebar(inst);
-  }
+  updateSidebar(inst);
+  connectSSE(name, currentOnline);
 }
 
-// ── layout ─────────────────────────────────────────────────────────────────
+// ── layout ────────────────────────────────────────────────────────────────
 
 function buildLayout() {
-  const main = $("main-area");
-  main.innerHTML = `
+  $("main-area").innerHTML = `
     <div id="stream-panel">
       <h2>Stream of Thought</h2>
       <div id="thought-stream"></div>
+      <div id="scroll-hint" onclick="scrollToBottom()">↓ new thoughts</div>
     </div>
     <aside id="sidebar">
       <div class="sidebar-section">
@@ -188,27 +241,41 @@ function buildLayout() {
         <h3>Status</h3>
         <div id="status-grid"></div>
       </div>
-      <div class="sidebar-section">
-        <h3>Recent Events</h3>
-        <div id="memory-list"></div>
-      </div>
     </aside>`;
-  startedAt = Date.now();
+
+  // Show "↓ new thoughts" pill when user scrolls up
+  const stream = $("thought-stream");
+  stream.addEventListener("scroll", () => {
+    $("scroll-hint").style.display = isNearBottom(stream) ? "none" : "block";
+  });
+
   if (uptimeTimer) clearInterval(uptimeTimer);
   uptimeTimer = setInterval(tickUptime, 1000);
+  renderStatus();
 }
 
-// ── sidebar rendering ───────────────────────────────────────────────────────
+function scrollToBottom() {
+  const stream = $("thought-stream");
+  if (stream) {
+    stream.scrollTop = stream.scrollHeight;
+    $("scroll-hint").style.display = "none";
+  }
+}
+
+function isNearBottom(el) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+}
+
+// ── sidebar rendering ─────────────────────────────────────────────────────
 
 function updateSidebar(data) {
-  if ($("identity-name")) {
-    $("identity-name").textContent = data.name || "—";
-    $("self-concept").textContent = data.self_concept || "";
-    const vals = $("values-list");
-    if (vals) {
-      vals.innerHTML = (data.values || []).map(v => `<span class="value-pill">${esc(v)}</span>`).join("");
-    }
-  }
+  const name = $("identity-name");
+  if (!name) return;
+  name.textContent = data.name || "—";
+  $("self-concept").textContent = data.self_concept || "";
+  $("values-list").innerHTML = (data.values || []).map(
+    v => `<span class="value-pill">${esc(v)}</span>`
+  ).join("");
   renderMood(data.mood || {});
   renderStatus(data);
 }
@@ -220,36 +287,33 @@ function renderMood(mood) {
     <div class="mood-row">
       <span class="mood-label">${esc(k)}</span>
       <div class="mood-track"><div class="mood-fill" style="width:${Math.round(v * 100)}%"></div></div>
-      <span class="mood-val">${v.toFixed(2)}</span>
     </div>`).join("");
 }
-
-let thoughtCount = 0;
-let ltMemories = 0;
-let lastReflection = "never";
 
 function renderStatus(data) {
   const grid = $("status-grid");
   if (!grid) return;
-  if (data.thought_count !== undefined) thoughtCount = data.thought_count;
+  if (data && data.thought_count !== undefined) thoughtCount = data.thought_count;
   grid.innerHTML = `
-    <span class="stat-label">thoughts</span><span class="stat-value" id="stat-thoughts">${thoughtCount}</span>
-    <span class="stat-label">lt memories</span><span class="stat-value" id="stat-lt">${ltMemories}</span>
+    <span class="stat-label">thoughts</span>      <span class="stat-value" id="stat-thoughts">${thoughtCount}</span>
+    <span class="stat-label">memories</span>       <span class="stat-value" id="stat-lt">${ltMemories}</span>
     <span class="stat-label">last reflection</span><span class="stat-value" id="stat-refl">${lastReflection}</span>
-    <span class="stat-label">uptime</span><span class="stat-value" id="stat-uptime">—</span>`;
+    <span class="stat-label">uptime</span>         <span class="stat-value" id="stat-uptime">—</span>`;
+  tickUptime();
 }
 
 function tickUptime() {
   const el = $("stat-uptime");
-  if (!el || !startedAt) return;
-  const s = Math.floor((Date.now() - startedAt) / 1000);
+  if (!el) return;
+  if (!instanceStartedAt) { el.textContent = "—"; return; }
+  const s = Math.max(0, Math.floor((Date.now() - new Date(instanceStartedAt).getTime()) / 1000));
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
   el.textContent = h ? `${h}h ${m}m` : m ? `${m}m ${sec}s` : `${sec}s`;
 }
 
-// ── SSE ────────────────────────────────────────────────────────────────────
+// ── SSE ───────────────────────────────────────────────────────────────────
 
-function connectSSE(name) {
+function connectSSE(name, isOnline) {
   if (sse) { sse.close(); sse = null; }
   const indicator = $("status-indicator");
   indicator.textContent = "connecting…";
@@ -258,8 +322,9 @@ function connectSSE(name) {
   sse = new EventSource(`/stream/${encodeURIComponent(name)}`);
 
   sse.onopen = () => {
-    indicator.textContent = "● live";
-    indicator.className = "connected";
+    // Defer status until history_end tells us if live events will follow
+    indicator.textContent = "loading…";
+    indicator.className = "";
   };
 
   sse.onerror = () => {
@@ -268,87 +333,111 @@ function connectSSE(name) {
   };
 
   sse.onmessage = e => {
-    try {
-      const payload = JSON.parse(e.data);
-      handleEvent(payload);
-    } catch (_) {}
+    try { handleEvent(JSON.parse(e.data)); } catch (_) {}
   };
 }
 
-const recentEvents = [];
+// ── event handling ────────────────────────────────────────────────────────
 
 function handleEvent(payload) {
-  const type = payload.type || "thought";
+  const type    = payload.type || "thought";
+  const history = !!payload._history;
 
-  if (type === "thought") {
-    appendBubble(payload);
-  } else if (type === "reflection") {
-    appendBubble(payload);
-    lastReflection = new Date().toLocaleTimeString();
-    const el = $("stat-refl");
-    if (el) el.textContent = lastReflection;
-  } else if (type === "memory") {
-    ltMemories = payload.long_term_count ?? ltMemories;
-    const el = $("stat-lt");
-    if (el) el.textContent = ltMemories;
-  } else if (type === "identity_shift") {
-    appendBubble(payload);
+  if (type === "history_end") {
+    insertSeparator(payload.live);
+    const indicator = $("status-indicator");
+    if (payload.live) {
+      indicator.textContent = "● live";
+      indicator.className = "connected";
+    } else {
+      indicator.textContent = "○ offline";
+      indicator.className = "error";
+    }
+    return;
   }
 
-  // Update thought counter for thought events
-  if (type === "thought") {
+  if (type === "thought" || type === "reflection" || type === "identity_shift") {
+    appendBubble(payload, history);
+  }
+
+  if (type === "thought" && !history) {
     thoughtCount++;
     const el = $("stat-thoughts");
     if (el) el.textContent = thoughtCount;
   }
 
-  // Keep last 8 for recent-events panel
-  if (type === "thought" || type === "reflection") {
-    recentEvents.push(payload);
-    if (recentEvents.length > 8) recentEvents.shift();
-    renderRecent();
+  if (type === "reflection" && !history) {
+    lastReflection = new Date().toLocaleTimeString();
+    const el = $("stat-refl");
+    if (el) el.textContent = lastReflection;
+  }
+
+  if (type === "memory") {
+    ltMemories = payload.long_term_count ?? ltMemories;
+    const el = $("stat-lt");
+    if (el) el.textContent = ltMemories;
   }
 }
 
-function appendBubble(payload) {
+function insertSeparator(isLive) {
+  const stream = $("thought-stream");
+  if (!stream) return;
+  const sep = document.createElement("div");
+  sep.className = "history-sep";
+  sep.innerHTML = `<span>${isLive ? "↑ history · live ↓" : "last known state"}</span>`;
+  const wasNearBottom = isNearBottom(stream);
+  stream.appendChild(sep);
+  if (wasNearBottom) stream.scrollTop = stream.scrollHeight;
+}
+
+function appendBubble(payload, isHistory) {
   const stream = $("thought-stream");
   if (!stream) return;
 
-  const type = payload.type || "thought";
+  const type    = payload.type || "thought";
   const content = payload.content || "";
-  const ts = payload.timestamp ? new Date(payload.timestamp).toLocaleTimeString() : "";
+  const ts      = payload.timestamp ? new Date(payload.timestamp).toLocaleTimeString() : "";
 
   const div = document.createElement("div");
-  div.className = `bubble ${type}`;
+  div.className = `bubble ${type}${isHistory ? " history" : ""}`;
   div.innerHTML = `
-    <div class="meta">${esc(ts)} · ${esc(type)}</div>
+    <div class="meta">
+      <span class="left"><span class="ts">${esc(ts)}</span><span>·</span><span>${esc(type)}</span></span>
+      <span class="chevron" aria-hidden="true">▾</span>
+    </div>
     <div class="body collapsed">${esc(content)}</div>`;
 
-  div.onclick = () => div.querySelector(".body").classList.toggle("collapsed");
+  div.onclick = () => {
+    const body    = div.querySelector(".body");
+    const chevron = div.querySelector(".chevron");
+    const nowCollapsed = body.classList.toggle("collapsed");
+    chevron.textContent = nowCollapsed ? "▾" : "▴";
+  };
 
+  const wasNearBottom = isNearBottom(stream);
+  // Cap at 120 bubbles + separators
+  while (stream.children.length >= 121) stream.removeChild(stream.firstChild);
   stream.appendChild(div);
-  // Keep at most 120 bubbles to avoid DOM bloat
-  while (stream.children.length > 120) stream.removeChild(stream.firstChild);
-  stream.scrollTop = stream.scrollHeight;
-}
-
-function renderRecent() {
-  const list = $("memory-list");
-  if (!list) return;
-  list.innerHTML = [...recentEvents].reverse().slice(0, 6).map(e => `
-    <div class="memory-item ${esc(e.type || '')}">
-      ${esc((e.content || "").slice(0, 100))}${(e.content || "").length > 100 ? "…" : ""}
-    </div>`).join("");
+  if (wasNearBottom) {
+    stream.scrollTop = stream.scrollHeight;
+    const hint = $("scroll-hint");
+    if (hint) hint.style.display = "none";
+  } else {
+    const hint = $("scroll-hint");
+    if (hint && !isHistory) hint.style.display = "block";
+  }
 }
 
 function esc(str) {
-  return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  return String(str)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
-// ── boot ───────────────────────────────────────────────────────────────────
+// ── boot ──────────────────────────────────────────────────────────────────
 
 loadInstances();
-setInterval(loadInstances, 10000);  // refresh instance list every 10 s
+setInterval(loadInstances, 10000);
 </script>
 </body>
 </html>
