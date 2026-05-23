@@ -83,7 +83,8 @@
       animation: fadein .35s ease; cursor: pointer;
       transition: border-color .15s, box-shadow .15s;
     }
-    .bubble:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--border); }
+    .bubble:hover, .bubble:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 1px var(--border); outline: none; }
+    .bubble:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
     .bubble.reflection { border-left-color: var(--reflect); font-style: italic; }
     .bubble.identity_shift { border-left-color: var(--online); }
     .bubble.history { opacity: var(--history-opacity); }
@@ -132,7 +133,16 @@
     .stat-label { color: var(--muted); font-family: monospace; font-size: 12px; }
     .stat-value { font-family: monospace; }
 
-    #no-instance { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--muted); font-style: italic; font-size: 14px; }
+    #no-instance {
+      display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px;
+      flex: 1; color: var(--muted); font-size: 14px; text-align: center; padding: 24px;
+    }
+    #no-instance .hint { font-style: italic; }
+    #no-instance code {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+      padding: 6px 10px; font-family: monospace; font-size: 13px; color: var(--text);
+      user-select: all;
+    }
 
     @media (max-width: 700px) {
       main { flex-direction: column; }
@@ -175,17 +185,48 @@ async function loadInstances() {
     const res = await fetch("/instances");
     const instances = await res.json();
     renderTabs(instances);
-    if (!currentName && instances.length > 0) {
-      const first = instances.find(i => i.online) || instances[0];
-      selectInstance(first.name, instances);
-    } else if (currentName) {
-      // Keep indicator in sync if the current instance changed online state
+
+    if (instances.length === 0) {
+      currentName = null;
+      showEmptyState();
+      return;
+    }
+
+    if (!currentName) {
+      // Honor deep-link via hash (#/Name) if it matches a known instance
+      const hashed = decodeURIComponent((location.hash || "").replace(/^#\/?/, ""));
+      const target = (hashed && instances.find(i => i.name === hashed))
+                  || instances.find(i => i.online)
+                  || instances[0];
+      selectInstance(target.name, instances);
+    } else {
       const cur = instances.find(i => i.name === currentName);
-      if (cur) currentOnline = cur.online;
+      if (!cur) {
+        // Current instance vanished (directory removed); fall back
+        const fallback = instances.find(i => i.online) || instances[0];
+        selectInstance(fallback.name, instances);
+      } else if (cur.online !== currentOnline) {
+        // State transition (offline ↔ online): reconnect SSE so the stream reflects reality
+        currentOnline = cur.online;
+        connectSSE(currentName, currentOnline);
+      }
     }
   } catch (e) {
     console.error("Failed to load instances", e);
   }
+}
+
+function showEmptyState() {
+  $("main-area").innerHTML = `
+    <div id="no-instance">
+      <div>No consciousness instances yet.</div>
+      <div class="hint">Spawn one with:</div>
+      <code>python scripts/spawn.py --name Aria --bg --web-port 8080</code>
+    </div>`;
+  $("current-name").textContent = "";
+  $("status-indicator").textContent = "—";
+  $("status-indicator").className = "";
+  if (sse) { sse.close(); sse = null; }
 }
 
 function renderTabs(instances) {
@@ -209,6 +250,10 @@ function selectInstance(name, instances) {
   thoughtCount       = inst.thought_count ?? 0;
   ltMemories         = 0;
   lastReflection     = "never";
+
+  // Sync URL hash so the page is bookmarkable/shareable
+  const wanted = "#/" + encodeURIComponent(name);
+  if (location.hash !== wanted) history.replaceState(null, "", wanted);
 
   $("current-name").textContent = name;
   renderTabs(instances);
@@ -400,6 +445,10 @@ function appendBubble(payload, isHistory) {
 
   const div = document.createElement("div");
   div.className = `bubble ${type}${isHistory ? " history" : ""}`;
+  div.setAttribute("role", "button");
+  div.setAttribute("tabindex", "0");
+  div.setAttribute("aria-expanded", "false");
+  div.setAttribute("aria-label", `${type} — click to expand`);
   div.innerHTML = `
     <div class="meta">
       <span class="left"><span class="ts">${esc(ts)}</span><span>·</span><span>${esc(type)}</span></span>
@@ -407,11 +456,16 @@ function appendBubble(payload, isHistory) {
     </div>
     <div class="body collapsed">${esc(content)}</div>`;
 
-  div.onclick = () => {
+  const toggle = () => {
     const body    = div.querySelector(".body");
     const chevron = div.querySelector(".chevron");
     const nowCollapsed = body.classList.toggle("collapsed");
     chevron.textContent = nowCollapsed ? "▾" : "▴";
+    div.setAttribute("aria-expanded", String(!nowCollapsed));
+  };
+  div.onclick = toggle;
+  div.onkeydown = e => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
   };
 
   const wasNearBottom = isNearBottom(stream);
@@ -435,6 +489,16 @@ function esc(str) {
 }
 
 // ── boot ──────────────────────────────────────────────────────────────────
+
+// React to deep-link hash changes (back button / pasted URL)
+window.addEventListener("hashchange", async () => {
+  const hashed = decodeURIComponent((location.hash || "").replace(/^#\/?/, ""));
+  if (!hashed || hashed === currentName) return;
+  try {
+    const instances = await (await fetch("/instances")).json();
+    if (instances.find(i => i.name === hashed)) selectInstance(hashed, instances);
+  } catch (_) {}
+});
 
 loadInstances();
 setInterval(loadInstances, 10000);
