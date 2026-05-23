@@ -204,6 +204,10 @@ class OllamaProvider(LLMProvider):
     GENERATE_TIMEOUT = 300.0
     EMBED_TIMEOUT = 120.0
 
+    # Keep the model loaded between cycles; prevents cold-start eviction that
+    # causes the next request to block for >300s reloading the model weights.
+    KEEP_ALIVE = "10m"
+
     def __init__(self, model: str) -> None:
         self.model = model
 
@@ -214,18 +218,12 @@ class OllamaProvider(LLMProvider):
         return cls._semaphore
 
     @staticmethod
-    def _resolve_ollama_client() -> Any:
-        import ollama
-
-        base_url = os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST")
-        client_cls = getattr(ollama, "Client", None)
-        if base_url and client_cls is not None:
-            return client_cls(host=base_url)
-        return ollama
+    def _resolve_base_url() -> str | None:
+        return os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST") or None
 
     async def _generate(self, prompt: str, system: str, temperature: float, max_tokens: int) -> str:
         try:
-            client = self._resolve_ollama_client()
+            from ollama import AsyncClient
         except ImportError:
             raise RuntimeError("ollama Python package not installed")
         sem = self._get_semaphore()
@@ -233,16 +231,17 @@ class OllamaProvider(LLMProvider):
             logger.debug("Ollama semaphore busy; queuing generate request for model %r", self.model)
         async with sem:
             logger.debug("Ollama generate started (model=%r, max_tokens=%d)", self.model, max_tokens)
+            client = AsyncClient(host=self._resolve_base_url())
             resp = await asyncio.wait_for(
-                asyncio.to_thread(
-                    client.chat,
+                client.chat(
                     model=self.model,
                     messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
                     options={"temperature": temperature, "num_predict": max_tokens},
+                    keep_alive=self.KEEP_ALIVE,
                 ),
                 timeout=self.GENERATE_TIMEOUT,
             )
-            content = resp.get("message", {}).get("content", "").strip()
+            content = (resp.message.content or "").strip()
             if not content:
                 raise RuntimeError(f"Ollama returned empty content for model {self.model!r}")
             logger.debug("Ollama generate succeeded (model=%r, chars=%d)", self.model, len(content))
@@ -252,17 +251,21 @@ class OllamaProvider(LLMProvider):
         return await self.with_backoff(self._generate, prompt, system, temperature, max_tokens)
 
     async def embed(self, text: str) -> list[float]:
+        try:
+            from ollama import AsyncClient
+        except ImportError:
+            raise RuntimeError("ollama Python package not installed")
         sem = self._get_semaphore()
         if sem.locked():
             logger.debug("Ollama semaphore busy; queuing embed request for model %r", self.model)
         async with sem:
             logger.debug("Ollama embed started (model=%r)", self.model)
-            client = self._resolve_ollama_client()
+            client = AsyncClient(host=self._resolve_base_url())
             resp = await asyncio.wait_for(
-                asyncio.to_thread(client.embeddings, model=self.model, prompt=text),
+                client.embed(model=self.model, input=text, keep_alive=self.KEEP_ALIVE),
                 timeout=self.EMBED_TIMEOUT,
             )
-            emb: Sequence[float] | None = resp.get("embedding")
+            emb: Sequence[float] | None = resp.embeddings[0] if resp.embeddings else None
             if not emb:
                 raise RuntimeError(f"Ollama returned no embedding for model {self.model!r}")
             logger.debug("Ollama embed succeeded (model=%r, dims=%d)", self.model, len(emb))

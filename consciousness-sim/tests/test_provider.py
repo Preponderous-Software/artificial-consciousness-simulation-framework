@@ -11,25 +11,26 @@ from llm.provider import MockProvider, OllamaProvider
 
 
 def install_fake_ollama_module(monkeypatch, capture: dict[str, str | None]) -> None:
-    class FakeClient:
+    class _FakeMessage:
+        content = "local response"
+
+    class _FakeChatResponse:
+        message = _FakeMessage()
+
+    class _FakeEmbedResponse:
+        embeddings = [[0.1, 0.2, 0.3]]
+
+    class FakeAsyncClient:
         def __init__(self, host: str | None = None) -> None:
             capture["host"] = host
 
-        def chat(self, **kwargs):
-            return {"message": {"content": "local response"}}
+        async def chat(self, **kwargs) -> _FakeChatResponse:
+            return _FakeChatResponse()
 
-        def embeddings(self, **kwargs):
-            return {"embedding": [0.1, 0.2, 0.3]}
+        async def embed(self, **kwargs) -> _FakeEmbedResponse:
+            return _FakeEmbedResponse()
 
-    def _chat(**kwargs):
-        capture["host"] = None
-        return {"message": {"content": "local response"}}
-
-    def _embeddings(**kwargs):
-        capture["host"] = None
-        return {"embedding": [0.1, 0.2, 0.3]}
-
-    fake_module = types.SimpleNamespace(Client=FakeClient, chat=_chat, embeddings=_embeddings)
+    fake_module = types.SimpleNamespace(AsyncClient=FakeAsyncClient)
     monkeypatch.setitem(sys.modules, "ollama", fake_module)
 
 
