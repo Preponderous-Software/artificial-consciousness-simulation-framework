@@ -198,8 +198,9 @@ class AnthropicProvider(LLMProvider, DeterministicFallbackMixin):
 
 class OllamaProvider(LLMProvider, DeterministicFallbackMixin):
     # Abort and fall back if Ollama doesn't respond within this many seconds.
-    GENERATE_TIMEOUT = 60.0
-    EMBED_TIMEOUT = 30.0
+    # Set generously: local hardware can be slow, especially under concurrent load.
+    GENERATE_TIMEOUT = 180.0
+    EMBED_TIMEOUT = 60.0
 
     def __init__(self, model: str) -> None:
         self.model = model
