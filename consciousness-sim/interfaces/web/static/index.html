@@ -140,9 +140,10 @@
     #scroll-hint {
       position: sticky; bottom: 8px; align-self: center;
       background: var(--accent); color: #fff; font-size: 11px; font-family: monospace;
-      padding: 4px 12px; border-radius: 20px; cursor: pointer; display: none;
+      padding: 4px 12px; border: none; border-radius: 20px; cursor: pointer; display: none;
       box-shadow: 0 2px 8px rgba(0,0,0,.4);
     }
+    #scroll-hint:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
     @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
@@ -327,7 +328,7 @@ function buildLayout() {
         </div>
       </div>
       <div id="thought-stream"></div>
-      <div id="scroll-hint" onclick="scrollToBottom()">↓ new thoughts</div>
+      <button type="button" id="scroll-hint" onclick="scrollToBottom()" aria-label="Scroll to newest thoughts">↓ new thoughts</button>
     </div>
     <aside id="sidebar">
       <div class="sidebar-section">
