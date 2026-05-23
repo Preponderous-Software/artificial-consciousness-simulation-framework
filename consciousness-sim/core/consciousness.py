@@ -1,4 +1,13 @@
-"""Central orchestrator for autonomous consciousness simulation lifecycle."""
+"""Central orchestrator for autonomous consciousness simulation lifecycle.
+
+Theory mapping — GWT (Baars 1988) / CTM (Blum & Blum 2022): Consciousness
+is the top-level coordinator, equivalent to the CTM's executive that runs
+the global workspace loop, schedules consolidation, and dispatches events to
+specialist handlers. Event emission (on_thought, on_reflection, etc.) provides
+the broadcast mechanism that GWT requires.
+Gap: handlers are currently display/logging consumers rather than specialist
+processors that compete to write back to the workspace.
+"""
 
 from __future__ import annotations
 

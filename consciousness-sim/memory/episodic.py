@@ -1,4 +1,11 @@
-"""Append-only episodic memory log for timestamped narrative continuity."""
+"""Append-only episodic memory log for timestamped narrative continuity.
+
+Theory mapping — RPT (Lamme 2006) / PP (Friston 2010): stores the raw
+experience stream that consolidation compresses into long-term memory,
+analogous to the episodic trace that recurrent processing leaves in
+sensory areas. Partially implements RPT-1 (organised perceptual record).
+Gap: no recurrent feedback within the write path (RPT-2).
+"""
 
 from __future__ import annotations
 

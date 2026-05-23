@@ -1,4 +1,12 @@
-"""Background memory consolidation from episodic to long-term memory."""
+"""Background memory consolidation from episodic to long-term memory.
+
+Theory mapping — PP/FEP (Friston 2010): analogous to sleep-phase memory
+replay that compresses high-surprise episodic traces into prior beliefs.
+Partially implements PP-1 (prediction-error-driven memory update) insofar
+as consolidation prioritises by importance score.
+Gap: no explicit prediction-error signal — importance scores are assigned
+by the LLM rather than computed from surprise. See issue #20.
+"""
 
 from __future__ import annotations
 

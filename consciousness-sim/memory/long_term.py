@@ -1,4 +1,14 @@
-"""Long-term semantic memory backed by SQLite with embedding similarity search."""
+"""Long-term semantic memory backed by SQLite with embedding similarity search.
+
+Theory mapping — PP/FEP (Friston 2010) / GWT (Baars 1988): functions as
+the prior belief store retrieved to contextualise each thought cycle.
+Cosine similarity retrieval partially implements GWT-3 (global broadcast
+content drawn from prior experience) and PP (top-down priors shaping
+generation). Importance score + forgetting curve implements a simple
+form of the FEP relevance-weighted prior.
+Gap: no true Bayesian update — retrieval is similarity-based, not
+posterior-weighted by prediction error.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,14 @@
-"""Identity model that persists, anchors, and evolves the agent's sense of self."""
+"""Identity model that persists, anchors, and evolves the agent's sense of self.
+
+Theory mapping — AST (Graziano 2013) / HOT (Rosenthal 2005): IdentityDocument
+is the system's self-model, combining a static anchor (name, values, purpose)
+with a dynamic self-concept updated by reflection. Partially implements
+AST (self-model enabling self-attribution) and HOT-1 (generative top-down
+self-representation). Mood drift partially implements AE-1 (affect-modulated
+agency).
+Gap: no attention state tracked (AST-1 requires modelling current attention,
+not just stable identity). See issue #22.
+"""
 
 from __future__ import annotations
 
@@ -31,9 +41,15 @@ class IdentityDocument:
             "self_concept": self.self_concept,
         }
 
+    _MAX_SELF_CONCEPT_LEN: int = 300
+
     def apply_amendment(self, amendment: str) -> None:
         self.amendments.append(amendment)
-        self.self_concept = f"{self.self_concept} {amendment}".strip()
+        combined = f"{self.self_concept} {amendment}".strip()
+        if len(combined) > self._MAX_SELF_CONCEPT_LEN:
+            # Preserve the tail: most recent amendments carry current identity.
+            combined = "..." + combined[-self._MAX_SELF_CONCEPT_LEN:]
+        self.self_concept = combined
 
     def drift_mood(self, text: str, drift_rate: float) -> None:
         lowered = text.lower()
