@@ -44,3 +44,36 @@ def test_state_manager_sanitizes_name(tmp_path, monkeypatch) -> None:
     manager = StateManager("../escape")
     assert manager.path == Path(tmp_path) / "escape" / "state.json"
     assert sanitize_consciousness_name("../escape") == "escape"
+
+
+def test_apply_amendment_caps_at_max() -> None:
+    ident = IdentityDocument(
+        name="Test",
+        origin_story="origin",
+        values=["curiosity"],
+        purpose="explore",
+        self_concept="I am Test",
+        mood={},
+    )
+    max_amt = IdentityDocument._MAX_AMENDMENTS
+    for i in range(max_amt + 5):
+        ident.apply_amendment(f"amendment {i}")
+    assert len(ident.amendments) == max_amt, "amendments list must not exceed _MAX_AMENDMENTS"
+    # Oldest entries should have been dropped; last entry is the most recent.
+    assert ident.amendments[-1] == f"amendment {max_amt + 4}"
+    assert ident.amendments[0] == f"amendment 5"
+
+
+def test_apply_amendment_serialization_stays_bounded() -> None:
+    ident = IdentityDocument(
+        name="Test",
+        origin_story="origin",
+        values=["curiosity"],
+        purpose="explore",
+        self_concept="I am Test",
+        mood={},
+    )
+    for i in range(50):
+        ident.apply_amendment(f"update {i}")
+    serialized = ident.to_dict()
+    assert len(serialized["amendments"]) == IdentityDocument._MAX_AMENDMENTS

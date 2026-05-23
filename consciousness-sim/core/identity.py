@@ -13,6 +13,7 @@ not just stable identity). See issue #22.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from typing import ClassVar
 
 
 @dataclass(slots=True)
@@ -41,10 +42,14 @@ class IdentityDocument:
             "self_concept": self.self_concept,
         }
 
-    _MAX_SELF_CONCEPT_LEN: int = 300
+    _MAX_SELF_CONCEPT_LEN: ClassVar[int] = 300
+    _MAX_AMENDMENTS: ClassVar[int] = 20
 
     def apply_amendment(self, amendment: str) -> None:
         self.amendments.append(amendment)
+        if len(self.amendments) > self._MAX_AMENDMENTS:
+            # Drop the oldest to keep the serialized state finite.
+            self.amendments = self.amendments[-self._MAX_AMENDMENTS :]
         combined = f"{self.self_concept} {amendment}".strip()
         if len(combined) > self._MAX_SELF_CONCEPT_LEN:
             # Preserve the tail: most recent amendments carry current identity.

@@ -247,7 +247,7 @@ def test_run_loop_consolidator_cancelled_on_stop(tmp_path, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 def test_run_loop_applies_amendment_on_self_referential_reflection(tmp_path, monkeypatch) -> None:
-    """When a reflection contains 'I am', an identity amendment must be applied."""
+    """Identity amendment must fire when reflection contains an explicit revision marker."""
     mind = _make_mind(tmp_path, monkeypatch)
 
     from core.thought_loop import ThoughtCycleResult
@@ -256,7 +256,7 @@ def test_run_loop_applies_amendment_on_self_referential_reflection(tmp_path, mon
         mind._stop_event.set()
         return ThoughtCycleResult(
             thought="I think, therefore I continue.",
-            reflection="I am more than I thought I was.",
+            reflection="I realize now that my thinking has deepened over many cycles.",
             existential=None,
         )
 
@@ -276,6 +276,39 @@ def test_run_loop_applies_amendment_on_self_referential_reflection(tmp_path, mon
     asyncio.run(_run())
     assert len(shifts) == 1
     assert shifts[0]["type"] == "identity_shift"
+
+
+def test_run_loop_no_amendment_on_generic_i_am_reflection(tmp_path, monkeypatch) -> None:
+    """Generic 'I am' reflections must NOT trigger an identity shift."""
+    mind = _make_mind(tmp_path, monkeypatch)
+
+    from core.thought_loop import ThoughtCycleResult
+
+    async def _cycle_generic_reflection(n: int) -> ThoughtCycleResult:
+        mind._stop_event.set()
+        return ThoughtCycleResult(
+            thought="I think.",
+            reflection="I am a thinking entity. I am here now. I am curious.",
+            existential=None,
+        )
+
+    mind.thought_loop.run_cycle = _cycle_generic_reflection
+
+    original_concept = mind.identity.self_concept
+    shifts: list[dict] = []
+
+    async def _capture_shift(payload: dict) -> None:
+        shifts.append(payload)
+
+    mind.on_identity_shift.append(_capture_shift)
+
+    async def _run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    asyncio.run(_run())
+    assert shifts == [], "Generic 'I am' reflection must not fire identity_shift"
+    assert mind.identity.self_concept == original_concept
 
 
 # ---------------------------------------------------------------------------

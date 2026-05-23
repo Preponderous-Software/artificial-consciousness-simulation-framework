@@ -1,4 +1,4 @@
-"""Regression tests for bugs #2, #3, #4, and #5."""
+"""Regression tests for bugs #2, #3, #4, #5, and #39."""
 
 from __future__ import annotations
 
@@ -275,3 +275,41 @@ def test_consolidator_still_stores_valid_lines(tmp_path) -> None:
 
     stored = asyncio.run(_run())
     assert stored == 1
+
+
+# ---------------------------------------------------------------------------
+# Bug #39 — EpisodicMemory._cache grows unboundedly on long runs
+# ---------------------------------------------------------------------------
+
+
+def test_episodic_cache_does_not_exceed_max_on_append(tmp_path) -> None:
+    path = tmp_path / "episodic.jsonl"
+    mem = EpisodicMemory(path)
+    max_size = EpisodicMemory._MAX_CACHE_SIZE
+
+    async def _run() -> None:
+        for i in range(max_size + 50):
+            await mem.append("thought", f"event {i}")
+
+    asyncio.run(_run())
+    assert len(mem._cache) == max_size, "In-memory cache must not exceed _MAX_CACHE_SIZE"
+    # Most-recent entries should be retained.
+    assert mem._cache[-1].content == f"event {max_size + 49}"
+
+
+def test_episodic_cache_does_not_exceed_max_on_load(tmp_path) -> None:
+    path = tmp_path / "episodic.jsonl"
+    max_size = EpisodicMemory._MAX_CACHE_SIZE
+
+    # Write more entries than the cap directly to disk (simulates a large existing file).
+    with path.open("w", encoding="utf-8") as f:
+        import json as _json
+        for i in range(max_size + 100):
+            f.write(_json.dumps({"timestamp": "2024-01-01T00:00:00+00:00", "kind": "thought", "content": f"disk event {i}"}) + "\n")
+
+    mem = EpisodicMemory(path)
+    events = asyncio.run(mem.recent(limit=max_size))
+    assert len(mem._cache) == max_size, "_load_from_disk must cap cache to _MAX_CACHE_SIZE"
+    # The tail (most recent) entries are retained.
+    assert mem._cache[-1].content == f"disk event {max_size + 99}"
+

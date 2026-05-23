@@ -36,6 +36,15 @@ from persistence.state_manager import StateManager
 
 EventHandler = Callable[[dict[str, Any]], Awaitable[None] | None]
 
+# Reflections containing these phrases signal a genuine self-revision rather than
+# ordinary first-person narration; only then is an identity amendment applied.
+_IDENTITY_SHIFT_MARKERS: tuple[str, ...] = (
+    "i have changed",
+    "i realize now",
+    "i understand now",
+    "i am becoming",
+)
+
 _REQUIRED_CONFIG_KEYS: dict[str, list[str]] = {
     "llm": ["provider", "model"],
     "memory": [
@@ -215,8 +224,11 @@ class Consciousness:
                 if cycle.reflection:
                     await self.journal.append("reflection", cycle.reflection)
                     await self._emit(self.on_reflection, {"type": "reflection", "content": cycle.reflection})
-                    if "I am" in cycle.reflection:
-                        self.identity.apply_amendment("I continue becoming through reflection.")
+                    reflection_lower = cycle.reflection.lower()
+                    if any(marker in reflection_lower for marker in _IDENTITY_SHIFT_MARKERS):
+                        first_sentence = cycle.reflection.split(".")[0].strip()
+                        amendment = first_sentence[:120] if first_sentence else cycle.reflection[:120]
+                        self.identity.apply_amendment(amendment)
                         await self._emit(
                             self.on_identity_shift,
                             {"type": "identity_shift", "content": self.identity.self_concept},
