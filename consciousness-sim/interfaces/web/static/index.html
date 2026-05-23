@@ -204,8 +204,10 @@
 
 const $ = id => document.getElementById(id);
 
-let currentName  = null;
-let currentOnline = false;
+let currentId    = null;        // stable directory name — used for /stream/{id} and #/id
+let currentName  = null;        // display label (identity.name)
+let currentOnline = false;      // process running (any source)
+let currentStreamable = false;  // this dashboard process can deliver live events
 let instanceStartedAt = null;   // ISO string from API (instance process start)
 let sse          = null;
 let uptimeTimer  = null;
@@ -221,31 +223,32 @@ async function loadInstances() {
   try {
     const res = await fetch("/instances");
     const instances = await res.json();
+    // Normalize: older payloads may lack `id`; fall back to `name`
+    instances.forEach(i => { if (!i.id) i.id = i.name; });
     renderTabs(instances);
 
     if (instances.length === 0) {
-      currentName = null;
+      currentId = null; currentName = null;
       showEmptyState();
       return;
     }
 
-    if (!currentName) {
-      // Honor deep-link via hash (#/Name) if it matches a known instance
+    if (!currentId) {
       const hashed = decodeURIComponent((location.hash || "").replace(/^#\/?/, ""));
-      const target = (hashed && instances.find(i => i.name === hashed))
-                  || instances.find(i => i.online)
+      const target = (hashed && instances.find(i => i.id === hashed))
+                  || instances.find(i => i.streamable)
+                  || instances.find(i => i.running)
                   || instances[0];
-      selectInstance(target.name, instances);
+      selectInstance(target.id, instances);
     } else {
-      const cur = instances.find(i => i.name === currentName);
+      const cur = instances.find(i => i.id === currentId);
       if (!cur) {
-        // Current instance vanished (directory removed); fall back
-        const fallback = instances.find(i => i.online) || instances[0];
-        selectInstance(fallback.name, instances);
-      } else if (cur.online !== currentOnline) {
-        // State transition (offline ↔ online): reconnect SSE so the stream reflects reality
-        currentOnline = cur.online;
-        connectSSE(currentName, currentOnline);
+        const fallback = instances.find(i => i.streamable) || instances.find(i => i.running) || instances[0];
+        selectInstance(fallback.id, instances);
+      } else if (cur.streamable !== currentStreamable || cur.running !== currentOnline) {
+        currentOnline = cur.running;
+        currentStreamable = cur.streamable;
+        connectSSE(currentId);
       }
     }
   } catch (e) {
@@ -272,36 +275,41 @@ function renderTabs(instances) {
   container.setAttribute("role", "tablist");
   for (const inst of instances) {
     const tab = document.createElement("button");
-    const isActive = inst.name === currentName;
-    tab.className = "tab" + (inst.online ? " online" : "") + (isActive ? " active" : "");
-    tab.title = inst.online ? "Online" : "Offline — showing last known state";
+    const isActive = inst.id === currentId;
+    const live = inst.streamable;
+    tab.className = "tab" + (inst.running ? " online" : "") + (isActive ? " active" : "");
+    tab.title = inst.running
+      ? (live ? "Online (live stream)" : "Online (history only — not registered here)")
+      : "Offline — showing last known state";
     tab.setAttribute("role", "tab");
     tab.setAttribute("aria-selected", String(isActive));
-    tab.setAttribute("aria-label", `${inst.name}, ${inst.online ? "online" : "offline"}`);
+    tab.setAttribute("aria-label", `${inst.name}, ${inst.running ? (live ? "online, live" : "online, history only") : "offline"}`);
     tab.innerHTML = `<span class="dot" aria-hidden="true"></span>${esc(inst.name)}`;
-    tab.onclick = () => selectInstance(inst.name, instances);
+    tab.onclick = () => selectInstance(inst.id, instances);
     container.appendChild(tab);
   }
 }
 
-function selectInstance(name, instances) {
-  const inst = instances.find(i => i.name === name) || {};
-  currentName        = name;
-  currentOnline      = inst.online ?? false;
+function selectInstance(id, instances) {
+  const inst = instances.find(i => i.id === id) || {};
+  currentId          = id;
+  currentName        = inst.name ?? id;
+  currentOnline      = inst.running ?? false;
+  currentStreamable  = inst.streamable ?? false;
   instanceStartedAt  = inst.started_at ?? null;
   thoughtCount       = inst.thought_count ?? 0;
   ltMemories         = 0;
   lastReflection     = "never";
 
-  // Sync URL hash so the page is bookmarkable/shareable
-  const wanted = "#/" + encodeURIComponent(name);
+  // URL hash uses the stable id, not the display name
+  const wanted = "#/" + encodeURIComponent(id);
   if (location.hash !== wanted) history.replaceState(null, "", wanted);
 
-  $("current-name").textContent = name;
+  $("current-name").textContent = currentName;
   renderTabs(instances);
   buildLayout();
   updateSidebar(inst);
-  connectSSE(name, currentOnline);
+  connectSSE(id);
 }
 
 // ── layout ────────────────────────────────────────────────────────────────
@@ -427,7 +435,7 @@ function tickUptime() {
 
 // ── SSE ───────────────────────────────────────────────────────────────────
 
-function connectSSE(name, isOnline) {
+function connectSSE(id) {
   if (sse) { sse.close(); sse = null; }
   historyEventCount = 0;
   liveEventCount    = 0;
@@ -437,7 +445,7 @@ function connectSSE(name, isOnline) {
   indicator.title = "";
   indicator.onclick = null;
 
-  sse = new EventSource(`/stream/${encodeURIComponent(name)}`);
+  sse = new EventSource(`/stream/${encodeURIComponent(id)}`);
 
   sse.onopen = () => {
     indicator.textContent = "loading…";
@@ -448,7 +456,7 @@ function connectSSE(name, isOnline) {
     indicator.textContent = "○ offline · retry";
     indicator.className = "error";
     indicator.title = "Connection lost — click to reconnect";
-    indicator.onclick = () => connectSSE(currentName, currentOnline);
+    indicator.onclick = () => connectSSE(currentId);
   };
 
   sse.onmessage = e => {
@@ -625,10 +633,11 @@ setInterval(() => {
 // React to deep-link hash changes (back button / pasted URL)
 window.addEventListener("hashchange", async () => {
   const hashed = decodeURIComponent((location.hash || "").replace(/^#\/?/, ""));
-  if (!hashed || hashed === currentName) return;
+  if (!hashed || hashed === currentId) return;
   try {
     const instances = await (await fetch("/instances")).json();
-    if (instances.find(i => i.name === hashed)) selectInstance(hashed, instances);
+    instances.forEach(i => { if (!i.id) i.id = i.name; });
+    if (instances.find(i => i.id === hashed)) selectInstance(hashed, instances);
   } catch (_) {}
 });
 

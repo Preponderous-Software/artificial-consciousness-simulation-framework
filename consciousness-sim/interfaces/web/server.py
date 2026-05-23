@@ -78,19 +78,24 @@ async def list_instances() -> list[dict[str, Any]]:
             continue
 
         identity = state.get("identity", {})
-        name = identity.get("name", d.name)
+        # Directory name is the stable id used by /stream/{id}; identity.name
+        # is just a display label that can drift (e.g. amended identity).
+        dir_name = d.name
+        display_name = identity.get("name", dir_name)
 
-        # Determine online status and start time
         pid_path = d / "pid"
-        online = name in _registry
-        started_at: str | None = _started_at.get(name)
+        # streamable: this dashboard process can broadcast live events for it.
+        # running:    a process is alive on disk (pid exists + responding).
+        # online (legacy alias): true if either is true — kept for the frontend.
+        streamable = dir_name in _registry
+        running = streamable
+        started_at: str | None = _started_at.get(dir_name)
 
-        if not online and pid_path.exists():
+        if not running and pid_path.exists():
             try:
                 pid = int(pid_path.read_text().strip())
                 os.kill(pid, 0)
-                online = True
-                # Use pid file mtime as proxy for process start time
+                running = True
                 if started_at is None:
                     started_at = datetime.fromtimestamp(
                         pid_path.stat().st_mtime, tz=timezone.utc
@@ -98,7 +103,6 @@ async def list_instances() -> list[dict[str, Any]]:
             except (ProcessLookupError, OSError, ValueError):
                 pass
 
-        # For offline instances use state.json mtime as "last seen" time
         if started_at is None and state_path.exists():
             try:
                 started_at = datetime.fromtimestamp(
@@ -108,8 +112,11 @@ async def list_instances() -> list[dict[str, Any]]:
                 pass
 
         result.append({
-            "name": name,
-            "online": online,
+            "id": dir_name,
+            "name": display_name,
+            "online": running,
+            "running": running,
+            "streamable": streamable,
             "thought_count": state.get("thought_count", 0),
             "mood": identity.get("mood", {}),
             "self_concept": identity.get("self_concept", ""),
