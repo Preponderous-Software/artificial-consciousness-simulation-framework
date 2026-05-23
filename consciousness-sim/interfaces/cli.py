@@ -1,4 +1,14 @@
-"""Rich terminal interface for live consciousness observation and control."""
+"""Rich terminal interface for live consciousness observation and control.
+
+Theory mapping — AST-1 (attention schema) / GWT-3 (global broadcast): The
+CLI is the external attention schema display — it renders mood, thought stream,
+and memory events in a structured dashboard, approximating the system's
+self-model being made legible to an observer. The live refresh loop mirrors
+the broadcast cycle: each workspace update propagates to the display.
+Gap: The dashboard is read-only for an external human, not an internal model
+of attention guiding the agent's own processing (true AST requires the schema
+to be causally efficacious, not just displayed).
+"""
 
 from __future__ import annotations
 

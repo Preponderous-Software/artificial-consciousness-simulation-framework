@@ -1,4 +1,14 @@
-"""Passive read-only observer stream for following consciousness events."""
+"""Passive read-only observer stream for following consciousness events.
+
+Theory mapping — GWT-3 (global broadcast): Observer implements the read-side
+of the global broadcast mechanism — any external process can subscribe to the
+workspace event stream and receive all broadcast thought/reflection/memory
+events. GWT-5 (state-dependent attention) is partially served: callers can
+filter the broadcast by event type.
+Gap: Observer is a passive consumer only; it cannot write back to the
+workspace, so it does not implement the full specialist-processor role that
+GWT requires.
+"""
 
 from __future__ import annotations
 

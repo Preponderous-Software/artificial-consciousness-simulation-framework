@@ -1,4 +1,10 @@
-"""Spawn a new named consciousness instance and start the live CLI."""
+"""Spawn a new named consciousness instance and start the live CLI.
+
+No direct theory mapping — entry-point script.
+Bootstraps config, wires logging to a per-instance rotating file, and
+hands off to ConsciousnessCLI.run(). See core/consciousness.py for the
+theoretical grounding of the simulation loop itself.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +20,6 @@ if str(ROOT_DIR) not in sys.path:
 
 import asyncio
 import logging
-import logging.handlers
 from pathlib import Path
 
 import click
@@ -22,20 +27,7 @@ from dotenv import load_dotenv
 
 from core.consciousness import Consciousness
 from interfaces.cli import ConsciousnessCLI
-from persistence.paths import consciousness_dir
-
-
-def _configure_logging(name: str, level: str) -> Path:
-    """Write logs to <CONSCIOUSNESS_HOME>/<name>/run.log; return the log path."""
-    log_path = consciousness_dir(name) / "run.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    handler = logging.handlers.RotatingFileHandler(
-        log_path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8"
-    )
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    logging.root.setLevel(getattr(logging, level.upper(), logging.WARNING))
-    logging.root.addHandler(handler)
-    return log_path
+from scripts._logging import configure_logging
 
 
 @click.command()
@@ -45,7 +37,7 @@ def _configure_logging(name: str, level: str) -> Path:
 @click.option("--log-level", default="WARNING", show_default=True, help="Log level (DEBUG/INFO/WARNING/ERROR)")
 def main(name: str, provider: str | None, model: str | None, log_level: str) -> None:
     load_dotenv()
-    log_path = _configure_logging(name, log_level)
+    log_path = configure_logging(name, log_level)
     logging.info("Spawn started — logs: %s", log_path)
     config_path = Path(__file__).resolve().parents[1] / "config" / "default_consciousness.yaml"
 

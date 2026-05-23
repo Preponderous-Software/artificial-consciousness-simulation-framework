@@ -1,4 +1,9 @@
-"""Inspect a consciousness journal and memory state from local persistence."""
+"""Inspect a consciousness journal and memory state from local persistence.
+
+No direct theory mapping — read-only diagnostic script.
+Reads journal.jsonl and state.json without starting the run loop.
+Used to observe the agent's history and current state post-hoc.
+"""
 
 from __future__ import annotations
 
