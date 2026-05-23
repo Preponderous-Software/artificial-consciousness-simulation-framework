@@ -60,6 +60,7 @@ class MemoryConsolidator:
                 line,
             )
             if not match:
+                logging.warning("Consolidation: skipping unparseable line: %r", line)
                 continue
             importance = float(match.group(1))
             valence = float(match.group(2))
@@ -67,6 +68,12 @@ class MemoryConsolidator:
             embedding = await self.provider.embed(summary)
             await self.long_term.add_memory(summary, valence, importance, embedding)
             stored += 1
+
+        if stored == 0 and events:
+            logging.warning(
+                "Consolidation pass stored 0 memories from %d events; LLM output may have changed format.",
+                len(events),
+            )
 
         self.short_term.prune_to_capacity()
         if self.forgetting_curve_enabled:

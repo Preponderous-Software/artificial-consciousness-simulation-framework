@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import signal
 from dataclasses import asdict
@@ -26,6 +27,34 @@ from persistence.state_manager import StateManager
 
 EventHandler = Callable[[dict[str, Any]], Awaitable[None] | None]
 
+_REQUIRED_CONFIG_KEYS: dict[str, list[str]] = {
+    "llm": ["provider", "model"],
+    "memory": [
+        "short_term_capacity",
+        "consolidation_interval_minutes",
+        "forgetting_curve_enabled",
+        "importance_decay_rate",
+    ],
+    "consciousness": ["origin_story", "values", "purpose"],
+    "thought_loop": [
+        "reflection_probability",
+        "existential_inquiry_every_n_thoughts",
+        "min_interval_seconds",
+        "max_interval_seconds",
+    ],
+    "mood": ["initial", "drift_rate"],
+}
+
+
+def _validate_config(config: dict[str, Any]) -> None:
+    """Raise KeyError with a descriptive message if any required config key is absent."""
+    for section, keys in _REQUIRED_CONFIG_KEYS.items():
+        if section not in config:
+            raise KeyError(f"Config missing required section: '{section}'")
+        for key in keys:
+            if key not in config[section]:
+                raise KeyError(f"Config missing required key: '{section}.{key}'")
+
 
 class Consciousness:
     """Coordinates subsystems and runs an indefinitely iterative thought process."""
@@ -34,6 +63,7 @@ class Consciousness:
         self.name = name
         self.config_path = Path(config_path)
         self.config = yaml.safe_load(self.config_path.read_text(encoding="utf-8"))
+        _validate_config(self.config)
         self._stop_event = asyncio.Event()
         self.thought_count = 0
 
@@ -95,9 +125,12 @@ class Consciousness:
 
     async def _emit(self, handlers: list[EventHandler], payload: dict[str, Any]) -> None:
         for handler in handlers:
-            result = handler(payload)
-            if asyncio.iscoroutine(result):
-                await result
+            try:
+                result = handler(payload)
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:
+                logging.exception("Event handler %r raised unexpectedly; continuing", handler)
 
     async def initialize(self) -> None:
         await self.long_term.initialize()
