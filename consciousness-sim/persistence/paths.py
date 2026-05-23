@@ -1,4 +1,9 @@
-"""Shared path helpers for safe consciousness persistence locations."""
+"""Shared path helpers for safe consciousness persistence locations.
+
+No direct theory mapping — infrastructure module.
+Provides filesystem path resolution honoring CONSCIOUSNESS_HOME, used by
+all persistence subsystems. Name sanitization prevents path traversal.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,13 @@
-"""Persistence manager for saving/loading full consciousness state snapshots."""
+"""Persistence manager for saving/loading full consciousness state snapshots.
+
+Theory mapping — AE-1 (agency) / HOT-3 (agentive consumer): StateManager
+implements identity persistence across run boundaries — the agent's self-model
+(identity, mood, short-term buffer, thought count) survives process restarts.
+This is a prerequisite for long-horizon agency: goals and self-concept must
+outlive individual sessions to influence future behaviour.
+Gap: no direct theory mapping beyond enabling the conditions for agency;
+state is inert JSON until loaded and acted upon by the consciousness run loop.
+"""
 
 from __future__ import annotations
 

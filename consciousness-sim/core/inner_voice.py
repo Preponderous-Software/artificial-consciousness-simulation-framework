@@ -1,4 +1,12 @@
-"""Inner-voice framing for first-person stream-of-consciousness narration."""
+"""Inner-voice framing for first-person stream-of-consciousness narration.
+
+Theory mapping — CTM (Blum & Blum 2022) / GWT-3: InnerVoice approximates
+"Brainish" — the CTM's rich inner language for inter-processor communication.
+It enforces first-person framing and register (questioning, remembering,
+wondering) on raw LLM output before it enters the global workspace buffer.
+Gap: registers are rule-based heuristics, not a learned or grounded inner
+language; no multi-modal encoding as CTM's Brainish requires.
+"""
 
 from __future__ import annotations
 

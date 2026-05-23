@@ -1,4 +1,14 @@
-"""Append-only JSONL journal of internal experience for replay and inspection."""
+"""Append-only JSONL journal of internal experience for replay and inspection.
+
+Theory mapping — RPT-1 / AE-1 (agency via temporal record): The journal
+implements narrative continuity — an ordered log of all internal events that
+supports post-hoc inspection and replay. Analogous to episodic memory encoding
+in cognitive neuroscience: each event is timestamped and typed, enabling
+reconstruction of the agent's history.
+Gap: journal entries are not read back by the agent at runtime (episodic.py
+serves that role); the journal is inspection-only and does not feed the thought
+loop directly.
+"""
 
 from __future__ import annotations
 
