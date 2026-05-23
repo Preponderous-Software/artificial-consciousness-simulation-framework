@@ -52,8 +52,9 @@ def install_fake_httpx(monkeypatch, *, json_payload=None, status_code: int = 200
                 raise RuntimeError(f"HTTP {status_code}")
 
     class _FakeClient:
-        def __init__(self, timeout=None) -> None:
+        def __init__(self, timeout=None, **kwargs) -> None:
             captured["timeout"] = timeout
+            captured["client_kwargs"] = kwargs
 
         async def __aenter__(self):
             return self
@@ -112,6 +113,50 @@ def test_wikipedia_perception_happy_path(monkeypatch) -> None:
     assert captured["timeout"] == 5.0
     # User-Agent identifies us, per Wikipedia API etiquette
     assert "consciousness-sim" in captured["calls"][0][1]["User-Agent"]
+
+
+def test_wikipedia_perception_follows_redirects(monkeypatch) -> None:
+    """Regression: /random/summary returns 303 See Other → /summary/<title>.
+
+    Without follow_redirects=True every fetch fails with HTTPStatusError;
+    Sage ran for 10 minutes returning None on every cycle until this was caught.
+    """
+    captured = {}
+
+    class _FakeClient:
+        def __init__(self, timeout=None, follow_redirects=False, **_):
+            captured["follow_redirects"] = follow_redirects
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, headers=None):
+            class _R:
+                status_code = 200
+
+                def raise_for_status(self):
+                    return None
+
+                def json(self):
+                    return WIKIPEDIA_HAPPY
+
+            return _R()
+
+    fake = type(sys)("httpx")
+    fake.AsyncClient = _FakeClient
+    monkeypatch.setitem(sys.modules, "httpx", fake)
+
+    wp = WikipediaPerception(timeout_seconds=5.0)
+    p = asyncio.run(wp.fetch())
+
+    assert p is not None
+    assert captured["follow_redirects"] is True, \
+        "AsyncClient must be constructed with follow_redirects=True " \
+        "or Wikipedia's 303 → /summary/<title> redirect will fail every call"
 
 
 def test_wikipedia_perception_returns_none_on_http_error(monkeypatch, caplog) -> None:

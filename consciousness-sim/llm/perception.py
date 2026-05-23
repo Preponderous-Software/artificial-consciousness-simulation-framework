@@ -107,7 +107,10 @@ class WikipediaPerception(PerceptionProvider):
         last_error: Exception | None = None
         for attempt in range(3):
             try:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                # follow_redirects=True is critical: the /random/summary
+                # endpoint returns 303 See Other → /summary/<title> for every
+                # request. Without this, every fetch fails with httpx.HTTPStatusError.
+                async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=True) as client:
                     response = await client.get(
                         self.API_URL,
                         headers={"User-Agent": self.USER_AGENT},
