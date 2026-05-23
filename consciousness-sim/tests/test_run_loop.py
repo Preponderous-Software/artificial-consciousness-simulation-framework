@@ -54,6 +54,8 @@ def _make_mind(tmp_path: Path, monkeypatch) -> Consciousness:
 
 def test_run_loop_increments_thought_count(tmp_path, monkeypatch) -> None:
     """run() increments thought_count for each cycle before stopping."""
+    from core.thought_loop import ThoughtCycleResult
+
     mind = _make_mind(tmp_path, monkeypatch)
 
     thoughts_seen: list[str] = []
@@ -63,22 +65,19 @@ def test_run_loop_increments_thought_count(tmp_path, monkeypatch) -> None:
 
     mind.on_thought.append(_capture)
 
+    call_count = 0
+
+    async def _synthetic_cycle(n: int) -> ThoughtCycleResult:
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 3:
+            mind._stop_event.set()
+        return ThoughtCycleResult(thought=f"Synthetic thought {n}", reflection=None, existential=None)
+
+    mind.thought_loop.run_cycle = _synthetic_cycle
+
     async def _run() -> None:
         await mind.long_term.initialize()
-        # Stop after 3 thoughts.
-        original_cycle = mind.thought_loop.run_cycle
-
-        call_count = 0
-
-        async def _limited_cycle(n: int):
-            nonlocal call_count
-            call_count += 1
-            result = await original_cycle(n)
-            if call_count >= 3:
-                mind._stop_event.set()
-            return result
-
-        mind.thought_loop.run_cycle = _limited_cycle
         await mind.run()
 
     asyncio.run(_run())
@@ -88,22 +87,18 @@ def test_run_loop_increments_thought_count(tmp_path, monkeypatch) -> None:
 
 def test_run_loop_saves_state_on_exit(tmp_path, monkeypatch) -> None:
     """run() persists state to disk in the finally block."""
+    from core.thought_loop import ThoughtCycleResult
+
     mind = _make_mind(tmp_path, monkeypatch)
+
+    async def _one_cycle(n: int) -> ThoughtCycleResult:
+        mind._stop_event.set()
+        return ThoughtCycleResult(thought="Synthetic thought", reflection=None, existential=None)
+
+    mind.thought_loop.run_cycle = _one_cycle
 
     async def _run() -> None:
         await mind.long_term.initialize()
-
-        original_cycle = mind.thought_loop.run_cycle
-        calls = 0
-
-        async def _one_cycle(n: int):
-            nonlocal calls
-            calls += 1
-            result = await original_cycle(n)
-            mind._stop_event.set()
-            return result
-
-        mind.thought_loop.run_cycle = _one_cycle
         await mind.run()
 
     asyncio.run(_run())
@@ -119,6 +114,8 @@ def test_run_loop_saves_state_on_exit(tmp_path, monkeypatch) -> None:
 
 def test_run_loop_emits_thought_events(tmp_path, monkeypatch) -> None:
     """Each cycle must emit an on_thought event with the generated content."""
+    from core.thought_loop import ThoughtCycleResult
+
     mind = _make_mind(tmp_path, monkeypatch)
     received: list[dict] = []
 
@@ -127,17 +124,14 @@ def test_run_loop_emits_thought_events(tmp_path, monkeypatch) -> None:
 
     mind.on_thought.append(_handler)
 
+    async def _once(n: int) -> ThoughtCycleResult:
+        mind._stop_event.set()
+        return ThoughtCycleResult(thought="Synthetic thought", reflection=None, existential=None)
+
+    mind.thought_loop.run_cycle = _once
+
     async def _run() -> None:
         await mind.long_term.initialize()
-
-        original = mind.thought_loop.run_cycle
-
-        async def _once(n: int):
-            r = await original(n)
-            mind._stop_event.set()
-            return r
-
-        mind.thought_loop.run_cycle = _once
         await mind.run()
 
     asyncio.run(_run())
@@ -148,20 +142,19 @@ def test_run_loop_emits_thought_events(tmp_path, monkeypatch) -> None:
 
 def test_run_loop_journals_thoughts(tmp_path, monkeypatch) -> None:
     """Each thought must be appended to the journal."""
+    from core.thought_loop import ThoughtCycleResult
+
     mind = _make_mind(tmp_path, monkeypatch)
+
+    async def _twice(n: int) -> ThoughtCycleResult:
+        if n >= 2:
+            mind._stop_event.set()
+        return ThoughtCycleResult(thought=f"Synthetic thought {n}", reflection=None, existential=None)
+
+    mind.thought_loop.run_cycle = _twice
 
     async def _run() -> None:
         await mind.long_term.initialize()
-
-        original = mind.thought_loop.run_cycle
-
-        async def _twice(n: int):
-            r = await original(n)
-            if n >= 2:
-                mind._stop_event.set()
-            return r
-
-        mind.thought_loop.run_cycle = _twice
         await mind.run()
 
     asyncio.run(_run())
