@@ -60,3 +60,10 @@ def test_inner_voice_adds_i_prefix_to_non_first_person() -> None:
     voice = InnerVoice("Aria")
     result = voice.render("Wander through the labyrinth")
     assert result.lower().startswith("i "), f"Should start with 'I ': {result!r}"
+
+
+def test_inner_voice_no_double_i_on_im_contraction() -> None:
+    voice = InnerVoice("Aria")
+    result = voice.render("I'm caught in the web of my own thoughts")
+    assert not result.lower().startswith("i i'"), f"Got double 'I I\\'m': {result!r}"
+    assert result.lower().startswith("i'"), f"Should start with 'I\\'m': {result!r}"

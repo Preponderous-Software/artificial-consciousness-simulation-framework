@@ -24,7 +24,8 @@ class InnerVoice:
         # Strip "As " prefix so "As I wander..." doesn't become "I as I wander..."
         if text.lower().startswith("as "):
             text = text[3:]
-        if not text.lower().startswith("i "):
+        # Also check contractions ("I'm", "I've", "I'll", "I'd") to avoid "I I'm..."
+        if not text.lower().startswith(("i ", "i'")):
             text = f"I {text[0].lower() + text[1:] if len(text) > 1 else text.lower()}"
         if register == "remembering":
             return f"{text} I remember this as {self.name}."
