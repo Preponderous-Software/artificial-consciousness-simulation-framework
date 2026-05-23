@@ -66,8 +66,24 @@
 
     /* ── stream panel ── */
     #stream-panel { flex: 3; display: flex; flex-direction: column; border-right: 1px solid var(--border); overflow: hidden; }
-    #stream-panel h2 { padding: 10px 16px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-family: monospace; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    #stream-header {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 10px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    #stream-header h2 { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-family: monospace; }
+    #filter-chips { display: flex; gap: 6px; }
+    .chip {
+      background: transparent; border: 1px solid var(--border); color: var(--muted);
+      font-family: monospace; font-size: 11px; padding: 3px 10px; border-radius: 20px;
+      cursor: pointer; transition: background .15s, color .15s, border-color .15s;
+    }
+    .chip:hover { color: var(--text); border-color: var(--accent); }
+    .chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     #thought-stream { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+    /* Type filters: when stream has .filter-foo, hide bubbles that are NOT .foo */
+    #thought-stream.filter-thought       .bubble:not(.thought)       { display: none; }
+    #thought-stream.filter-reflection    .bubble:not(.reflection)    { display: none; }
+    #thought-stream.filter-identity_shift .bubble:not(.identity_shift) { display: none; }
 
     /* History separator */
     .history-sep {
@@ -125,9 +141,10 @@
 
     #mood-chart { display: flex; flex-direction: column; gap: 7px; }
     .mood-row { display: flex; align-items: center; gap: 8px; }
-    .mood-label { width: 90px; font-size: 12px; font-family: monospace; color: var(--muted); flex-shrink: 0; }
+    .mood-label { width: 84px; font-size: 12px; font-family: monospace; color: var(--muted); flex-shrink: 0; }
     .mood-track { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
     .mood-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width .6s ease; }
+    .mood-value { width: 36px; text-align: right; font-size: 11px; font-family: monospace; color: var(--muted); flex-shrink: 0; }
 
     #status-grid { display: grid; grid-template-columns: auto 1fr; gap: 5px 10px; font-size: 13px; }
     .stat-label { color: var(--muted); font-family: monospace; font-size: 12px; }
@@ -267,7 +284,15 @@ function selectInstance(name, instances) {
 function buildLayout() {
   $("main-area").innerHTML = `
     <div id="stream-panel">
-      <h2>Stream of Thought</h2>
+      <div id="stream-header">
+        <h2>Stream of Thought</h2>
+        <div id="filter-chips" role="tablist" aria-label="Filter by type">
+          <button class="chip active" data-filter="all"             role="tab" aria-selected="true">all</button>
+          <button class="chip"        data-filter="thought"         role="tab" aria-selected="false">thoughts</button>
+          <button class="chip"        data-filter="reflection"      role="tab" aria-selected="false">reflections</button>
+          <button class="chip"        data-filter="identity_shift"  role="tab" aria-selected="false">shifts</button>
+        </div>
+      </div>
       <div id="thought-stream"></div>
       <div id="scroll-hint" onclick="scrollToBottom()">↓ new thoughts</div>
     </div>
@@ -292,6 +317,21 @@ function buildLayout() {
   const stream = $("thought-stream");
   stream.addEventListener("scroll", () => {
     $("scroll-hint").style.display = isNearBottom(stream) ? "none" : "block";
+  });
+
+  // Filter chips
+  document.querySelectorAll("#filter-chips .chip").forEach(chip => {
+    chip.onclick = () => {
+      const f = chip.getAttribute("data-filter");
+      document.querySelectorAll("#filter-chips .chip").forEach(c => {
+        const active = c === chip;
+        c.classList.toggle("active", active);
+        c.setAttribute("aria-selected", String(active));
+      });
+      stream.className = f === "all" ? "" : `filter-${f}`;
+      // After filtering, snap to bottom so newest visible bubble is in view
+      if (isNearBottom(stream) || f !== "all") scrollToBottom();
+    };
   });
 
   if (uptimeTimer) clearInterval(uptimeTimer);
@@ -328,11 +368,15 @@ function updateSidebar(data) {
 function renderMood(mood) {
   const chart = $("mood-chart");
   if (!chart) return;
-  chart.innerHTML = Object.entries(mood).map(([k, v]) => `
-    <div class="mood-row">
-      <span class="mood-label">${esc(k)}</span>
-      <div class="mood-track"><div class="mood-fill" style="width:${Math.round(v * 100)}%"></div></div>
-    </div>`).join("");
+  chart.innerHTML = Object.entries(mood).map(([k, v]) => {
+    const pct = Math.round((Number(v) || 0) * 100);
+    return `
+      <div class="mood-row">
+        <span class="mood-label">${esc(k)}</span>
+        <div class="mood-track"><div class="mood-fill" style="width:${pct}%"></div></div>
+        <span class="mood-value">${pct}%</span>
+      </div>`;
+  }).join("");
 }
 
 function renderStatus(data) {
@@ -412,9 +456,10 @@ function handleEvent(payload) {
   }
 
   if (type === "reflection" && !history) {
-    lastReflection = new Date().toLocaleTimeString();
+    const now = new Date();
+    lastReflection = relTime(now);
     const el = $("stat-refl");
-    if (el) el.textContent = lastReflection;
+    if (el) { el.textContent = lastReflection; el.dataset.ts = now.toISOString(); }
   }
 
   if (type === "memory") {
@@ -441,7 +486,11 @@ function appendBubble(payload, isHistory) {
 
   const type    = payload.type || "thought";
   const content = payload.content || "";
-  const ts      = payload.timestamp ? new Date(payload.timestamp).toLocaleTimeString() : "";
+  const tsIso   = payload.timestamp || "";
+  const tsDate  = tsIso ? new Date(tsIso) : null;
+  const tsRel   = tsDate ? relTime(tsDate) : "";
+  // Tooltip with full date+time so previous-day events aren't ambiguous
+  const tsFull  = tsDate && !isNaN(tsDate) ? tsDate.toLocaleString() : "";
 
   const div = document.createElement("div");
   div.className = `bubble ${type}${isHistory ? " history" : ""}`;
@@ -451,7 +500,11 @@ function appendBubble(payload, isHistory) {
   div.setAttribute("aria-label", `${type} — click to expand`);
   div.innerHTML = `
     <div class="meta">
-      <span class="left"><span class="ts">${esc(ts)}</span><span>·</span><span>${esc(type)}</span></span>
+      <span class="left">
+        <span class="ts" data-ts="${esc(tsIso)}" title="${esc(tsFull)}">${esc(tsRel)}</span>
+        <span>·</span>
+        <span>${esc(type)}</span>
+      </span>
       <span class="chevron" aria-hidden="true">▾</span>
     </div>
     <div class="body collapsed">${esc(content)}</div>`;
@@ -487,6 +540,30 @@ function esc(str) {
     .replace(/&/g,"&amp;").replace(/</g,"&lt;")
     .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
+
+// Human-friendly relative time. ts may be a Date, ISO string, or epoch ms.
+function relTime(ts) {
+  const t = ts instanceof Date ? ts.getTime() : new Date(ts).getTime();
+  if (!Number.isFinite(t)) return "—";
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 5)    return "just now";
+  if (s < 60)   return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60)   return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24)   return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+// Refresh relative times each minute (cheap; small DOM).
+setInterval(() => {
+  document.querySelectorAll("[data-ts]").forEach(el => {
+    el.textContent = relTime(el.getAttribute("data-ts"));
+  });
+  const refl = $("stat-refl");
+  if (refl && refl.dataset.ts) refl.textContent = relTime(refl.dataset.ts);
+}, 30_000);
 
 // ── boot ──────────────────────────────────────────────────────────────────
 
