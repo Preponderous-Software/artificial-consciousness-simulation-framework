@@ -173,9 +173,15 @@ class Consciousness:
 
     def _install_signal_handlers(self) -> None:
         loop = asyncio.get_running_loop()
+        # Capture the task running this coroutine so the signal handler can
+        # cancel it immediately, interrupting any blocking asyncio.wait_for()
+        # call (e.g. a long Ollama request) rather than waiting for it to finish.
+        current_task = asyncio.current_task()
 
         def _stop() -> None:
             self._stop_event.set()
+            if current_task and not current_task.done():
+                current_task.cancel()
 
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:

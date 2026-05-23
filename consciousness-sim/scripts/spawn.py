@@ -21,7 +21,6 @@ if str(ROOT_DIR) not in sys.path:
 
 import asyncio
 import logging
-import signal
 
 import click
 from dotenv import load_dotenv
@@ -58,10 +57,10 @@ def _build_config_path(provider: str | None, model: str | None) -> Path:
 
 async def _run_headless(mind: Consciousness) -> None:
     """Run the thought loop without any TUI — logs only."""
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, mind._stop_event.set)
-    await mind.run()
+    try:
+        await mind.run()
+    except asyncio.CancelledError:
+        pass  # signal-driven shutdown; mind.run() finally block already saved state
 
 
 @click.command()
