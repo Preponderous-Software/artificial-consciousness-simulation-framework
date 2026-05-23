@@ -55,12 +55,27 @@ def _build_config_path(provider: str | None, model: str | None) -> Path:
         return Path(tmp.name)
 
 
-async def _run_headless(mind: Consciousness) -> None:
-    """Run the thought loop without any TUI — logs only."""
-    try:
-        await mind.run()
-    except asyncio.CancelledError:
-        pass  # signal-driven shutdown; mind.run() finally block already saved state
+async def _maybe_start_web(mind: Consciousness, web_port: int | None) -> None:
+    """Start the web dashboard as a background task if a port was given."""
+    if web_port is None:
+        return
+    from interfaces.web.server import register, start
+    register(mind)
+    await start(web_port)
+    click.echo(f"Web dashboard: http://localhost:{web_port}")
+
+
+async def _run(mind: Consciousness, headless: bool, web_port: int | None) -> None:
+    """Unified async entry point for all foreground modes."""
+    await _maybe_start_web(mind, web_port)
+    if headless:
+        try:
+            await mind.run()
+        except asyncio.CancelledError:
+            pass  # signal-driven shutdown; mind.run() finally block saves state
+    else:
+        cli = ConsciousnessCLI(mind)
+        await cli.run()
 
 
 @click.command()
@@ -70,6 +85,7 @@ async def _run_headless(mind: Consciousness) -> None:
 @click.option("--log-level", default="WARNING", show_default=True, help="Log level (DEBUG/INFO/WARNING/ERROR)")
 @click.option("--headless", is_flag=True, default=False, help="Skip TUI — run as a foreground log-only process")
 @click.option("--bg", is_flag=True, default=False, help="Detach into background (implies --headless); logs to run.log")
+@click.option("--web-port", default=None, type=int, help="Start web dashboard on this port (composable with all modes)")
 def main(
     name: str,
     provider: str | None,
@@ -77,6 +93,7 @@ def main(
     log_level: str,
     headless: bool,
     bg: bool,
+    web_port: int | None,
 ) -> None:
     load_dotenv()
 
@@ -108,6 +125,8 @@ def main(
         pid_path.write_text(str(proc.pid))
         click.echo(f"Started '{name}' in background  PID {proc.pid}")
         click.echo(f"Logs : {log_path}")
+        if web_port:
+            click.echo(f"Web  : http://localhost:{web_port}")
         click.echo(f"Stop : python scripts/stop.py --name {name}")
         return
 
@@ -115,12 +134,7 @@ def main(
     logging.info("Spawn started — logs: %s", log_path)
     config_path = _build_config_path(provider, model)
     mind = Consciousness(name=name, config_path=str(config_path))
-
-    if headless:
-        asyncio.run(_run_headless(mind))
-    else:
-        cli = ConsciousnessCLI(mind)
-        asyncio.run(cli.run())
+    asyncio.run(_run(mind, headless, web_port))
 
 
 if __name__ == "__main__":

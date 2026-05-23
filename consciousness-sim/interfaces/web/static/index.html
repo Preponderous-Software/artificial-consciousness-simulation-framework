@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Consciousness Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0e0f13;
+      --surface:     #161820;
+      --border:      #2a2d3a;
+      --text:        #c8cad4;
+      --muted:       #5a5d6e;
+      --accent:      #7c83ff;
+      --reflect:     #b48eff;
+      --online:      #4ade80;
+      --offline:     #f87171;
+      --thought-bg:  #1a1d26;
+      --pill-bg:     #1e2130;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Georgia', serif; font-size: 15px; line-height: 1.6; }
+
+    /* ── layout ── */
+    .shell { display: flex; flex-direction: column; height: 100vh; }
+
+    header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 20px; border-bottom: 1px solid var(--border);
+      background: var(--surface); flex-shrink: 0;
+    }
+    header h1 { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-style: normal; font-family: monospace; }
+    #instance-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    .tab {
+      padding: 4px 14px; border-radius: 20px; border: 1px solid var(--border);
+      cursor: pointer; font-size: 13px; font-family: monospace; transition: background .15s, border-color .15s;
+      background: transparent; color: var(--muted);
+    }
+    .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .tab .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; background: var(--offline); }
+    .tab.online .dot { background: var(--online); }
+
+    #status-indicator { margin-left: auto; font-size: 12px; font-family: monospace; color: var(--muted); }
+    #status-indicator.connected { color: var(--online); }
+    #status-indicator.error     { color: var(--offline); }
+
+    main { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── stream panel ── */
+    #stream-panel { flex: 3; display: flex; flex-direction: column; border-right: 1px solid var(--border); overflow: hidden; }
+    #stream-panel h2 { padding: 10px 16px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-family: monospace; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    #thought-stream { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; scroll-behavior: smooth; }
+
+    .bubble {
+      background: var(--thought-bg); border-radius: 6px; padding: 12px 14px;
+      border-left: 3px solid var(--border); font-size: 14px;
+      animation: fadein .4s ease; cursor: pointer; transition: border-color .2s;
+    }
+    .bubble:hover { border-color: var(--accent); }
+    .bubble.reflection { border-left-color: var(--reflect); font-style: italic; }
+    .bubble.identity_shift { border-left-color: var(--online); }
+    .bubble .meta { font-size: 11px; color: var(--muted); font-family: monospace; margin-bottom: 5px; }
+    .bubble .body { white-space: pre-wrap; word-break: break-word; }
+    .bubble .body.collapsed { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+
+    @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+    /* ── sidebar ── */
+    #sidebar { flex: 1; min-width: 240px; max-width: 320px; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 20px; }
+
+    .sidebar-section h3 { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-family: monospace; margin-bottom: 10px; }
+
+    #identity-name { font-size: 18px; font-weight: normal; margin-bottom: 4px; }
+    #self-concept { font-size: 13px; color: var(--muted); font-style: italic; }
+
+    #values-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+    .value-pill { background: var(--pill-bg); border: 1px solid var(--border); border-radius: 20px; padding: 2px 10px; font-size: 12px; font-family: monospace; color: var(--muted); }
+
+    #mood-chart { display: flex; flex-direction: column; gap: 7px; }
+    .mood-row { display: flex; align-items: center; gap: 8px; }
+    .mood-label { width: 90px; font-size: 12px; font-family: monospace; color: var(--muted); flex-shrink: 0; }
+    .mood-track { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .mood-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width .6s ease; }
+    .mood-val { width: 34px; font-size: 11px; font-family: monospace; color: var(--muted); text-align: right; }
+
+    #status-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 13px; }
+    .stat-label { color: var(--muted); font-family: monospace; font-size: 12px; }
+    .stat-value { font-family: monospace; }
+
+    #memory-list { display: flex; flex-direction: column; gap: 6px; }
+    .memory-item { font-size: 13px; color: var(--muted); padding: 6px 8px; background: var(--thought-bg); border-radius: 4px; border-left: 2px solid var(--border); }
+    .memory-item.thought   { border-left-color: var(--accent); }
+    .memory-item.reflection { border-left-color: var(--reflect); }
+
+    #no-instance { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--muted); font-style: italic; font-size: 14px; }
+
+    @media (max-width: 700px) {
+      main { flex-direction: column; }
+      #sidebar { max-width: none; border-top: 1px solid var(--border); border-right: none; }
+    }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <h1>&#9632; consciousness</h1>
+    <div id="instance-tabs"></div>
+    <span id="status-indicator">connecting…</span>
+  </header>
+  <main id="main-area">
+    <div id="no-instance">Select an instance above to begin observing.</div>
+  </main>
+</div>
+
+<script>
+"use strict";
+
+const $ = id => document.getElementById(id);
+
+let currentName = null;
+let sse = null;
+let startedAt = null;
+let uptimeTimer = null;
+
+// ── instance tabs ──────────────────────────────────────────────────────────
+
+async function loadInstances() {
+  try {
+    const res = await fetch("/instances");
+    const instances = await res.json();
+    renderTabs(instances);
+    if (!currentName && instances.length > 0) {
+      const online = instances.find(i => i.online) || instances[0];
+      selectInstance(online.name, instances);
+    }
+  } catch (e) {
+    console.error("Failed to load instances", e);
+  }
+}
+
+function renderTabs(instances) {
+  const container = $("instance-tabs");
+  container.innerHTML = "";
+  for (const inst of instances) {
+    const tab = document.createElement("button");
+    tab.className = "tab" + (inst.online ? " online" : "") + (inst.name === currentName ? " active" : "");
+    tab.innerHTML = `<span class="dot"></span>${inst.name}`;
+    tab.onclick = () => selectInstance(inst.name, instances);
+    container.appendChild(tab);
+  }
+}
+
+function selectInstance(name, instances) {
+  currentName = name;
+  renderTabs(instances);
+  buildLayout();
+  connectSSE(name);
+  const inst = instances.find(i => i.name === name);
+  if (inst) {
+    updateSidebar(inst);
+  }
+}
+
+// ── layout ─────────────────────────────────────────────────────────────────
+
+function buildLayout() {
+  const main = $("main-area");
+  main.innerHTML = `
+    <div id="stream-panel">
+      <h2>Stream of Thought</h2>
+      <div id="thought-stream"></div>
+    </div>
+    <aside id="sidebar">
+      <div class="sidebar-section">
+        <h3>Identity</h3>
+        <div id="identity-name">—</div>
+        <div id="self-concept"></div>
+        <div id="values-list"></div>
+      </div>
+      <div class="sidebar-section">
+        <h3>Mood</h3>
+        <div id="mood-chart"></div>
+      </div>
+      <div class="sidebar-section">
+        <h3>Status</h3>
+        <div id="status-grid"></div>
+      </div>
+      <div class="sidebar-section">
+        <h3>Recent Events</h3>
+        <div id="memory-list"></div>
+      </div>
+    </aside>`;
+  startedAt = Date.now();
+  if (uptimeTimer) clearInterval(uptimeTimer);
+  uptimeTimer = setInterval(tickUptime, 1000);
+}
+
+// ── sidebar rendering ───────────────────────────────────────────────────────
+
+function updateSidebar(data) {
+  if ($("identity-name")) {
+    $("identity-name").textContent = data.name || "—";
+    $("self-concept").textContent = data.self_concept || "";
+    const vals = $("values-list");
+    if (vals) {
+      vals.innerHTML = (data.values || []).map(v => `<span class="value-pill">${esc(v)}</span>`).join("");
+    }
+  }
+  renderMood(data.mood || {});
+  renderStatus(data);
+}
+
+function renderMood(mood) {
+  const chart = $("mood-chart");
+  if (!chart) return;
+  chart.innerHTML = Object.entries(mood).map(([k, v]) => `
+    <div class="mood-row">
+      <span class="mood-label">${esc(k)}</span>
+      <div class="mood-track"><div class="mood-fill" style="width:${Math.round(v * 100)}%"></div></div>
+      <span class="mood-val">${v.toFixed(2)}</span>
+    </div>`).join("");
+}
+
+let thoughtCount = 0;
+let ltMemories = 0;
+let lastReflection = "never";
+
+function renderStatus(data) {
+  const grid = $("status-grid");
+  if (!grid) return;
+  if (data.thought_count !== undefined) thoughtCount = data.thought_count;
+  grid.innerHTML = `
+    <span class="stat-label">thoughts</span><span class="stat-value" id="stat-thoughts">${thoughtCount}</span>
+    <span class="stat-label">lt memories</span><span class="stat-value" id="stat-lt">${ltMemories}</span>
+    <span class="stat-label">last reflection</span><span class="stat-value" id="stat-refl">${lastReflection}</span>
+    <span class="stat-label">uptime</span><span class="stat-value" id="stat-uptime">—</span>`;
+}
+
+function tickUptime() {
+  const el = $("stat-uptime");
+  if (!el || !startedAt) return;
+  const s = Math.floor((Date.now() - startedAt) / 1000);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  el.textContent = h ? `${h}h ${m}m` : m ? `${m}m ${sec}s` : `${sec}s`;
+}
+
+// ── SSE ────────────────────────────────────────────────────────────────────
+
+function connectSSE(name) {
+  if (sse) { sse.close(); sse = null; }
+  const indicator = $("status-indicator");
+  indicator.textContent = "connecting…";
+  indicator.className = "";
+
+  sse = new EventSource(`/stream/${encodeURIComponent(name)}`);
+
+  sse.onopen = () => {
+    indicator.textContent = "● live";
+    indicator.className = "connected";
+  };
+
+  sse.onerror = () => {
+    indicator.textContent = "○ offline";
+    indicator.className = "error";
+  };
+
+  sse.onmessage = e => {
+    try {
+      const payload = JSON.parse(e.data);
+      handleEvent(payload);
+    } catch (_) {}
+  };
+}
+
+const recentEvents = [];
+
+function handleEvent(payload) {
+  const type = payload.type || "thought";
+
+  if (type === "thought") {
+    appendBubble(payload);
+  } else if (type === "reflection") {
+    appendBubble(payload);
+    lastReflection = new Date().toLocaleTimeString();
+    const el = $("stat-refl");
+    if (el) el.textContent = lastReflection;
+  } else if (type === "memory") {
+    ltMemories = payload.long_term_count ?? ltMemories;
+    const el = $("stat-lt");
+    if (el) el.textContent = ltMemories;
+  } else if (type === "identity_shift") {
+    appendBubble(payload);
+  }
+
+  // Update thought counter for thought events
+  if (type === "thought") {
+    thoughtCount++;
+    const el = $("stat-thoughts");
+    if (el) el.textContent = thoughtCount;
+  }
+
+  // Keep last 8 for recent-events panel
+  if (type === "thought" || type === "reflection") {
+    recentEvents.push(payload);
+    if (recentEvents.length > 8) recentEvents.shift();
+    renderRecent();
+  }
+}
+
+function appendBubble(payload) {
+  const stream = $("thought-stream");
+  if (!stream) return;
+
+  const type = payload.type || "thought";
+  const content = payload.content || "";
+  const ts = payload.timestamp ? new Date(payload.timestamp).toLocaleTimeString() : "";
+
+  const div = document.createElement("div");
+  div.className = `bubble ${type}`;
+  div.innerHTML = `
+    <div class="meta">${esc(ts)} · ${esc(type)}</div>
+    <div class="body collapsed">${esc(content)}</div>`;
+
+  div.onclick = () => div.querySelector(".body").classList.toggle("collapsed");
+
+  stream.appendChild(div);
+  // Keep at most 120 bubbles to avoid DOM bloat
+  while (stream.children.length > 120) stream.removeChild(stream.firstChild);
+  stream.scrollTop = stream.scrollHeight;
+}
+
+function renderRecent() {
+  const list = $("memory-list");
+  if (!list) return;
+  list.innerHTML = [...recentEvents].reverse().slice(0, 6).map(e => `
+    <div class="memory-item ${esc(e.type || '')}">
+      ${esc((e.content || "").slice(0, 100))}${(e.content || "").length > 100 ? "…" : ""}
+    </div>`).join("");
+}
+
+function esc(str) {
+  return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+// ── boot ───────────────────────────────────────────────────────────────────
+
+loadInstances();
+setInterval(loadInstances, 10000);  // refresh instance list every 10 s
+</script>
+</body>
+</html>
