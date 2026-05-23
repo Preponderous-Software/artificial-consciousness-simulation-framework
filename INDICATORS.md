@@ -12,7 +12,7 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 
 | Code | Indicator | Status | Implementation | Gap |
 |------|-----------|--------|----------------|-----|
-| RPT-1 | Input modules generating organized, integrated perceptual representations | ◑ | `memory/episodic.py` stores timestamped narrative events; `memory/long_term.py` stores embedding-indexed semantic memories | No true sensory input modules; representations are LLM-generated text, not grounded percepts |
+| RPT-1 | Input modules generating organized, integrated perceptual representations | ◑ | `llm/perception.py` — `PerceptionProvider` ABC + `WikipediaPerception` injects external-world snippets every N cycles (issue #53); persisted to journal/episodic and surfaced in the prompt under "SOMETHING YOU JUST ENCOUNTERED" | Perception is text-only (no other modalities); a single fetch per cycle is not a continuous stream; no within-modality structure beyond raw text |
 | RPT-2 | Recurrent processing — feedback modulation of earlier representations by later stages | ✗ | None | All generation is a single feedforward LLM pass; no within-cycle recurrent feedback |
 
 ---
@@ -21,7 +21,7 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 
 | Code | Indicator | Status | Implementation | Gap |
 |------|-----------|--------|----------------|-----|
-| GWT-1 | Limited-capacity workspace with competitive selection | ◑ | `memory/short_term.py` — bounded list with importance-weighted eviction via `prune_to_capacity()` | No parallel specialist competition; eviction is importance-biased but not a true competitive selection mechanism |
+| GWT-1 | Limited-capacity workspace with competitive selection | ◑ | `memory/short_term.py` — bounded list with importance-weighted eviction via `prune_to_capacity()`; `llm/perception.py` adds a second specialist (perception, importance 1.5) competing with the LLM generator (thought, importance 1.0) for buffer slots (issue #53) | Specialists are still serially invoked rather than running in parallel; competition is only via post-hoc eviction weight, not pre-write contention |
 | GWT-2 | Selective attention controlling workspace entry | ◑ | `memory/short_term.py` — kind-based importance weights (existential > reflection > thought) bias which items survive eviction | Weights are static heuristics, not dynamic attention; all generated thoughts still enter unconditionally before eviction |
 | GWT-3 | Global broadcast — workspace content accessible to all processors | ◑ | `Consciousness._emit()` broadcasts events to all registered handlers; long-term memories retrieved and injected into every thought prompt | Handlers are read-only consumers, not specialist processors that can write back |
 | GWT-4 | State-dependent attention enabling complex sequential task performance | ✗ | None | No state-dependent attention mechanism |
@@ -43,7 +43,7 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 
 | Code | Indicator | Status | Implementation | Gap |
 |------|-----------|--------|----------------|-----|
-| PP-1 | Prediction error signals — system generates predictions and updates on surprises | ✗ | None | No prediction mechanism; each cycle generates a thought without predicting the next and measuring divergence; see issue #20 |
+| PP-1 | Prediction error signals — system generates predictions and updates on surprises | ✗ | None | No prediction mechanism; each cycle generates a thought without predicting the next and measuring divergence. (Perception now provides input that *could* be predicted — issue #53 Phase 3 opens this door — but the current cycle does not generate a prior expectation to compare against.) See issue #20 |
 
 ---
 
@@ -60,7 +60,7 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 | Code | Indicator | Status | Implementation | Gap |
 |------|-----------|--------|----------------|-----|
 | AE-1 | Agency — ability to learn from feedback and pursue goals flexibly | ◑ | `MemoryConsolidator` updates long-term memory from experience; mood drift adjusts affective state; identity amendments update self-concept | No external feedback loop; no goal-directed action beyond thought generation |
-| AE-2 | Embodiment — modeling how one's actions affect incoming sensations | ✗ | None | No action loop; the agent has no effectors and receives no sensory input to model |
+| AE-2 | Embodiment — modeling how one's actions affect incoming sensations | ✗ | None | Perception is now received (`llm/perception.py`, issue #53), but it is unsolicited — the agent does not yet *choose* what to perceive, so there is no action→sensation loop to model. Issue #53 Phase 3 (let the agent query for the next perception) is the first concrete step toward AE-2 |
 
 ---
 

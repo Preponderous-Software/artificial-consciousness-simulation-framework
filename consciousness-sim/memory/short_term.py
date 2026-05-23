@@ -14,9 +14,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 # Salience weights by event kind — higher = survives eviction longer.
+# perception sits above thought (it's an external stimulus, more salient than
+# self-generated text) but below reflection (which is meta about content).
 _KIND_IMPORTANCE: dict[str, float] = {
     "existential": 3.0,
     "reflection": 2.0,
+    "perception": 1.5,
     "thought": 1.0,
 }
 _DEFAULT_IMPORTANCE: float = 1.0

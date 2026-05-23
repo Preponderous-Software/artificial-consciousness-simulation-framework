@@ -19,6 +19,7 @@ from pathlib import Path
 from core.identity import IdentityDocument
 from core.inner_voice import InnerVoice
 from core.reflection import ReflectionEngine
+from llm.perception import Perception, PerceptionProvider, render_perception_block
 from llm.provider import LLMProvider
 from memory.episodic import EpisodicMemory
 from memory.long_term import LongTermMemory
@@ -39,6 +40,7 @@ class ThoughtCycleResult:
     thought: str
     reflection: str | None
     existential: str | None
+    perception: Perception | None = None
 
 
 class ThoughtLoop:
@@ -56,6 +58,8 @@ class ThoughtLoop:
         identity_anchor_path: Path,
         reflection_probability: float = 0.15,
         existential_every_n: int = 75,
+        perception_provider: PerceptionProvider | None = None,
+        perception_every_n: int = 0,
     ) -> None:
         self.provider = provider
         self.identity = identity
@@ -67,6 +71,8 @@ class ThoughtLoop:
         self.identity_anchor_path = identity_anchor_path
         self.reflection_probability = reflection_probability
         self.existential_every_n = max(0, int(existential_every_n))
+        self.perception_provider = perception_provider
+        self.perception_every_n = max(0, int(perception_every_n))
         self.inner_voice = InnerVoice(identity.name)
 
     async def run_cycle(self, thought_count: int) -> ThoughtCycleResult:
@@ -75,6 +81,14 @@ class ThoughtLoop:
         related = await self.long_term.similarity_search(query_embedding, limit=3)
         memories = "\n".join(f"- {m.summary}" for m in related) or "(none retrieved)"
 
+        perception = await self._maybe_fetch_perception(thought_count)
+        if perception is not None:
+            # Lingers into subsequent cycles via short-term buffer and gets
+            # consolidated by the memory consolidator from episodic.
+            stim = f"[{perception.source}: {perception.title}] {perception.content}"
+            self.short_term.add("perception", stim)
+            await self.episodic.append("perception", stim)
+
         anchor = self.identity_anchor_path.read_text(encoding="utf-8").format(**self.identity.anchor_payload())
         prompt = self.thought_prompt_path.read_text(encoding="utf-8").format(
             name=self.identity.name,
@@ -82,6 +96,7 @@ class ThoughtLoop:
             mood_vector=self.identity.mood,
             retrieved_memories=memories,
             short_term_buffer=context,
+            perception_block=render_perception_block(perception),
         )
 
         raw = await self.provider.generate(
@@ -110,4 +125,22 @@ class ThoughtLoop:
             self.short_term.add("existential", existential_text)
             await self.episodic.append("existential", existential_text)
 
-        return ThoughtCycleResult(thought=thought, reflection=reflection_text, existential=existential_text)
+        return ThoughtCycleResult(
+            thought=thought,
+            reflection=reflection_text,
+            existential=existential_text,
+            perception=perception,
+        )
+
+    async def _maybe_fetch_perception(self, thought_count: int) -> Perception | None:
+        """Fetch a perception every Nth cycle. Failures yield None (logged by provider)."""
+        if self.perception_provider is None or self.perception_every_n <= 0:
+            return None
+        if thought_count <= 0 or (thought_count % self.perception_every_n) != 0:
+            return None
+        try:
+            return await self.perception_provider.fetch()
+        except Exception:  # belt-and-braces — providers should already swallow errors
+            import logging
+            logging.warning("Perception provider raised unexpectedly; skipping", exc_info=True)
+            return None

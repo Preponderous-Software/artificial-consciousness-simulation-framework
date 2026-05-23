@@ -15,6 +15,7 @@
       --muted:       #8b8fa8;   /* raised from #5a5d6e — WCAG AA on --bg */
       --accent:      #7c83ff;
       --reflect:     #b48eff;
+      --perceive:    #fbbf24;   /* external stimulus — warm amber */
       --online:      #4ade80;
       --offline:     #f87171;
       --thought-bg:  #1a1d26;
@@ -133,6 +134,7 @@
     #thought-stream.filter-thought       .bubble:not(.thought)       { display: none; }
     #thought-stream.filter-reflection    .bubble:not(.reflection)    { display: none; }
     #thought-stream.filter-identity_shift .bubble:not(.identity_shift) { display: none; }
+    #thought-stream.filter-perception    .bubble:not(.perception)    { display: none; }
 
     /* History separator */
     .history-sep {
@@ -170,6 +172,8 @@
     .bubble:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
     .bubble.reflection { border-left-color: var(--reflect); font-style: italic; }
     .bubble.identity_shift { border-left-color: var(--online); }
+    .bubble.perception { border-left-color: var(--perceive); background: rgba(251, 191, 36, 0.04); }
+    .bubble.perception .meta .ts::before { content: "⊕ "; color: var(--perceive); }
     .bubble.history { opacity: var(--history-opacity); }
 
     .bubble .meta {
@@ -417,6 +421,7 @@ function buildLayout() {
           <button class="chip active" data-filter="all"             role="tab" aria-selected="true">all</button>
           <button class="chip"        data-filter="thought"         role="tab" aria-selected="false">thoughts</button>
           <button class="chip"        data-filter="reflection"      role="tab" aria-selected="false">reflections</button>
+          <button class="chip"        data-filter="perception"      role="tab" aria-selected="false">perceptions</button>
           <button class="chip"        data-filter="identity_shift"  role="tab" aria-selected="false">shifts</button>
           <button type="button" class="legend" id="legend-trigger" aria-label="Bubble color legend" aria-haspopup="true" aria-expanded="false">?</button>
         </div>
@@ -585,7 +590,7 @@ function handleEvent(payload) {
     return;
   }
 
-  if (type === "thought" || type === "reflection" || type === "identity_shift") {
+  if (type === "thought" || type === "reflection" || type === "identity_shift" || type === "perception") {
     if (history) historyEventCount++; else liveEventCount++;
     if (!history) removeWaitingState();
     appendBubble(payload, history);
@@ -748,6 +753,7 @@ function attachLegend() {
     pop.innerHTML = `
       <div class="row"><div class="swatch" style="background:var(--border)"></div><span>thought</span></div>
       <div class="row"><div class="swatch" style="background:var(--reflect)"></div><span>reflection (italic)</span></div>
+      <div class="row"><div class="swatch" style="background:var(--perceive)"></div><span>perception (external stimulus)</span></div>
       <div class="row"><div class="swatch" style="background:var(--online)"></div><span>identity shift</span></div>
       <div class="row" style="margin-top:6px;color:var(--muted);font-size:11px">Faded = replayed from journal</div>`;
     document.body.appendChild(pop);

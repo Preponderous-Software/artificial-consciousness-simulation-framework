@@ -38,6 +38,13 @@ def _minimal_config() -> dict:
             "max_interval_seconds": 0,
         },
         "mood": {"initial": {"curiosity": 0.5}, "drift_rate": 0.01},
+        "perception": {
+            "enabled": False,
+            "provider": "mock",
+            "every_n_cycles": 0,
+            "timeout_seconds": 1.0,
+            "cache_last_n": 0,
+        },
     }
 
 

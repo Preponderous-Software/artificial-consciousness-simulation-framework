@@ -55,6 +55,8 @@ def register(mind: Any) -> None:
     mind.on_reflection.append(_broadcast)
     mind.on_memory_stored.append(_broadcast)
     mind.on_identity_shift.append(_broadcast)
+    if hasattr(mind, "on_perception"):
+        mind.on_perception.append(_broadcast)
     logger.info("Web dashboard: registered '%s' for live streaming", name)
 
 

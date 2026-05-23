@@ -25,6 +25,7 @@ from core.identity import IdentityDocument
 from core.inner_voice import InnerVoice
 from core.reflection import ReflectionEngine
 from core.thought_loop import ThoughtLoop
+from llm.perception import PerceptionProvider, build_perception_provider
 from llm.provider import build_provider
 from memory.consolidator import MemoryConsolidator
 from memory.episodic import EpisodicMemory
@@ -61,6 +62,13 @@ _REQUIRED_CONFIG_KEYS: dict[str, list[str]] = {
         "max_interval_seconds",
     ],
     "mood": ["initial", "drift_rate"],
+    "perception": [
+        "enabled",
+        "provider",
+        "every_n_cycles",
+        "timeout_seconds",
+        "cache_last_n",
+    ],
 }
 
 
@@ -114,6 +122,15 @@ class Consciousness:
             existential_prompt=root / "llm" / "prompts" / "existential_inquiry.txt",
         )
 
+        perc_cfg = self.config["perception"]
+        self.perception_provider: PerceptionProvider | None = None
+        if bool(perc_cfg.get("enabled", False)):
+            self.perception_provider = build_perception_provider(
+                provider=str(perc_cfg["provider"]),
+                timeout_seconds=float(perc_cfg["timeout_seconds"]),
+                cache_last_n=int(perc_cfg["cache_last_n"]),
+            )
+
         self.thought_loop = ThoughtLoop(
             provider=self.provider,
             identity=self.identity,
@@ -125,6 +142,8 @@ class Consciousness:
             identity_anchor_path=root / "llm" / "prompts" / "identity_anchoring.txt",
             reflection_probability=float(self.config["thought_loop"]["reflection_probability"]),
             existential_every_n=int(self.config["thought_loop"]["existential_inquiry_every_n_thoughts"]),
+            perception_provider=self.perception_provider,
+            perception_every_n=int(perc_cfg.get("every_n_cycles", 0)) if self.perception_provider else 0,
         )
         self.consolidator = MemoryConsolidator(
             provider=self.provider,
@@ -140,6 +159,7 @@ class Consciousness:
         self.on_memory_stored: list[EventHandler] = []
         self.on_reflection: list[EventHandler] = []
         self.on_identity_shift: list[EventHandler] = []
+        self.on_perception: list[EventHandler] = []
 
     async def _emit(self, handlers: list[EventHandler], payload: dict[str, Any]) -> None:
         for handler in handlers:
@@ -245,6 +265,21 @@ class Consciousness:
                 logging.debug("Thought cycle %d: completed in %.1fs", self.thought_count, elapsed)
 
                 self.identity.drift_mood(cycle.thought, drift_rate)
+
+                if cycle.perception is not None:
+                    p = cycle.perception
+                    perception_summary = f"[{p.source}: {p.title}] {p.content}"
+                    await self.journal.append("perception", perception_summary)
+                    await self._emit(
+                        self.on_perception,
+                        {
+                            "type": "perception",
+                            "content": perception_summary,
+                            "source": p.source,
+                            "title": p.title,
+                            "url": p.url,
+                        },
+                    )
 
                 await self.journal.append("thought", cycle.thought)
                 await self._emit(self.on_thought, {"type": "thought", "content": cycle.thought})

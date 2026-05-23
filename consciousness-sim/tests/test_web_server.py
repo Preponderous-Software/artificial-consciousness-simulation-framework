@@ -213,3 +213,30 @@ def test_stream_handles_fresh_registered_instance_with_no_journal(server):
 
     events = asyncio.run(_collect_sse(server, "Echo", max_events=1))
     assert events == [{"type": "history_end", "live": True}]
+
+
+def test_register_hooks_on_perception_when_present(server):
+    """Issue #53: perception events must broadcast through the SSE pipeline."""
+    perception_handlers: list = []
+    mind = type("M", (), {
+        "name": "Foxtrot",
+        "on_thought": [], "on_reflection": [],
+        "on_memory_stored": [], "on_identity_shift": [],
+        "on_perception": perception_handlers,
+    })()
+    server.register(mind)
+
+    # The registered _broadcast was appended to on_perception
+    assert len(perception_handlers) == 1
+
+
+def test_register_tolerates_minds_without_on_perception(server):
+    """Older Consciousness builds without on_perception still register fine."""
+    mind = type("M", (), {
+        "name": "Golf",
+        "on_thought": [], "on_reflection": [],
+        "on_memory_stored": [], "on_identity_shift": [],
+        # no on_perception
+    })()
+    # Must not raise AttributeError
+    server.register(mind)

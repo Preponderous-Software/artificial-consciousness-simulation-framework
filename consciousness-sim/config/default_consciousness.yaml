@@ -34,3 +34,13 @@ mood:
     melancholy: 0.2
     contentment: 0.5
   drift_rate: 0.05
+
+perception:
+  # External-stimulus specialist that breaks the closed-loop attractor
+  # documented in issue #53. When enabled, every N cycles fetches a snippet
+  # from `provider` and injects it into the thought-generation prompt.
+  enabled: true
+  provider: "wikipedia"          # wikipedia | mock
+  every_n_cycles: 3
+  timeout_seconds: 10
+  cache_last_n: 5                # don't replay the same snippet within N fetches
