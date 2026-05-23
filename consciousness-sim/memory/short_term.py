@@ -1,8 +1,13 @@
-"""Short-term working memory with a bounded sliding window."""
+"""Short-term working memory with a bounded sliding window.
+
+Theory mapping — GWT (Baars 1988): approximates the global workspace buffer.
+Capacity limit partially implements GWT-1 (limited-capacity workspace).
+Gap: no competitive selection between specialists (GWT-2); items enter by
+recency only. See issue #23 for importance-weighted eviction.
+"""
 
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -19,11 +24,12 @@ class ShortTermMemory:
 
     def __init__(self, capacity: int = 20) -> None:
         self.capacity = capacity
-        self._items: deque[MemoryItem] = deque(maxlen=capacity)
+        self._items: list[MemoryItem] = []
 
     def add(self, kind: str, content: str) -> MemoryItem:
         item = MemoryItem(kind=kind, content=content, timestamp=datetime.now(timezone.utc).isoformat())
         self._items.append(item)
+        self.prune_to_capacity()
         return item
 
     def list(self) -> list[MemoryItem]:
@@ -35,5 +41,5 @@ class ShortTermMemory:
         return "\n".join(f"- [{i.kind}] {i.content}" for i in self._items)
 
     def prune_to_capacity(self) -> None:
-        while len(self._items) > self.capacity:
-            self._items.popleft()
+        if len(self._items) > self.capacity:
+            self._items = self._items[-self.capacity:]

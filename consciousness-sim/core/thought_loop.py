@@ -1,4 +1,14 @@
-"""Autonomous thought loop that drives generation, memory updates, and reflection triggers."""
+"""Autonomous thought loop that drives generation, memory updates, and reflection triggers.
+
+Theory mapping — GWT (Baars 1988) / CTM (Blum & Blum 2022): run_cycle()
+is the serialised workspace update — one thought occupies the global workspace
+per cycle, analogous to CTM's single-slot global broadcast. Long-term memory
+retrieval before generation partially implements GWT-3 (globally broadcast
+priors available to the generator).
+Gap: no parallel specialist competition for workspace access (GWT-2/CTM);
+all modules are called sequentially by the loop rather than competing. No
+ignition threshold (GNWT). No prediction-error cycle (PP-1).
+"""
 
 from __future__ import annotations
 
@@ -13,6 +23,15 @@ from llm.provider import LLMProvider
 from memory.episodic import EpisodicMemory
 from memory.long_term import LongTermMemory
 from memory.short_term import ShortTermMemory
+
+
+def _select_register(raw: str, has_retrieved_memories: bool) -> str:
+    """Choose an InnerVoice register based on the content of the generated thought."""
+    if "?" in raw:
+        return "questioning"
+    if has_retrieved_memories and any(w in raw.lower() for w in ("remember", "recall", "once", "back then", "used to")):
+        return "remembering"
+    return "wondering"
 
 
 @dataclass(slots=True)
@@ -71,7 +90,7 @@ class ThoughtLoop:
             temperature=0.85,
             max_tokens=220,
         )
-        thought = self.inner_voice.render(raw, register=random.choice(["wondering", "questioning", "remembering"]))
+        thought = self.inner_voice.render(raw, register=_select_register(raw, bool(related)))
         self.short_term.add("thought", thought)
         await self.episodic.append("thought", thought)
 

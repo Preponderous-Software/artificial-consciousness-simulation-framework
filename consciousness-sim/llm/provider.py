@@ -1,4 +1,14 @@
-"""LLM provider abstraction with retry/backoff for generation and embeddings."""
+"""LLM provider abstraction with retry/backoff for generation and embeddings.
+
+Theory mapping — PP/FEP (Friston 2010): the provider is the generative model
+that samples from a learned distribution over text given a context (prompt).
+Each generate() call is analogous to one step of ancestral sampling from the
+brain's generative model. embed() produces the representational geometry used
+for similarity-based memory retrieval (long-term prior access).
+Gap: no explicit prediction-error signal returned alongside generated text;
+the provider generates but does not score surprise. This prevents a true PP
+update cycle.
+"""
 
 from __future__ import annotations
 
