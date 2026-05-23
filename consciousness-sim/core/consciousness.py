@@ -201,7 +201,12 @@ class Consciousness:
 
             while not self._stop_event.is_set():
                 self.thought_count += 1
+                logging.debug("Thought cycle %d: starting LLM generation", self.thought_count)
+                t0 = asyncio.get_event_loop().time()
                 cycle = await self.thought_loop.run_cycle(self.thought_count)
+                elapsed = asyncio.get_event_loop().time() - t0
+                logging.debug("Thought cycle %d: completed in %.1fs", self.thought_count, elapsed)
+
                 self.identity.drift_mood(cycle.thought, drift_rate)
 
                 await self.journal.append("thought", cycle.thought)
@@ -222,7 +227,9 @@ class Consciousness:
                     {"type": "memory", "content": f"short={len(self.short_term.list())}"},
                 )
 
-                await asyncio.sleep(random.uniform(min_interval, max_interval))
+                interval = random.uniform(min_interval, max_interval)
+                logging.debug("Thought cycle %d: sleeping %.1fs before next cycle", self.thought_count, interval)
+                await asyncio.sleep(interval)
         finally:
             self._stop_event.set()
             consolidator_task.cancel()
