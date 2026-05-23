@@ -16,6 +16,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+logger = logging.getLogger(__name__)
+
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
@@ -92,7 +94,11 @@ class ConsciousnessCLI:
 
     async def _keyboard_loop(self) -> None:
         while True:
-            line = await asyncio.to_thread(input, "")
+            try:
+                line = await asyncio.to_thread(input, "")
+            except EOFError:
+                logger.debug("stdin closed — keyboard loop exiting (headless mode)")
+                return
             cmd = line.strip().lower()
             if cmd == "r":
                 await self.consciousness.request_reflection()

@@ -232,15 +232,19 @@ class OllamaProvider(LLMProvider):
         async with sem:
             logger.debug("Ollama generate started (model=%r, max_tokens=%d)", self.model, max_tokens)
             client = AsyncClient(host=self._resolve_base_url())
-            resp = await asyncio.wait_for(
-                client.chat(
-                    model=self.model,
-                    messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-                    options={"temperature": temperature, "num_predict": max_tokens},
-                    keep_alive=self.KEEP_ALIVE,
-                ),
-                timeout=self.GENERATE_TIMEOUT,
-            )
+            try:
+                resp = await asyncio.wait_for(
+                    client.chat(
+                        model=self.model,
+                        messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+                        options={"temperature": temperature, "num_predict": max_tokens},
+                        keep_alive=self.KEEP_ALIVE,
+                    ),
+                    timeout=self.GENERATE_TIMEOUT,
+                )
+            except TimeoutError:
+                logger.warning("Ollama generate timed out after %.0fs (model=%r)", self.GENERATE_TIMEOUT, self.model)
+                raise
             content = (resp.message.content or "").strip()
             if not content:
                 raise RuntimeError(f"Ollama returned empty content for model {self.model!r}")
@@ -261,10 +265,14 @@ class OllamaProvider(LLMProvider):
         async with sem:
             logger.debug("Ollama embed started (model=%r)", self.model)
             client = AsyncClient(host=self._resolve_base_url())
-            resp = await asyncio.wait_for(
-                client.embed(model=self.model, input=text, keep_alive=self.KEEP_ALIVE),
-                timeout=self.EMBED_TIMEOUT,
-            )
+            try:
+                resp = await asyncio.wait_for(
+                    client.embed(model=self.model, input=text, keep_alive=self.KEEP_ALIVE),
+                    timeout=self.EMBED_TIMEOUT,
+                )
+            except TimeoutError:
+                logger.warning("Ollama embed timed out after %.0fs (model=%r)", self.EMBED_TIMEOUT, self.model)
+                raise
             emb: Sequence[float] | None = resp.embeddings[0] if resp.embeddings else None
             if not emb:
                 raise RuntimeError(f"Ollama returned no embedding for model {self.model!r}")
