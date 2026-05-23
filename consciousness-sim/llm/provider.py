@@ -118,7 +118,7 @@ class DeterministicFallbackMixin:
         return vals
 
 
-class OpenAIProvider(LLMProvider, DeterministicFallbackMixin):
+class OpenAIProvider(LLMProvider):
     def __init__(self, model: str) -> None:
         self.model = model
 
@@ -126,12 +126,10 @@ class OpenAIProvider(LLMProvider, DeterministicFallbackMixin):
         try:
             from openai import AsyncOpenAI
         except Exception:
-            logger.debug("openai package not installed; using deterministic fallback")
-            return self._fallback_text(prompt)
+            raise RuntimeError("openai package not installed")
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            logger.debug("OPENAI_API_KEY not set; using deterministic fallback")
-            return self._fallback_text(prompt)
+            raise RuntimeError("OPENAI_API_KEY not set")
         client = AsyncOpenAI(api_key=api_key)
         resp = await client.chat.completions.create(
             model=self.model,
@@ -140,7 +138,9 @@ class OpenAIProvider(LLMProvider, DeterministicFallbackMixin):
             max_tokens=max_tokens,
         )
         content = (resp.choices[0].message.content or "").strip() if getattr(resp, "choices", None) else ""
-        return content or self._fallback_text(prompt)
+        if not content:
+            raise RuntimeError("OpenAI returned empty content")
+        return content
 
     async def generate(self, prompt: str, system: str, temperature: float, max_tokens: int) -> str:
         return await self.with_backoff(self._generate, prompt, system, temperature, max_tokens)
@@ -149,12 +149,10 @@ class OpenAIProvider(LLMProvider, DeterministicFallbackMixin):
         try:
             from openai import AsyncOpenAI
         except Exception:
-            logger.debug("openai package not installed; using fallback embed")
-            return self._fallback_embed(text)
+            raise RuntimeError("openai package not installed")
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            logger.debug("OPENAI_API_KEY not set; using fallback embed")
-            return self._fallback_embed(text)
+            raise RuntimeError("OPENAI_API_KEY not set")
         client = AsyncOpenAI(api_key=api_key)
         resp = await client.embeddings.create(model="text-embedding-3-small", input=text)
         embedding = resp.data[0].embedding
@@ -164,7 +162,7 @@ class OpenAIProvider(LLMProvider, DeterministicFallbackMixin):
         return await self.with_backoff(self._embed, text)
 
 
-class AnthropicProvider(LLMProvider, DeterministicFallbackMixin):
+class AnthropicProvider(LLMProvider):
     def __init__(self, model: str) -> None:
         self.model = model
 
@@ -172,12 +170,10 @@ class AnthropicProvider(LLMProvider, DeterministicFallbackMixin):
         try:
             from anthropic import AsyncAnthropic
         except Exception:
-            logger.debug("anthropic package not installed; using deterministic fallback")
-            return self._fallback_text(prompt)
+            raise RuntimeError("anthropic package not installed")
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
-            logger.debug("ANTHROPIC_API_KEY not set; using deterministic fallback")
-            return self._fallback_text(prompt)
+            raise RuntimeError("ANTHROPIC_API_KEY not set")
         client = AsyncAnthropic(api_key=api_key)
         resp = await client.messages.create(
             model=self.model,
@@ -187,16 +183,18 @@ class AnthropicProvider(LLMProvider, DeterministicFallbackMixin):
             messages=[{"role": "user", "content": prompt}],
         )
         text = "".join(chunk.text for chunk in resp.content if getattr(chunk, "text", None))
-        return text.strip() or self._fallback_text(prompt)
+        if not text.strip():
+            raise RuntimeError("Anthropic returned empty content")
+        return text.strip()
 
     async def generate(self, prompt: str, system: str, temperature: float, max_tokens: int) -> str:
         return await self.with_backoff(self._generate, prompt, system, temperature, max_tokens)
 
     async def embed(self, text: str) -> list[float]:
-        return self._fallback_embed(text)
+        raise NotImplementedError("AnthropicProvider does not support embeddings")
 
 
-class OllamaProvider(LLMProvider, DeterministicFallbackMixin):
+class OllamaProvider(LLMProvider):
     # Ollama processes one request at a time on local hardware; serialise calls
     # process-wide to prevent concurrent requests from starving each other.
     _semaphore: asyncio.Semaphore | None = None
@@ -229,35 +227,26 @@ class OllamaProvider(LLMProvider, DeterministicFallbackMixin):
         try:
             client = self._resolve_ollama_client()
         except ImportError:
-            logger.warning("ollama Python package not installed; using deterministic fallback")
-            return self._fallback_text(prompt)
+            raise RuntimeError("ollama Python package not installed")
         sem = self._get_semaphore()
         if sem.locked():
             logger.debug("Ollama semaphore busy; queuing generate request for model %r", self.model)
         async with sem:
-            try:
-                logger.debug("Ollama generate started (model=%r, max_tokens=%d)", self.model, max_tokens)
-                resp = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        client.chat,
-                        model=self.model,
-                        messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-                        options={"temperature": temperature, "num_predict": max_tokens},
-                    ),
-                    timeout=self.GENERATE_TIMEOUT,
-                )
-                content = resp.get("message", {}).get("content", "").strip()
-                if not content:
-                    logger.warning("Ollama returned empty content for model %r; using deterministic fallback", self.model)
-                    return self._fallback_text(prompt)
-                logger.debug("Ollama generate succeeded (model=%r, chars=%d)", self.model, len(content))
-                return content
-            except asyncio.TimeoutError:
-                logger.warning("Ollama generate timed out after %.0fs (model=%r); using deterministic fallback", self.GENERATE_TIMEOUT, self.model)
-                return self._fallback_text(prompt)
-            except Exception as exc:
-                logger.warning("Ollama generate failed (model=%r): %s — using deterministic fallback", self.model, exc)
-                return self._fallback_text(prompt)
+            logger.debug("Ollama generate started (model=%r, max_tokens=%d)", self.model, max_tokens)
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(
+                    client.chat,
+                    model=self.model,
+                    messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+                    options={"temperature": temperature, "num_predict": max_tokens},
+                ),
+                timeout=self.GENERATE_TIMEOUT,
+            )
+            content = resp.get("message", {}).get("content", "").strip()
+            if not content:
+                raise RuntimeError(f"Ollama returned empty content for model {self.model!r}")
+            logger.debug("Ollama generate succeeded (model=%r, chars=%d)", self.model, len(content))
+            return content
 
     async def generate(self, prompt: str, system: str, temperature: float, max_tokens: int) -> str:
         return await self.with_backoff(self._generate, prompt, system, temperature, max_tokens)
@@ -267,23 +256,17 @@ class OllamaProvider(LLMProvider, DeterministicFallbackMixin):
         if sem.locked():
             logger.debug("Ollama semaphore busy; queuing embed request for model %r", self.model)
         async with sem:
-            try:
-                logger.debug("Ollama embed started (model=%r)", self.model)
-                client = self._resolve_ollama_client()
-                resp = await asyncio.wait_for(
-                    asyncio.to_thread(client.embeddings, model=self.model, prompt=text),
-                    timeout=self.EMBED_TIMEOUT,
-                )
-                emb: Sequence[float] | None = resp.get("embedding")
-                if emb:
-                    logger.debug("Ollama embed succeeded (model=%r, dims=%d)", self.model, len(emb))
-                    return [float(v) for v in emb]
-                logger.warning("Ollama embeddings returned no embedding for model %r; using fallback", self.model)
-            except asyncio.TimeoutError:
-                logger.warning("Ollama embed timed out after %.0fs (model=%r); using fallback", self.EMBED_TIMEOUT, self.model)
-            except Exception as exc:
-                logger.warning("Ollama embed failed (model=%r): %s — using fallback", self.model, exc)
-        return self._fallback_embed(text)
+            logger.debug("Ollama embed started (model=%r)", self.model)
+            client = self._resolve_ollama_client()
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(client.embeddings, model=self.model, prompt=text),
+                timeout=self.EMBED_TIMEOUT,
+            )
+            emb: Sequence[float] | None = resp.get("embedding")
+            if not emb:
+                raise RuntimeError(f"Ollama returned no embedding for model {self.model!r}")
+            logger.debug("Ollama embed succeeded (model=%r, dims=%d)", self.model, len(emb))
+            return [float(v) for v in emb]
 
 
 class MockProvider(LLMProvider, DeterministicFallbackMixin):

@@ -208,11 +208,30 @@ class Consciousness:
             max_interval = float(tcfg["max_interval_seconds"])
             drift_rate = float(self.config["mood"]["drift_rate"])
 
+            _MAX_CONSECUTIVE_FAILURES = 20
+            consecutive_failures = 0
+
             while not self._stop_event.is_set():
                 self.thought_count += 1
                 logging.debug("Thought cycle %d: starting LLM generation", self.thought_count)
                 t0 = asyncio.get_event_loop().time()
-                cycle = await self.thought_loop.run_cycle(self.thought_count)
+                try:
+                    cycle = await self.thought_loop.run_cycle(self.thought_count)
+                except Exception as exc:
+                    consecutive_failures += 1
+                    logging.warning(
+                        "Thought cycle %d: LLM failed (%s); skipping (%d/%d consecutive failures)",
+                        self.thought_count, exc, consecutive_failures, _MAX_CONSECUTIVE_FAILURES,
+                    )
+                    if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                        logging.error(
+                            "%d consecutive LLM failures — shutting down", _MAX_CONSECUTIVE_FAILURES
+                        )
+                        self._stop_event.set()
+                    else:
+                        await asyncio.sleep(random.uniform(min_interval, max_interval))
+                    continue
+                consecutive_failures = 0
                 elapsed = asyncio.get_event_loop().time() - t0
                 logging.debug("Thought cycle %d: completed in %.1fs", self.thought_count, elapsed)
 
