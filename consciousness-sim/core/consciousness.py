@@ -234,9 +234,10 @@ class Consciousness:
                             {"type": "identity_shift", "content": self.identity.self_concept},
                         )
 
+                lt_count = await self.long_term.count()
                 await self._emit(
                     self.on_memory_stored,
-                    {"type": "memory", "content": f"short={len(self.short_term.list())}"},
+                    {"type": "memory", "long_term_count": lt_count, "content": f"Long-term store: {lt_count} memories"},
                 )
 
                 interval = random.uniform(min_interval, max_interval)
