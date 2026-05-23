@@ -26,9 +26,13 @@ class StateManager:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     async def save(self, state: dict[str, Any]) -> None:
+        # Atomic write: state.json is now refreshed every cycle, so a crash
+        # mid-write must not leave a half-written file that breaks restart.
         def _write() -> None:
-            with self.path.open("w", encoding="utf-8") as f:
+            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+            with tmp.open("w", encoding="utf-8") as f:
                 json.dump(state, f, indent=2)
+            tmp.replace(self.path)
 
         await asyncio.to_thread(_write)
 

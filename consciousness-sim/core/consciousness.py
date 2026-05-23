@@ -201,6 +201,9 @@ class Consciousness:
 
     async def run(self) -> None:
         await self.initialize()
+        # Write state.json immediately so freshly-spawned instances are visible
+        # to /instances before their first thought cycle completes.
+        await self._save_state()
         self._install_signal_handlers()
 
         consolidation_interval = float(self.config["memory"]["consolidation_interval_minutes"]) * 60
@@ -264,6 +267,8 @@ class Consciousness:
                     self.on_memory_stored,
                     {"type": "memory", "long_term_count": lt_count, "content": f"Long-term store: {lt_count} memories"},
                 )
+
+                await self._save_state()
 
                 interval = random.uniform(min_interval, max_interval)
                 logging.debug("Thought cycle %d: sleeping %.1fs before next cycle", self.thought_count, interval)
