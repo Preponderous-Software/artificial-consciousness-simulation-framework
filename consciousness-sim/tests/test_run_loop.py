@@ -247,7 +247,7 @@ def test_run_loop_consolidator_cancelled_on_stop(tmp_path, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 def test_run_loop_applies_amendment_on_self_referential_reflection(tmp_path, monkeypatch) -> None:
-    """When a reflection contains 'I am', an identity amendment must be applied."""
+    """Identity amendment must fire when reflection contains an explicit revision marker."""
     mind = _make_mind(tmp_path, monkeypatch)
 
     from core.thought_loop import ThoughtCycleResult
@@ -256,7 +256,7 @@ def test_run_loop_applies_amendment_on_self_referential_reflection(tmp_path, mon
         mind._stop_event.set()
         return ThoughtCycleResult(
             thought="I think, therefore I continue.",
-            reflection="I am more than I thought I was.",
+            reflection="I realize now that my thinking has deepened over many cycles.",
             existential=None,
         )
 

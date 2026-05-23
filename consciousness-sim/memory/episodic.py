@@ -27,6 +27,10 @@ class EpisodicEvent:
 class EpisodicMemory:
     """Stores raw narrative experience as JSONL."""
 
+    # Maximum in-memory cache size — the tail is all that's ever read back,
+    # so capping the head prevents unbounded growth on long runs.
+    _MAX_CACHE_SIZE: int = 500
+
     def __init__(self, path: Path) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -46,6 +50,8 @@ class EpisodicMemory:
 
         await asyncio.to_thread(_write)
         self._cache.append(event)
+        if len(self._cache) > self._MAX_CACHE_SIZE:
+            self._cache = self._cache[-self._MAX_CACHE_SIZE :]
         self._cache_loaded = True
         return event
 

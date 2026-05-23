@@ -215,8 +215,14 @@ class Consciousness:
                 if cycle.reflection:
                     await self.journal.append("reflection", cycle.reflection)
                     await self._emit(self.on_reflection, {"type": "reflection", "content": cycle.reflection})
-                    if "I am" in cycle.reflection:
-                        self.identity.apply_amendment("I continue becoming through reflection.")
+                    # Only apply an identity amendment when the reflection contains explicit
+                    # self-revision language — not on the generic "I am" present in every
+                    # first-person reflection, which would spam identical boilerplate entries.
+                    _IDENTITY_SHIFT_MARKERS = ("I have changed", "I realize now", "I understand now", "I am becoming")
+                    if any(marker.lower() in cycle.reflection.lower() for marker in _IDENTITY_SHIFT_MARKERS):
+                        first_sentence = cycle.reflection.split(".")[0].strip()
+                        amendment = first_sentence[:120] if first_sentence else cycle.reflection[:120]
+                        self.identity.apply_amendment(amendment)
                         await self._emit(
                             self.on_identity_shift,
                             {"type": "identity_shift", "content": self.identity.self_concept},
