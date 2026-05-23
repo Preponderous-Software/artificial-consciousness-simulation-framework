@@ -59,6 +59,7 @@ class MemoryConsolidator:
         )
 
         stored = 0
+        fallback_candidates: list[str] = []
         for line in output.splitlines():
             line = line.strip()
             if not line.startswith("-"):
@@ -69,6 +70,7 @@ class MemoryConsolidator:
             )
             if not match:
                 logging.warning("Consolidation: skipping unparseable line: %r", line)
+                fallback_candidates.append(line.lstrip("- ").strip())
                 continue
             importance = float(match.group(1))
             valence = float(match.group(2))
@@ -79,9 +81,18 @@ class MemoryConsolidator:
 
         if stored == 0 and events:
             logging.warning(
-                "Consolidation pass stored 0 memories from %d events; LLM output may have changed format.",
+                "Consolidation pass stored 0 memories from %d events; LLM output may have changed format."
+                " Attempting plain-text fallback.",
                 len(events),
             )
+            for summary in fallback_candidates:
+                if not summary:
+                    continue
+                embedding = await self.provider.embed(summary)
+                await self.long_term.add_memory(summary, 0.0, 5.0, embedding)
+                stored += 1
+            if stored:
+                logging.info("Consolidation fallback stored %d memories with default importance/valence.", stored)
 
         self.short_term.prune_to_capacity()
         if self.forgetting_curve_enabled:

@@ -30,6 +30,8 @@ class EpisodicMemory:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._cache: list[EpisodicEvent] = []
+        self._cache_loaded: bool = False
 
     async def append(self, kind: str, content: str) -> EpisodicEvent:
         event = EpisodicEvent(
@@ -43,14 +45,22 @@ class EpisodicMemory:
                 f.write(json.dumps(asdict(event)) + "\n")
 
         await asyncio.to_thread(_write)
+        self._cache.append(event)
+        self._cache_loaded = True
         return event
 
     async def recent(self, limit: int = 50) -> list[EpisodicEvent]:
+        if not self._cache_loaded:
+            await self._load_from_disk()
+        return self._cache[-limit:]
+
+    async def _load_from_disk(self) -> None:
         if not self.path.exists():
-            return []
+            self._cache_loaded = True
+            return
 
         def _read() -> list[EpisodicEvent]:
-            rows = []
+            rows: list[EpisodicEvent] = []
             with self.path.open("r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
@@ -60,6 +70,7 @@ class EpisodicMemory:
                         rows.append(EpisodicEvent(**json.loads(line)))
                     except json.JSONDecodeError:
                         logging.warning("EpisodicMemory: skipping corrupted line: %r", line)
-            return rows[-limit:]
+            return rows
 
-        return await asyncio.to_thread(_read)
+        self._cache = await asyncio.to_thread(_read)
+        self._cache_loaded = True

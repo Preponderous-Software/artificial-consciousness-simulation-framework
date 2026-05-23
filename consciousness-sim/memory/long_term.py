@@ -104,6 +104,8 @@ class LongTermMemory:
             row = await cursor.fetchone()
             return int(row[0]) if row else 0
 
+    _MAX_CANDIDATES: int = 50
+
     async def similarity_search(
         self,
         query_embedding: list[float],
@@ -113,7 +115,7 @@ class LongTermMemory:
         if not query_embedding or limit <= 0:
             return []
         q_dim = len(query_embedding)
-        candidate_limit = candidate_limit or max(50, limit * 20)
+        candidate_limit = min(candidate_limit or self._MAX_CANDIDATES, self._MAX_CANDIDATES)
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
                 """
