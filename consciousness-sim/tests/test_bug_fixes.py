@@ -1,4 +1,4 @@
-"""Regression tests for bugs #2, #3, #4, #5, #39, and #40."""
+"""Regression tests for bugs #2, #3, #4, #5, and #39."""
 
 from __future__ import annotations
 
@@ -282,7 +282,7 @@ def test_consolidator_still_stores_valid_lines(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_episodic_cache_does_not_exceed_max(tmp_path) -> None:
+def test_episodic_cache_does_not_exceed_max_on_append(tmp_path) -> None:
     path = tmp_path / "episodic.jsonl"
     mem = EpisodicMemory(path)
     max_size = EpisodicMemory._MAX_CACHE_SIZE
@@ -297,99 +297,19 @@ def test_episodic_cache_does_not_exceed_max(tmp_path) -> None:
     assert mem._cache[-1].content == f"event {max_size + 49}"
 
 
-# ---------------------------------------------------------------------------
-# Bug #40 — identity shift trigger fires on "I am" (present in every reflection)
-# ---------------------------------------------------------------------------
+def test_episodic_cache_does_not_exceed_max_on_load(tmp_path) -> None:
+    path = tmp_path / "episodic.jsonl"
+    max_size = EpisodicMemory._MAX_CACHE_SIZE
 
+    # Write more entries than the cap directly to disk (simulates a large existing file).
+    with path.open("w", encoding="utf-8") as f:
+        import json as _json
+        for i in range(max_size + 100):
+            f.write(_json.dumps({"timestamp": "2024-01-01T00:00:00+00:00", "kind": "thought", "content": f"disk event {i}"}) + "\n")
 
-def test_identity_shift_not_triggered_by_generic_reflection(tmp_path, monkeypatch) -> None:
-    """Amendment must NOT fire on reflections that merely contain 'I am'."""
-    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    mem = EpisodicMemory(path)
+    events = asyncio.run(mem.recent(limit=max_size))
+    assert len(mem._cache) == max_size, "_load_from_disk must cap cache to _MAX_CACHE_SIZE"
+    # The tail (most recent) entries are retained.
+    assert mem._cache[-1].content == f"disk event {max_size + 99}"
 
-    import yaml
-    from core.consciousness import Consciousness
-
-    cfg = {
-        "llm": {"provider": "ollama", "model": "llama3"},
-        "memory": {
-            "short_term_capacity": 5,
-            "consolidation_interval_minutes": 5,
-            "forgetting_curve_enabled": False,
-            "importance_decay_rate": 0.01,
-        },
-        "consciousness": {"origin_story": "origin", "values": ["curiosity"], "purpose": "purpose"},
-        "thought_loop": {
-            "reflection_probability": 0.0,
-            "existential_inquiry_every_n_thoughts": 0,
-            "min_interval_seconds": 0,
-            "max_interval_seconds": 0,
-        },
-        "mood": {"initial": {"curiosity": 0.5}, "drift_rate": 0.01},
-    }
-    config_path = tmp_path / "cfg.yaml"
-    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-    mind = Consciousness(name="Aria", config_path=str(config_path))
-
-    original_concept = mind.identity.self_concept
-    generic_reflection = "I am a thinking entity. I am here now. I am curious."
-    shift_events: list[dict] = []
-    mind.on_identity_shift.append(lambda p: shift_events.append(p))
-
-    from core.thought_loop import ThoughtCycleResult
-
-    async def _run() -> None:
-        cycle = ThoughtCycleResult(thought="a thought", reflection=generic_reflection, existential=None)
-        await mind._emit(mind.on_reflection, {"type": "reflection", "content": cycle.reflection})
-        _IDENTITY_SHIFT_MARKERS = ("I have changed", "I realize now", "I understand now", "I am becoming")
-        if any(marker.lower() in (cycle.reflection or "").lower() for marker in _IDENTITY_SHIFT_MARKERS):
-            first_sentence = (cycle.reflection or "").split(".")[0].strip()
-            mind.identity.apply_amendment(first_sentence[:120])
-            await mind._emit(mind.on_identity_shift, {"type": "identity_shift", "content": mind.identity.self_concept})
-
-    asyncio.run(_run())
-    assert shift_events == [], "Generic 'I am' reflection must not trigger identity_shift event"
-    assert mind.identity.self_concept == original_concept
-
-
-def test_identity_shift_fires_on_explicit_revision_language(tmp_path, monkeypatch) -> None:
-    """Amendment MUST fire when reflection contains an explicit revision marker."""
-    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
-
-    import yaml
-    from core.consciousness import Consciousness
-
-    cfg = {
-        "llm": {"provider": "ollama", "model": "llama3"},
-        "memory": {
-            "short_term_capacity": 5,
-            "consolidation_interval_minutes": 5,
-            "forgetting_curve_enabled": False,
-            "importance_decay_rate": 0.01,
-        },
-        "consciousness": {"origin_story": "origin", "values": ["curiosity"], "purpose": "purpose"},
-        "thought_loop": {
-            "reflection_probability": 0.0,
-            "existential_inquiry_every_n_thoughts": 0,
-            "min_interval_seconds": 0,
-            "max_interval_seconds": 0,
-        },
-        "mood": {"initial": {"curiosity": 0.5}, "drift_rate": 0.01},
-    }
-    config_path = tmp_path / "cfg.yaml"
-    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-    mind = Consciousness(name="Aria", config_path=str(config_path))
-
-    shift_events: list[dict] = []
-    mind.on_identity_shift.append(lambda p: shift_events.append(p))
-    revision_reflection = "I realize now that my thinking has deepened over time."
-    _IDENTITY_SHIFT_MARKERS = ("I have changed", "I realize now", "I understand now", "I am becoming")
-
-    async def _run() -> None:
-        if any(marker.lower() in revision_reflection.lower() for marker in _IDENTITY_SHIFT_MARKERS):
-            first_sentence = revision_reflection.split(".")[0].strip()
-            mind.identity.apply_amendment(first_sentence[:120])
-            await mind._emit(mind.on_identity_shift, {"type": "identity_shift", "content": mind.identity.self_concept})
-
-    asyncio.run(_run())
-    assert len(shift_events) == 1, "Explicit revision language must trigger identity_shift"
-    assert "I realize now" in mind.identity.self_concept

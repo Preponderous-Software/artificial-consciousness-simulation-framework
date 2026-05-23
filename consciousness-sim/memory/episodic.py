@@ -78,5 +78,7 @@ class EpisodicMemory:
                         logging.warning("EpisodicMemory: skipping corrupted line: %r", line)
             return rows
 
-        self._cache = await asyncio.to_thread(_read)
+        rows = await asyncio.to_thread(_read)
+        # Only keep the tail — older entries are never read back by recent().
+        self._cache = rows[-self._MAX_CACHE_SIZE :]
         self._cache_loaded = True
