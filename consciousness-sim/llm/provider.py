@@ -197,13 +197,23 @@ class AnthropicProvider(LLMProvider, DeterministicFallbackMixin):
 
 
 class OllamaProvider(LLMProvider, DeterministicFallbackMixin):
-    # Abort and fall back if Ollama doesn't respond within this many seconds.
-    # Set generously: local hardware can be slow, especially under concurrent load.
-    GENERATE_TIMEOUT = 180.0
-    EMBED_TIMEOUT = 60.0
+    # Ollama processes one request at a time on local hardware; serialise calls
+    # process-wide to prevent concurrent requests from starving each other.
+    _semaphore: asyncio.Semaphore | None = None
+
+    # Per-request timeouts — generous for slow hardware, but finite so a hung
+    # server doesn't stall the thought loop forever.
+    GENERATE_TIMEOUT = 300.0
+    EMBED_TIMEOUT = 120.0
 
     def __init__(self, model: str) -> None:
         self.model = model
+
+    @classmethod
+    def _get_semaphore(cls) -> asyncio.Semaphore:
+        if cls._semaphore is None:
+            cls._semaphore = asyncio.Semaphore(1)
+        return cls._semaphore
 
     @staticmethod
     def _resolve_ollama_client() -> Any:
@@ -221,46 +231,58 @@ class OllamaProvider(LLMProvider, DeterministicFallbackMixin):
         except ImportError:
             logger.warning("ollama Python package not installed; using deterministic fallback")
             return self._fallback_text(prompt)
-        try:
-            resp = await asyncio.wait_for(
-                asyncio.to_thread(
-                    client.chat,
-                    model=self.model,
-                    messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-                    options={"temperature": temperature, "num_predict": max_tokens},
-                ),
-                timeout=self.GENERATE_TIMEOUT,
-            )
-            content = resp.get("message", {}).get("content", "").strip()
-            if not content:
-                logger.warning("Ollama returned empty content for model %r; using deterministic fallback", self.model)
+        sem = self._get_semaphore()
+        if sem.locked():
+            logger.debug("Ollama semaphore busy; queuing generate request for model %r", self.model)
+        async with sem:
+            try:
+                logger.debug("Ollama generate started (model=%r, max_tokens=%d)", self.model, max_tokens)
+                resp = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        client.chat,
+                        model=self.model,
+                        messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+                        options={"temperature": temperature, "num_predict": max_tokens},
+                    ),
+                    timeout=self.GENERATE_TIMEOUT,
+                )
+                content = resp.get("message", {}).get("content", "").strip()
+                if not content:
+                    logger.warning("Ollama returned empty content for model %r; using deterministic fallback", self.model)
+                    return self._fallback_text(prompt)
+                logger.debug("Ollama generate succeeded (model=%r, chars=%d)", self.model, len(content))
+                return content
+            except asyncio.TimeoutError:
+                logger.warning("Ollama generate timed out after %.0fs (model=%r); using deterministic fallback", self.GENERATE_TIMEOUT, self.model)
                 return self._fallback_text(prompt)
-            return content
-        except asyncio.TimeoutError:
-            logger.warning("Ollama generate timed out after %.0fs (model=%r); using deterministic fallback", self.GENERATE_TIMEOUT, self.model)
-            return self._fallback_text(prompt)
-        except Exception as exc:
-            logger.warning("Ollama generate failed (model=%r): %s — using deterministic fallback", self.model, exc)
-            return self._fallback_text(prompt)
+            except Exception as exc:
+                logger.warning("Ollama generate failed (model=%r): %s — using deterministic fallback", self.model, exc)
+                return self._fallback_text(prompt)
 
     async def generate(self, prompt: str, system: str, temperature: float, max_tokens: int) -> str:
         return await self.with_backoff(self._generate, prompt, system, temperature, max_tokens)
 
     async def embed(self, text: str) -> list[float]:
-        try:
-            client = self._resolve_ollama_client()
-            resp = await asyncio.wait_for(
-                asyncio.to_thread(client.embeddings, model=self.model, prompt=text),
-                timeout=self.EMBED_TIMEOUT,
-            )
-            emb: Sequence[float] | None = resp.get("embedding")
-            if emb:
-                return [float(v) for v in emb]
-            logger.warning("Ollama embeddings returned no embedding for model %r; using fallback", self.model)
-        except asyncio.TimeoutError:
-            logger.warning("Ollama embed timed out after %.0fs (model=%r); using fallback", self.EMBED_TIMEOUT, self.model)
-        except Exception as exc:
-            logger.warning("Ollama embed failed (model=%r): %s — using fallback", self.model, exc)
+        sem = self._get_semaphore()
+        if sem.locked():
+            logger.debug("Ollama semaphore busy; queuing embed request for model %r", self.model)
+        async with sem:
+            try:
+                logger.debug("Ollama embed started (model=%r)", self.model)
+                client = self._resolve_ollama_client()
+                resp = await asyncio.wait_for(
+                    asyncio.to_thread(client.embeddings, model=self.model, prompt=text),
+                    timeout=self.EMBED_TIMEOUT,
+                )
+                emb: Sequence[float] | None = resp.get("embedding")
+                if emb:
+                    logger.debug("Ollama embed succeeded (model=%r, dims=%d)", self.model, len(emb))
+                    return [float(v) for v in emb]
+                logger.warning("Ollama embeddings returned no embedding for model %r; using fallback", self.model)
+            except asyncio.TimeoutError:
+                logger.warning("Ollama embed timed out after %.0fs (model=%r); using fallback", self.EMBED_TIMEOUT, self.model)
+            except Exception as exc:
+                logger.warning("Ollama embed failed (model=%r): %s — using fallback", self.model, exc)
         return self._fallback_embed(text)
 
 
