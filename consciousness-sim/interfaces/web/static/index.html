@@ -34,6 +34,16 @@
     }
 
     /* Scrollable tab strip — no wrapping */
+    #tab-strip-wrap { position: relative; flex: 1; min-width: 0; display: flex; }
+    /* Fade gradients on edges indicate scrollable overflow without a scrollbar */
+    #tab-strip-wrap::before, #tab-strip-wrap::after {
+      content: ''; position: absolute; top: 0; bottom: 0; width: 24px;
+      pointer-events: none; z-index: 2; opacity: 0; transition: opacity .15s;
+    }
+    #tab-strip-wrap::before { left: 0;  background: linear-gradient(to right, var(--surface), transparent); }
+    #tab-strip-wrap::after  { right: 0; background: linear-gradient(to left,  var(--surface), transparent); }
+    #tab-strip-wrap.overflow-left::before  { opacity: 1; }
+    #tab-strip-wrap.overflow-right::after  { opacity: 1; }
     #instance-tabs {
       display: flex; gap: 0; flex: 1; min-width: 0;
       overflow-x: auto; scrollbar-width: none;
@@ -236,7 +246,9 @@
 <body>
 <div class="shell">
   <header>
-    <div id="instance-tabs"></div>
+    <div id="tab-strip-wrap">
+      <div id="instance-tabs"></div>
+    </div>
     <div id="header-right">
       <span id="current-name"></span>
       <span id="status-indicator" title="Stream connection status">—</span>
@@ -322,10 +334,26 @@ function showEmptyState() {
   if (sse) { sse.close(); sse = null; }
 }
 
+function updateTabOverflow() {
+  const wrap = $("tab-strip-wrap");
+  const tabs = $("instance-tabs");
+  if (!wrap || !tabs) return;
+  const left  = tabs.scrollLeft > 2;
+  const right = tabs.scrollLeft + tabs.clientWidth < tabs.scrollWidth - 2;
+  wrap.classList.toggle("overflow-left",  left);
+  wrap.classList.toggle("overflow-right", right);
+}
+
 function renderTabs(instances) {
   const container = $("instance-tabs");
   container.innerHTML = "";
   container.setAttribute("role", "tablist");
+  // Wire scroll observation once
+  if (!container._overflowWired) {
+    container.addEventListener("scroll", updateTabOverflow, { passive: true });
+    window.addEventListener("resize", updateTabOverflow);
+    container._overflowWired = true;
+  }
   for (const inst of instances) {
     const tab = document.createElement("button");
     const isActive = inst.id === currentId;
@@ -341,9 +369,22 @@ function renderTabs(instances) {
     tab.onclick = () => selectInstance(inst.id, instances);
     container.appendChild(tab);
   }
+  // After layout: recompute overflow shadows and scroll active tab into view
+  requestAnimationFrame(() => {
+    updateTabOverflow();
+    const active = container.querySelector(".tab.active");
+    if (active) active.scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
 }
 
 function selectInstance(id, instances) {
+  // Short-circuit when the user re-clicks the active tab — avoids
+  // a wasteful SSE teardown + "connecting…" flash.
+  if (id === currentId) {
+    // Still refresh tab decorations in case streamable/running changed
+    renderTabs(instances);
+    return;
+  }
   const inst = instances.find(i => i.id === id) || {};
   currentId          = id;
   currentName        = inst.name ?? id;
@@ -586,7 +627,9 @@ function insertWaitingState() {
   if (!stream || stream.querySelector(".stream-waiting")) return;
   const w = document.createElement("div");
   w.className = "stream-waiting";
-  w.innerHTML = `<span class="pulse" aria-hidden="true"></span><span>Waiting for first thought…</span>`;
+  w.innerHTML = `
+    <span class="pulse" aria-hidden="true"></span>
+    <span>Waiting for first thought<span style="opacity:.7"> · cycles run every 10–30s</span></span>`;
   stream.appendChild(w);
 }
 
