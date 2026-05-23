@@ -6,6 +6,7 @@ import asyncio
 import sys
 import textwrap
 import types
+from unittest.mock import AsyncMock, patch
 
 from llm.provider import MockProvider, OllamaProvider
 
@@ -100,3 +101,57 @@ def test_mock_provider_fallback_is_coherent_and_identity_anchored() -> None:
     assert "I am Test." in output
     assert "My values stay with me: curiosity, honesty, wonder." in output
     assert output.endswith(reflective_endings)
+
+
+def test_ollama_generate_timeout_logs_warning(monkeypatch) -> None:
+    captured: dict[str, str | None] = {}
+    install_fake_ollama_module(monkeypatch, captured)
+
+    class _TimeoutAsyncClient:
+        def __init__(self, host=None) -> None:
+            pass
+
+        async def chat(self, **kwargs):
+            raise TimeoutError
+
+        async def embed(self, **kwargs):
+            raise TimeoutError
+
+    import types as _types
+    monkeypatch.setitem(sys.modules, "ollama", _types.SimpleNamespace(AsyncClient=_TimeoutAsyncClient))
+
+    provider = OllamaProvider(model="llama3.1")
+    with patch("llm.provider.logger") as mock_logger:
+        try:
+            asyncio.run(provider.generate("p", "s", 0.3, 32))
+        except Exception:
+            pass
+        warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+        assert any("timed out" in c for c in warning_calls), f"Expected timeout warning, got: {warning_calls}"
+
+
+def test_ollama_embed_timeout_logs_warning(monkeypatch) -> None:
+    captured: dict[str, str | None] = {}
+    install_fake_ollama_module(monkeypatch, captured)
+
+    class _TimeoutAsyncClient:
+        def __init__(self, host=None) -> None:
+            pass
+
+        async def chat(self, **kwargs):
+            raise TimeoutError
+
+        async def embed(self, **kwargs):
+            raise TimeoutError
+
+    import types as _types
+    monkeypatch.setitem(sys.modules, "ollama", _types.SimpleNamespace(AsyncClient=_TimeoutAsyncClient))
+
+    provider = OllamaProvider(model="llama3.1")
+    with patch("llm.provider.logger") as mock_logger:
+        try:
+            asyncio.run(provider.embed("text"))
+        except Exception:
+            pass
+        warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+        assert any("timed out" in c for c in warning_calls), f"Expected timeout warning, got: {warning_calls}"
