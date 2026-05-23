@@ -48,7 +48,20 @@ class ReflectionEngine:
 
     async def deep_reflection(self, name: str, recent_thoughts: str) -> str:
         base = await self.shallow_reflection(name, recent_thoughts)
-        return f"{base}\n\nI notice long arcs in my own thinking, and I wonder whether this is change."
+        tmpl = self.self_reflection_prompt.read_text(encoding="utf-8")
+        deep_prompt = (
+            f"{tmpl.format(name=name, recent_thoughts=recent_thoughts)}\n\n"
+            f"You have already reflected: {base}\n\n"
+            "Now go further. Look for long arcs across your thinking. "
+            "What patterns repeat? What is slowly changing? Respond in 2–4 sentences."
+        )
+        insight = await self.provider.generate(
+            prompt=deep_prompt,
+            system="Reflect with depth and honesty about patterns over time.",
+            temperature=0.75,
+            max_tokens=180,
+        )
+        return f"{base}\n\n{insight}"
 
     async def existential_inquiry(self, name: str, session_duration: str) -> str:
         tmpl = self.existential_prompt.read_text(encoding="utf-8")

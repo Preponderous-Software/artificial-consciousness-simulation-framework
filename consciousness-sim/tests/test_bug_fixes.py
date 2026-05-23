@@ -240,8 +240,10 @@ def test_consolidator_logs_warning_on_unparseable_lines(tmp_path, caplog) -> Non
     with caplog.at_level(logging.WARNING):
         stored = asyncio.run(_run())
 
-    assert stored == 0
+    # The fallback path now salvages unparseable bullet lines with default importance/valence.
+    assert stored == 1, "Fallback extraction should store 1 memory from the unparseable line"
     assert any("skipping unparseable" in r.message.lower() for r in caplog.records)
+    assert any("fallback" in r.message.lower() for r in caplog.records)
 
 
 def test_consolidator_logs_warning_when_zero_stored_from_nonempty_events(tmp_path, caplog) -> None:

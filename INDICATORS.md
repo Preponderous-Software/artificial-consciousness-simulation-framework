@@ -21,8 +21,8 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 
 | Code | Indicator | Status | Implementation | Gap |
 |------|-----------|--------|----------------|-----|
-| GWT-1 | Limited-capacity workspace with competitive selection | ◑ | `memory/short_term.py` — bounded list, capacity enforced by `prune_to_capacity()` | Eviction is recency-based (FIFO), not competitive by salience; see issue #23 |
-| GWT-2 | Selective attention controlling workspace entry | ✗ | None | No attention mechanism gates workspace writes; all generated thoughts enter unconditionally |
+| GWT-1 | Limited-capacity workspace with competitive selection | ◑ | `memory/short_term.py` — bounded list with importance-weighted eviction via `prune_to_capacity()` | No parallel specialist competition; eviction is importance-biased but not a true competitive selection mechanism |
+| GWT-2 | Selective attention controlling workspace entry | ◑ | `memory/short_term.py` — kind-based importance weights (existential > reflection > thought) bias which items survive eviction | Weights are static heuristics, not dynamic attention; all generated thoughts still enter unconditionally before eviction |
 | GWT-3 | Global broadcast — workspace content accessible to all processors | ◑ | `Consciousness._emit()` broadcasts events to all registered handlers; long-term memories retrieved and injected into every thought prompt | Handlers are read-only consumers, not specialist processors that can write back |
 | GWT-4 | State-dependent attention enabling complex sequential task performance | ✗ | None | No state-dependent attention mechanism |
 
@@ -69,7 +69,9 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 | Status | Count | Indicators |
 |--------|-------|-----------|
 | ✓ Full | 0 | — |
-| ◑ Partial | 7 | RPT-1, GWT-1, GWT-3, HOT-1, HOT-3, HOT-4, AE-1 |
-| ✗ None | 7 | RPT-2, GWT-2, GWT-4, HOT-2, PP-1, AST-1, AE-2 |
+| ◑ Partial | 9 | RPT-1, GWT-1, GWT-2, GWT-3, HOT-1, HOT-3, HOT-4, AE-1, HOT-2* |
+| ✗ None | 5 | RPT-2, GWT-4, PP-1, AST-1, AE-2 |
+
+*HOT-2 upgraded from ✗ to ◑ by deep_reflection now making a real LLM call with pattern-seeking prompt.
 
 **Update this file whenever a capability is added, changed, or removed.**
