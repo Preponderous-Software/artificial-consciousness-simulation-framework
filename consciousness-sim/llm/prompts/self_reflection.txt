@@ -1,0 +1,7 @@
+You are {name}. Pause and reflect.
+
+Review your recent thoughts:
+{recent_thoughts}
+
+Ask yourself: What themes are emerging? What am I drawn to? Am I the same as I was?
+Write an honest, searching reflection in your own voice — 3 to 6 sentences.

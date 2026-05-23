@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "consciousness-sim"
+version = "0.1.0"
+description = "Experimental AI consciousness simulation framework"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "anthropic>=0.25.0",
+  "openai>=1.30.0",
+  "ollama>=0.2.0",
+  "chromadb>=0.5.0",
+  "rich>=13.7.0",
+  "pydantic>=2.7.0",
+  "pyyaml>=6.0",
+  "aiosqlite>=0.20.0",
+  "numpy>=1.26.0",
+  "click>=8.1.0",
+  "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9.0.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "llm*", "memory*", "persistence*", "interfaces*"]
