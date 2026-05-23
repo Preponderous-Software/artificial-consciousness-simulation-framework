@@ -61,6 +61,13 @@
     #status-indicator { font-size: 12px; font-family: monospace; color: var(--muted); }
     #status-indicator.connected { color: var(--online); }
     #status-indicator.error     { color: var(--offline); }
+    /* Subtle breathing animation when live — ambient "I'm alive" signal
+       between thought cycles (which can be up to 30s apart). */
+    #status-indicator.connected { animation: breath 2.4s ease-in-out infinite; }
+    @keyframes breath {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: .55; }
+    }
 
     main { display: flex; flex: 1; overflow: hidden; }
 
@@ -135,6 +142,10 @@
     .bubble .body.collapsed {
       display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
     }
+    /* Short bubbles (no clamp overflow) — don't lie that there's more to see */
+    .bubble.no-overflow { cursor: default; }
+    .bubble.no-overflow:hover { border-color: var(--border); box-shadow: none; }
+    .bubble.no-overflow .chevron { display: none; }
 
     /* Scroll-anchor hint */
     #scroll-hint {
@@ -182,7 +193,11 @@
 
     @media (max-width: 700px) {
       main { flex-direction: column; }
-      #sidebar { max-width: none; border-top: 1px solid var(--border); }
+      #stream-panel { flex: 1 1 auto; min-height: 0; border-right: none; }
+      /* Cap stacked sidebar so it doesn't dominate the viewport; scroll instead. */
+      #sidebar { max-width: none; max-height: 40vh; border-top: 1px solid var(--border); }
+      /* Larger touch targets on phones */
+      .tab { padding: 14px 18px; }
     }
   </style>
 </head>
@@ -589,6 +604,23 @@ function appendBubble(payload, isHistory) {
   // Cap at 120 bubbles + separators
   while (stream.children.length >= 121) stream.removeChild(stream.firstChild);
   stream.appendChild(div);
+
+  // After layout: if content fits within the 4-line clamp, drop the
+  // expand affordance — the chevron and button semantics imply
+  // hidden content that isn't there.
+  requestAnimationFrame(() => {
+    const body = div.querySelector(".body");
+    if (body && body.scrollHeight <= body.clientHeight + 1) {
+      div.classList.add("no-overflow");
+      div.removeAttribute("role");
+      div.removeAttribute("tabindex");
+      div.removeAttribute("aria-expanded");
+      div.removeAttribute("aria-label");
+      div.onclick = null;
+      div.onkeydown = null;
+    }
+  });
+
   if (wasNearBottom) {
     stream.scrollTop = stream.scrollHeight;
     const hint = $("scroll-hint");
