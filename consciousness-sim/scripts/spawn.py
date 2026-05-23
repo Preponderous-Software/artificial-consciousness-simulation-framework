@@ -55,19 +55,19 @@ def _build_config_path(provider: str | None, model: str | None) -> Path:
         return Path(tmp.name)
 
 
-async def _maybe_start_web(mind: Consciousness, web_port: int | None) -> None:
+async def _maybe_start_web(mind: Consciousness, web_port: int | None, web_host: str) -> None:
     """Start the web dashboard as a background task if a port was given."""
     if web_port is None:
         return
     from interfaces.web.server import register, start
     register(mind)
-    await start(web_port)
-    click.echo(f"Web dashboard: http://localhost:{web_port}")
+    await start(web_port, web_host)
+    click.echo(f"Web dashboard: http://{web_host}:{web_port}")
 
 
-async def _run(mind: Consciousness, headless: bool, web_port: int | None) -> None:
+async def _run(mind: Consciousness, headless: bool, web_port: int | None, web_host: str) -> None:
     """Unified async entry point for all foreground modes."""
-    await _maybe_start_web(mind, web_port)
+    await _maybe_start_web(mind, web_port, web_host)
     if headless:
         try:
             await mind.run()
@@ -86,6 +86,12 @@ async def _run(mind: Consciousness, headless: bool, web_port: int | None) -> Non
 @click.option("--headless", is_flag=True, default=False, help="Skip TUI — run as a foreground log-only process")
 @click.option("--bg", is_flag=True, default=False, help="Detach into background (implies --headless); logs to run.log")
 @click.option("--web-port", default=None, type=int, help="Start web dashboard on this port (composable with all modes)")
+@click.option(
+    "--web-host",
+    default="127.0.0.1",
+    show_default=True,
+    help="Web dashboard bind host. Use 0.0.0.0 to expose to your LAN (no auth — opt-in).",
+)
 def main(
     name: str,
     provider: str | None,
@@ -94,6 +100,7 @@ def main(
     headless: bool,
     bg: bool,
     web_port: int | None,
+    web_host: str,
 ) -> None:
     load_dotenv()
 
@@ -126,7 +133,8 @@ def main(
         click.echo(f"Started '{name}' in background  PID {proc.pid}")
         click.echo(f"Logs : {log_path}")
         if web_port:
-            click.echo(f"Web  : http://localhost:{web_port}")
+            display_host = "localhost" if web_host == "127.0.0.1" else web_host
+            click.echo(f"Web  : http://{display_host}:{web_port}")
         click.echo(f"Stop : python scripts/stop.py --name {name}")
         return
 
@@ -134,7 +142,7 @@ def main(
     logging.info("Spawn started — logs: %s", log_path)
     config_path = _build_config_path(provider, model)
     mind = Consciousness(name=name, config_path=str(config_path))
-    asyncio.run(_run(mind, headless, web_port))
+    asyncio.run(_run(mind, headless, web_port, web_host))
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -123,12 +123,20 @@ async def list_instances() -> list[dict[str, Any]]:
 @app.get("/stream/{name}")
 async def stream_events(name: str) -> StreamingResponse:
     """SSE stream of live thought/reflection/memory events for a named instance."""
+    # Refuse unknown names so a GET cannot create a fresh directory under
+    # CONSCIOUSNESS_HOME via Journal's mkdir-on-construct. Only an in-process
+    # registered instance (no on-disk state yet) or a pre-existing directory
+    # is valid.
+    instance_dir = consciousness_dir(name)
+    if name not in _registry and not instance_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Unknown instance: {name!r}")
+
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=200)
     queues = _sse_queues.setdefault(name, [])
     queues.append(queue)
 
-    journal = Journal(consciousness_dir(name) / "journal.jsonl")
-    history = await journal.recent(limit=50)
+    journal_path = instance_dir / "journal.jsonl"
+    history = await Journal(journal_path).recent(limit=50) if journal_path.exists() else []
     # Whether this instance can deliver live events (i.e. is co-located)
     is_live = name in _registry
 
@@ -166,13 +174,17 @@ _static_dir = Path(__file__).parent / "static"
 app.mount("/", StaticFiles(directory=str(_static_dir), html=True), name="static")
 
 
-async def start(port: int) -> None:
-    """Start the uvicorn server as a background asyncio task."""
+async def start(port: int, host: str = "127.0.0.1") -> None:
+    """Start the uvicorn server as a background asyncio task.
+
+    Defaults to localhost-only — the dashboard exposes raw thought/journal
+    content with no authentication, so binding 0.0.0.0 should be an opt-in.
+    """
     import uvicorn
 
     config = uvicorn.Config(
         app,
-        host="0.0.0.0",
+        host=host,
         port=port,
         log_level="warning",
         loop="none",   # reuse the running event loop
@@ -182,4 +194,4 @@ async def start(port: int) -> None:
     # Prevent uvicorn from hijacking signal handlers already installed
     server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
     asyncio.create_task(server.serve())
-    logger.info("Web dashboard available at http://localhost:%d", port)
+    logger.info("Web dashboard available at http://%s:%d", host, port)
