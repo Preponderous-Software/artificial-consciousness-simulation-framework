@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 
 from rich.console import Console
@@ -53,11 +54,13 @@ class ConsciousnessCLI:
         memory_panel = Panel("\n".join(self.memories[-6:]) or "No memory events yet", title="Memory")
 
         uptime = datetime.now(timezone.utc) - self.started_at
+        log_level = logging.getLevelName(logging.root.level)
         status = (
             f"Uptime: {uptime}\n"
             f"Thoughts: {self.consciousness.thought_count}\n"
             f"Memory count: {len(self.memories)}\n"
             f"Last reflection: {self.last_reflection}\n"
+            f"Log level: {log_level}\n"
             "Controls: r=reflect now, j=journal preview, q=quit"
         )
         status_panel = Panel(status, title="Status")
