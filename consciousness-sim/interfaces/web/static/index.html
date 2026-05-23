@@ -92,6 +92,24 @@
     }
     .history-sep::before, .history-sep::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 
+    /* Waiting state — shown while live stream has no events yet */
+    .stream-waiting {
+      display: flex; align-items: center; gap: 10px;
+      color: var(--muted); font-size: 13px; font-style: italic; padding: 12px 4px;
+    }
+    .stream-waiting .pulse {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: .3; transform: scale(.8); }
+      50%      { opacity: 1;  transform: scale(1.1); }
+    }
+
+    /* Make status indicator obviously clickable when in an error state */
+    #status-indicator.error { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+    #status-indicator.error:hover { color: var(--text); }
+
     /* Thought bubbles */
     .bubble {
       background: var(--thought-bg); border-radius: 6px; padding: 11px 14px;
@@ -194,6 +212,8 @@ let uptimeTimer  = null;
 let thoughtCount = 0;
 let ltMemories   = 0;
 let lastReflection = "never";
+let historyEventCount = 0;      // events received before history_end (per SSE connection)
+let liveEventCount    = 0;      // events received after history_end (per SSE connection)
 
 // ── instance tabs ─────────────────────────────────────────────────────────
 
@@ -249,11 +269,16 @@ function showEmptyState() {
 function renderTabs(instances) {
   const container = $("instance-tabs");
   container.innerHTML = "";
+  container.setAttribute("role", "tablist");
   for (const inst of instances) {
     const tab = document.createElement("button");
-    tab.className = "tab" + (inst.online ? " online" : "") + (inst.name === currentName ? " active" : "");
+    const isActive = inst.name === currentName;
+    tab.className = "tab" + (inst.online ? " online" : "") + (isActive ? " active" : "");
     tab.title = inst.online ? "Online" : "Offline — showing last known state";
-    tab.innerHTML = `<span class="dot"></span>${esc(inst.name)}`;
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(isActive));
+    tab.setAttribute("aria-label", `${inst.name}, ${inst.online ? "online" : "offline"}`);
+    tab.innerHTML = `<span class="dot" aria-hidden="true"></span>${esc(inst.name)}`;
     tab.onclick = () => selectInstance(inst.name, instances);
     container.appendChild(tab);
   }
@@ -404,21 +429,26 @@ function tickUptime() {
 
 function connectSSE(name, isOnline) {
   if (sse) { sse.close(); sse = null; }
+  historyEventCount = 0;
+  liveEventCount    = 0;
   const indicator = $("status-indicator");
   indicator.textContent = "connecting…";
   indicator.className = "";
+  indicator.title = "";
+  indicator.onclick = null;
 
   sse = new EventSource(`/stream/${encodeURIComponent(name)}`);
 
   sse.onopen = () => {
-    // Defer status until history_end tells us if live events will follow
     indicator.textContent = "loading…";
     indicator.className = "";
   };
 
   sse.onerror = () => {
-    indicator.textContent = "○ offline";
+    indicator.textContent = "○ offline · retry";
     indicator.className = "error";
+    indicator.title = "Connection lost — click to reconnect";
+    indicator.onclick = () => connectSSE(currentName, currentOnline);
   };
 
   sse.onmessage = e => {
@@ -433,19 +463,28 @@ function handleEvent(payload) {
   const history = !!payload._history;
 
   if (type === "history_end") {
-    insertSeparator(payload.live);
+    // Only render a separator if there was actual history to separate from
+    if (historyEventCount > 0) insertSeparator(payload.live);
+    // If live and no history, show a non-empty "waiting" placeholder
+    if (payload.live && historyEventCount === 0) insertWaitingState();
     const indicator = $("status-indicator");
     if (payload.live) {
       indicator.textContent = "● live";
       indicator.className = "connected";
+      indicator.title = "";
+      indicator.onclick = null;
     } else {
       indicator.textContent = "○ offline";
       indicator.className = "error";
+      indicator.title = "Process not running — showing last known journal";
+      indicator.onclick = null;
     }
     return;
   }
 
   if (type === "thought" || type === "reflection" || type === "identity_shift") {
+    if (history) historyEventCount++; else liveEventCount++;
+    if (!history) removeWaitingState();
     appendBubble(payload, history);
   }
 
@@ -478,6 +517,22 @@ function insertSeparator(isLive) {
   const wasNearBottom = isNearBottom(stream);
   stream.appendChild(sep);
   if (wasNearBottom) stream.scrollTop = stream.scrollHeight;
+}
+
+function insertWaitingState() {
+  const stream = $("thought-stream");
+  if (!stream || stream.querySelector(".stream-waiting")) return;
+  const w = document.createElement("div");
+  w.className = "stream-waiting";
+  w.innerHTML = `<span class="pulse" aria-hidden="true"></span><span>Waiting for first thought…</span>`;
+  stream.appendChild(w);
+}
+
+function removeWaitingState() {
+  const stream = $("thought-stream");
+  if (!stream) return;
+  const w = stream.querySelector(".stream-waiting");
+  if (w) w.remove();
 }
 
 function appendBubble(payload, isHistory) {
