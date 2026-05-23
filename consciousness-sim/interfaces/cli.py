@@ -32,6 +32,7 @@ class ConsciousnessCLI:
         self.console = Console()
         self.thoughts: list[str] = []
         self.memories: list[str] = []
+        self.long_term_count: int = 0
         self.last_reflection = "never"
         self.started_at = datetime.now(timezone.utc)
 
@@ -44,8 +45,11 @@ class ConsciousnessCLI:
         self.thoughts = self.thoughts[-20:]
 
     async def _on_memory(self, payload: dict[str, object]) -> None:
-        self.memories.append(str(payload.get("content", "")))
-        self.memories = self.memories[-8:]
+        self.long_term_count = int(payload.get("long_term_count", self.long_term_count))
+        content = str(payload.get("content", ""))
+        if content:
+            self.memories.append(content)
+            self.memories = self.memories[-8:]
 
     async def _on_reflection(self, payload: dict[str, object]) -> None:
         self.last_reflection = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -68,7 +72,7 @@ class ConsciousnessCLI:
         status = (
             f"Uptime: {uptime}\n"
             f"Thoughts: {self.consciousness.thought_count}\n"
-            f"Memory count: {len(self.memories)}\n"
+            f"Long-term memories: {self.long_term_count}\n"
             f"Last reflection: {self.last_reflection}\n"
             f"Log level: {log_level}\n"
             "Controls: r=reflect now, j=journal preview, q=quit"

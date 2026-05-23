@@ -278,6 +278,36 @@ def test_run_loop_applies_amendment_on_self_referential_reflection(tmp_path, mon
     assert shifts[0]["type"] == "identity_shift"
 
 
+def test_on_memory_stored_payload_contains_long_term_count(tmp_path, monkeypatch) -> None:
+    """on_memory_stored event must include long_term_count, not a short-term size string."""
+    mind = _make_mind(tmp_path, monkeypatch)
+
+    from core.thought_loop import ThoughtCycleResult
+
+    async def _single_cycle(n: int) -> ThoughtCycleResult:
+        mind._stop_event.set()
+        return ThoughtCycleResult(thought="a thought", reflection=None, existential=None)
+
+    mind.thought_loop.run_cycle = _single_cycle
+    memory_events: list[dict] = []
+
+    async def _capture(payload: dict) -> None:
+        memory_events.append(payload)
+
+    mind.on_memory_stored.append(_capture)
+
+    async def _run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    asyncio.run(_run())
+    assert memory_events, "on_memory_stored must fire at least once per cycle"
+    for evt in memory_events:
+        assert "long_term_count" in evt, "event payload must include long_term_count"
+        assert isinstance(evt["long_term_count"], int)
+        assert "short=" not in evt.get("content", ""), "content must not expose internal short-term size"
+
+
 def test_run_loop_no_amendment_on_generic_i_am_reflection(tmp_path, monkeypatch) -> None:
     """Generic 'I am' reflections must NOT trigger an identity shift."""
     mind = _make_mind(tmp_path, monkeypatch)
