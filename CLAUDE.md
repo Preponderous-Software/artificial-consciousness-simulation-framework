@@ -235,6 +235,12 @@ python scripts/spawn.py --name "Aria"
 # Override provider at launch
 python scripts/spawn.py --name "Aria" --provider anthropic --model claude-opus-4-7
 
+# Run with debug logging (logs go to ~/.consciousness/Aria/run.log)
+python scripts/spawn.py --name "Aria" --log-level DEBUG
+
+# Watch logs in real time (separate terminal)
+tail -f ~/.consciousness/Aria/run.log
+
 # Run all tests
 python3.10 -m pytest tests/ -v
 
@@ -310,6 +316,8 @@ consciousness-sim/
 - `_validate_config()` must complete before any subsystem is constructed.
 - `long_term.add_memory()` rejects embeddings with dimension mismatches.
 - Memory consolidation logs a warning when 0 memories are stored from non-empty episodic events — always investigate.
+- `OllamaProvider` serializes all requests via a process-wide `asyncio.Semaphore(1)` — concurrent calls queue rather than compete; see `llm/provider.py`.
+- All LLM failures log a `WARNING` before falling back; silent fallback is a bug.
 
 ---
 
