@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
-
 from core.identity import IdentityDocument
 from persistence.paths import sanitize_consciousness_name
 from persistence.state_manager import StateManager
