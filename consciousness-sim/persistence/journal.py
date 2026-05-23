@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,7 +39,10 @@ class Journal:
                 for line in f:
                     line = line.strip()
                     if line:
-                        rows.append(dict(json.loads(line)))
+                        try:
+                            rows.append(dict(json.loads(line)))
+                        except json.JSONDecodeError:
+                            logging.warning("Journal: skipping corrupted line: %r", line)
             return rows[-limit:]
 
         return await asyncio.to_thread(_read)

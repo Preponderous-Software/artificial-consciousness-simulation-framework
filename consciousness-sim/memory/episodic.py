@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,7 +49,10 @@ class EpisodicMemory:
                     line = line.strip()
                     if not line:
                         continue
-                    rows.append(EpisodicEvent(**json.loads(line)))
+                    try:
+                        rows.append(EpisodicEvent(**json.loads(line)))
+                    except json.JSONDecodeError:
+                        logging.warning("EpisodicMemory: skipping corrupted line: %r", line)
             return rows[-limit:]
 
         return await asyncio.to_thread(_read)
