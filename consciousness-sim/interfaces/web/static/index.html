@@ -86,6 +86,38 @@
     }
     .chip:hover { color: var(--text); border-color: var(--accent); }
     .chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    /* Legend swatches in tooltip — color-coded to bubble border */
+    .legend {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 18px; height: 18px; margin-left: 8px;
+      border: 1px solid var(--border); border-radius: 50%;
+      color: var(--muted); font-size: 11px; font-family: monospace;
+      cursor: help; flex-shrink: 0; user-select: none;
+    }
+    .legend:hover, .legend:focus-visible { color: var(--text); border-color: var(--accent); outline: none; }
+    /* Detached popover positioned below the trigger */
+    .legend-pop {
+      position: absolute; z-index: 10; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 10px 12px; font-size: 12px; color: var(--text);
+      box-shadow: 0 4px 16px rgba(0,0,0,.5);
+      display: none; min-width: 200px;
+    }
+    .legend-pop.open { display: block; }
+    .legend-pop .row { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
+    .legend-pop .swatch { width: 3px; height: 14px; border-radius: 2px; flex-shrink: 0; }
+
+    /* Toast for soft notifications (e.g. deep-link not found) */
+    #toast {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+      padding: 10px 16px; font-size: 13px; color: var(--text);
+      box-shadow: 0 4px 16px rgba(0,0,0,.5);
+      opacity: 0; pointer-events: none; transition: opacity .25s;
+      z-index: 100; max-width: 90vw;
+    }
+    #toast.show { opacity: 1; }
     #thought-stream { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
     /* Type filters: when stream has .filter-foo, hide bubbles that are NOT .foo */
     #thought-stream.filter-thought       .bubble:not(.thought)       { display: none; }
@@ -207,13 +239,14 @@
     <div id="instance-tabs"></div>
     <div id="header-right">
       <span id="current-name"></span>
-      <span id="status-indicator">—</span>
+      <span id="status-indicator" title="Stream connection status">—</span>
     </div>
   </header>
   <main id="main-area">
     <div id="no-instance">Select an instance above to begin observing.</div>
   </main>
 </div>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <script>
 "use strict";
@@ -229,7 +262,7 @@ let sse          = null;
 let uptimeTimer  = null;
 let thoughtCount = 0;
 let ltMemories   = 0;
-let lastReflection = "never";
+let lastReflection = "—";
 let historyEventCount = 0;      // events received before history_end (per SSE connection)
 let liveEventCount    = 0;      // events received after history_end (per SSE connection)
 
@@ -251,10 +284,14 @@ async function loadInstances() {
 
     if (!currentId) {
       const hashed = decodeURIComponent((location.hash || "").replace(/^#\/?/, ""));
-      const target = (hashed && instances.find(i => i.id === hashed))
+      const matched = hashed && instances.find(i => i.id === hashed);
+      const target = matched
                   || instances.find(i => i.streamable)
                   || instances.find(i => i.running)
                   || instances[0];
+      if (hashed && !matched) {
+        toast(`No instance “${hashed}” — showing “${target.name}” instead`);
+      }
       selectInstance(target.id, instances);
     } else {
       const cur = instances.find(i => i.id === currentId);
@@ -315,7 +352,7 @@ function selectInstance(id, instances) {
   instanceStartedAt  = inst.started_at ?? null;
   thoughtCount       = inst.thought_count ?? 0;
   ltMemories         = 0;
-  lastReflection     = "never";
+  lastReflection     = "—";
 
   // URL hash uses the stable id, not the display name
   const wanted = "#/" + encodeURIComponent(id);
@@ -340,6 +377,7 @@ function buildLayout() {
           <button class="chip"        data-filter="thought"         role="tab" aria-selected="false">thoughts</button>
           <button class="chip"        data-filter="reflection"      role="tab" aria-selected="false">reflections</button>
           <button class="chip"        data-filter="identity_shift"  role="tab" aria-selected="false">shifts</button>
+          <button type="button" class="legend" id="legend-trigger" aria-label="Bubble color legend" aria-haspopup="true" aria-expanded="false">?</button>
         </div>
       </div>
       <div id="thought-stream"></div>
@@ -367,6 +405,8 @@ function buildLayout() {
   stream.addEventListener("scroll", () => {
     $("scroll-hint").style.display = isNearBottom(stream) ? "none" : "block";
   });
+
+  attachLegend();
 
   // Filter chips
   document.querySelectorAll("#filter-chips .chip").forEach(chip => {
@@ -487,20 +527,18 @@ function handleEvent(payload) {
   const history = !!payload._history;
 
   if (type === "history_end") {
-    // Only render a separator if there was actual history to separate from
     if (historyEventCount > 0) insertSeparator(payload.live);
-    // If live and no history, show a non-empty "waiting" placeholder
     if (payload.live && historyEventCount === 0) insertWaitingState();
     const indicator = $("status-indicator");
     if (payload.live) {
       indicator.textContent = "● live";
       indicator.className = "connected";
-      indicator.title = "";
+      indicator.title = "Streaming events as they happen";
       indicator.onclick = null;
     } else {
       indicator.textContent = "○ offline";
       indicator.className = "error";
-      indicator.title = "Process not running — showing last known journal";
+      indicator.title = "Process not running — showing the last 50 events from the journal";
       indicator.onclick = null;
     }
     return;
@@ -635,6 +673,51 @@ function esc(str) {
   return String(str)
     .replace(/&/g,"&amp;").replace(/</g,"&lt;")
     .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+let _toastTimer = null;
+function toast(message, durationMs = 4000) {
+  const t = $("toast");
+  if (!t) return;
+  t.textContent = message;
+  t.classList.add("show");
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => t.classList.remove("show"), durationMs);
+}
+
+// Legend popover — opens below the "?" trigger, closes on outside click / Escape.
+function attachLegend() {
+  const trigger = $("legend-trigger");
+  if (!trigger) return;
+  let pop = null;
+  const close = () => {
+    if (pop) { pop.remove(); pop = null; }
+    trigger.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", onOutside, true);
+    document.removeEventListener("keydown", onEsc, true);
+  };
+  const onOutside = e => { if (pop && !pop.contains(e.target) && e.target !== trigger) close(); };
+  const onEsc     = e => { if (e.key === "Escape") close(); };
+  const open = () => {
+    pop = document.createElement("div");
+    pop.className = "legend-pop open";
+    pop.setAttribute("role", "tooltip");
+    pop.innerHTML = `
+      <div class="row"><div class="swatch" style="background:var(--border)"></div><span>thought</span></div>
+      <div class="row"><div class="swatch" style="background:var(--reflect)"></div><span>reflection (italic)</span></div>
+      <div class="row"><div class="swatch" style="background:var(--online)"></div><span>identity shift</span></div>
+      <div class="row" style="margin-top:6px;color:var(--muted);font-size:11px">Faded = replayed from journal</div>`;
+    document.body.appendChild(pop);
+    const r = trigger.getBoundingClientRect();
+    pop.style.top  = (r.bottom + 6) + "px";
+    pop.style.left = Math.max(8, r.right - pop.offsetWidth) + "px";
+    trigger.setAttribute("aria-expanded", "true");
+    setTimeout(() => {
+      document.addEventListener("click", onOutside, true);
+      document.addEventListener("keydown", onEsc, true);
+    }, 0);
+  };
+  trigger.onclick = () => pop ? close() : open();
 }
 
 // Human-friendly relative time. ts may be a Date, ISO string, or epoch ms.
