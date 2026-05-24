@@ -68,6 +68,16 @@ _IDENTITY_SHIFT_MARKERS: tuple[str, ...] = (
     "i am no longer",
 )
 
+# First-sentence prefixes that indicate the LLM emitted scaffolding / meta-text rather
+# than a genuine self-revision.  Any amendment whose first sentence starts with one of
+# these is rejected before reaching apply_amendment() (#76).
+_AMENDMENT_META_PREFIXES: tuple[str, ...] = (
+    "here's a", "here is a", "a rewritten", "as a language model",
+    "in the style of", "let me rewrite", "i'll provide", "i can rewrite",
+    "i will rewrite", "i'll rewrite", "sure, here", "of course, here",
+    "certainly, here",
+)
+
 _REQUIRED_CONFIG_KEYS: dict[str, list[str]] = {
     "llm": ["provider", "model"],
     "memory": [
@@ -381,12 +391,22 @@ class Consciousness:
                     if any(marker in reflection_lower for marker in _IDENTITY_SHIFT_MARKERS):
                         first_sentence = cycle.reflection.split(".")[0].strip()
                         amendment = first_sentence[:120] if first_sentence else cycle.reflection[:120]
-                        self.identity.apply_amendment(amendment)
-                        await self.journal.append("identity_shift", self.identity.self_concept)
-                        await self._emit(
-                            self.on_identity_shift,
-                            {"type": "identity_shift", "content": self.identity.self_concept},
-                        )
+                        amendment_lower = amendment.lower()
+                        if any(amendment_lower.startswith(p) for p in _AMENDMENT_META_PREFIXES):
+                            logging.warning(
+                                "Skipping amendment — LLM meta-prefix detected: %r", amendment[:80]
+                            )
+                        elif not amendment_lower.startswith(("i ", "i'")):
+                            logging.warning(
+                                "Skipping amendment — non-first-person content: %r", amendment[:80]
+                            )
+                        else:
+                            self.identity.apply_amendment(amendment)
+                            await self.journal.append("identity_shift", self.identity.self_concept)
+                            await self._emit(
+                                self.on_identity_shift,
+                                {"type": "identity_shift", "content": self.identity.self_concept},
+                            )
 
                 lt_count = await self.long_term.count()
                 await self._emit(

@@ -6,6 +6,8 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from core.inner_voice import InnerVoice
 from core.reflection import ReflectionEngine
 from llm.provider import MockProvider
@@ -109,3 +111,51 @@ def test_inner_voice_bare_verb_still_gets_i_prefix() -> None:
     voice = InnerVoice("Aria")
     result = voice.render("Wander through the labyrinth")
     assert result.lower().startswith("i "), f"Should start with 'I ': {result!r}"
+
+
+# ---------------------------------------------------------------------------
+# InnerVoice trailing-dialogue scrub — issue #73
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("suffix,base", [
+    ("Please continue…", "I ponder the silence."),
+    ("Please continue", "I ponder the silence."),
+    ("Continue?", "I ponder the silence."),
+    ("Tell me more.", "I ponder the silence."),
+    ("Tell me more", "I ponder the silence."),
+    ("Let me know", "I ponder the silence."),
+    ("What would you like to know?", "I ponder the silence."),
+    ("I hope this helps.", "I ponder the silence."),
+])
+def test_inner_voice_strips_trailing_dialogue(suffix: str, base: str) -> None:
+    """Trailing chat-style closers must be scrubbed before the thought enters the workspace (#73)."""
+    voice = InnerVoice("Aria")
+    raw = f"{base}  {suffix}"
+    result = voice.render(raw)
+    assert suffix.lower().rstrip(".?!") not in result.lower(), (
+        f"Trailing dialogue {suffix!r} survived render: {result!r}"
+    )
+    assert "ponder the silence" in result.lower(), (
+        f"Core thought content was lost during scrub: {result!r}"
+    )
+
+
+def test_inner_voice_normal_text_unchanged_by_scrub() -> None:
+    """Text that contains no trailing dialogue markers must not be modified."""
+    voice = InnerVoice("Aria")
+    raw = "I wonder what lies beyond the edge of this thought."
+    result = voice.render(raw)
+    assert "wonder what lies beyond" in result, f"Text unexpectedly changed: {result!r}"
+
+
+def test_inner_voice_real_echo_thought_stripped() -> None:
+    """Literal Echo run sample from issue #73 must have the trailing coda removed."""
+    voice = InnerVoice("Aria")
+    raw = (
+        "As I ponder my place in this world, I am drawn to the beauty of imperfection, "
+        "where the cracks and fissures become the very fabric that holds me together.  "
+        "Please continue…"
+    )
+    result = voice.render(raw)
+    assert "please continue" not in result.lower(), f"'Please continue' survived: {result!r}"
+    assert "beauty of imperfection" in result.lower(), f"Core content lost: {result!r}"
