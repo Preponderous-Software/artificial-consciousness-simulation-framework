@@ -43,6 +43,7 @@ class ConsciousnessCLI:
         self.long_term_count: int = 0
         self.last_reflection = "never"
         self.started_at = datetime.now(timezone.utc)
+        self._detach_requested: bool = False
 
         self.consciousness.on_initialized.append(self._on_initialized)
         self.consciousness.on_thought.append(self._on_thought)
@@ -91,7 +92,7 @@ class ConsciousnessCLI:
             f"Long-term memories: {self.long_term_count}\n"
             f"Last reflection: {self.last_reflection}\n"
             f"Log level: {log_level}\n"
-            "Controls: r=reflect now, j=journal preview, q=quit"
+            "Controls: r=reflect now, j=journal preview, d=detach, q=quit"
         )
         status_panel = Panel(status, title="Status")
 
@@ -168,6 +169,10 @@ class ConsciousnessCLI:
                     elif cmd == "j":
                         events = await self.consciousness.journal.recent(limit=5)
                         self.console.print(Panel("\n".join(f"{e['timestamp']} {e['type']}: {e['content']}" for e in events), title="Journal"))
+                    elif cmd == "d":
+                        self._detach_requested = True
+                        self.consciousness._stop_event.set()
+                        return
                     elif cmd == "q":
                         self.consciousness._stop_event.set()
                         return
@@ -183,6 +188,49 @@ class ConsciousnessCLI:
             except OSError:
                 pass
 
+    def _spawn_detached_background(self) -> None:
+        """Re-launch as a headless background process after detach.
+
+        State is already saved (Consciousness.run() finally block ran before
+        this is called), so the new process will restore from disk.
+        """
+        import subprocess
+        from pathlib import Path as _Path
+
+        from persistence.paths import consciousness_dir
+
+        name = self.consciousness.name
+        agent_dir = consciousness_dir(name)
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        log_path = agent_dir / "run.log"
+        pid_path = agent_dir / "pid"
+
+        script = str(_Path(__file__).resolve().parents[1] / "scripts" / "spawn.py")
+        cfg = self.consciousness.config["llm"]
+        args = [
+            sys.executable,
+            script,
+            "--name", name,
+            "--provider", str(cfg["provider"]),
+            "--model", str(cfg["model"]),
+            "--headless",
+        ]
+        with open(log_path, "a") as log_fh:
+            proc = subprocess.Popen(
+                args,
+                stdout=log_fh,
+                stderr=log_fh,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                env={**os.environ},
+            )
+        pid_path.write_text(str(proc.pid))
+        self.console.print(
+            f"Detached — '{name}' running in background (PID {proc.pid})\n"
+            f"Attach : python scripts/attach.py --name {name}\n"
+            f"Stop   : python scripts/stop.py --name {name}"
+        )
+
     async def run(self) -> None:
         thinker = asyncio.create_task(self.consciousness.run())
         keys = asyncio.create_task(self._keyboard_loop())
@@ -196,3 +244,5 @@ class ConsciousnessCLI:
             thinker.cancel()  # interrupt any in-flight LLM call, same as Ctrl+C
             keys.cancel()
             await asyncio.gather(thinker, keys, return_exceptions=True)
+            if self._detach_requested:
+                self._spawn_detached_background()

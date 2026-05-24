@@ -69,10 +69,17 @@ async def _run(mind: Consciousness, headless: bool, web_port: int | None, web_ho
     """Unified async entry point for all foreground modes."""
     await _maybe_start_web(mind, web_port, web_host)
     if headless:
+        from interfaces.event_relay import EventRelay
+        sock_path = consciousness_dir(mind.name) / "events.sock"
+        relay = EventRelay(mind, sock_path)
+        relay_task = asyncio.create_task(relay.serve())
         try:
             await mind.run()
         except asyncio.CancelledError:
             pass  # signal-driven shutdown; mind.run() finally block saves state
+        finally:
+            relay_task.cancel()
+            await asyncio.gather(relay_task, return_exceptions=True)
     else:
         cli = ConsciousnessCLI(mind)
         await cli.run()
@@ -131,11 +138,12 @@ def main(
 
         pid_path.write_text(str(proc.pid))
         click.echo(f"Started '{name}' in background  PID {proc.pid}")
-        click.echo(f"Logs : {log_path}")
+        click.echo(f"Logs   : {log_path}")
         if web_port:
             display_host = "localhost" if web_host == "127.0.0.1" else web_host
-            click.echo(f"Web  : http://{display_host}:{web_port}")
-        click.echo(f"Stop : python scripts/stop.py --name {name}")
+            click.echo(f"Web    : http://{display_host}:{web_port}")
+        click.echo(f"Attach : python scripts/attach.py --name {name}")
+        click.echo(f"Stop   : python scripts/stop.py --name {name}")
         return
 
     log_path = configure_logging(name, log_level)
