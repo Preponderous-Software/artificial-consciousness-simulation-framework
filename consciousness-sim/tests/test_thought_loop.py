@@ -299,3 +299,47 @@ def test_effective_reflection_prob_clamped_to_one() -> None:
             )
 
     asyncio.run(_run())
+
+
+def test_perf_log_emitted_at_correct_interval() -> None:
+    """perf_log_every_n=5 should emit an INFO log on cycles 5, 10, … but not 1, 2, 3, 4."""
+    import logging
+
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            provider = MockProvider()
+            from unittest.mock import MagicMock
+            ltm = MagicMock()
+            ltm.similarity_search = AsyncMock(return_value=[])
+
+            loop = _make_loop(base, provider, reflection_probability=0.0)
+            loop.long_term = ltm
+            loop.perf_log_every_n = 5
+
+            logged_cycles: list[int] = []
+
+            class _Capture(logging.Handler):
+                def emit(self, record: logging.LogRecord) -> None:
+                    if "perf —" in record.getMessage():
+                        # extract cycle number from "Cycle N perf —"
+                        parts = record.getMessage().split()
+                        logged_cycles.append(int(parts[1]))
+
+            handler = _Capture()
+            log = logging.getLogger()
+            log.addHandler(handler)
+            old_level = log.level
+            log.setLevel(logging.INFO)
+            try:
+                for n in range(1, 12):
+                    await loop.run_cycle(thought_count=n)
+            finally:
+                log.removeHandler(handler)
+                log.setLevel(old_level)
+
+            assert logged_cycles == [5, 10], (
+                f"expected perf logs at cycles [5, 10], got {logged_cycles}"
+            )
+
+    asyncio.run(_run())

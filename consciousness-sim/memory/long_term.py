@@ -58,6 +58,15 @@ class LongTermMemory:
             columns = [str(row[1]) for row in await cursor.fetchall()]
             if "embedding_dim" not in columns:
                 await db.execute("ALTER TABLE memories ADD COLUMN embedding_dim INTEGER")
+            # Compound index lets ORDER BY importance_score DESC, timestamp DESC LIMIT N
+            # use an index scan instead of a full-table sort — avoids O(table) cost each
+            # cycle as the LTM grows (issue #72).
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_memories_dim_importance
+                ON memories (embedding_dim, importance_score, timestamp)
+                """
+            )
             await db.commit()
 
     async def add_memory(
