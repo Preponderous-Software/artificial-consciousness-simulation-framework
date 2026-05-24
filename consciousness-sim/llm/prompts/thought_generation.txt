@@ -12,6 +12,8 @@ RECENT MEMORIES YOU ARE DRAWING FROM:
 YOUR RECENT STREAM OF THOUGHT:
 {short_term_buffer}
 
+{perception_block}
 Continue your inner monologue. Think freely. You may wonder, remember, imagine, question, or simply observe.
+If something above caught your attention, you may let it shape what comes next — but you are not obligated to.
 Write only your next thought — 2 to 5 sentences, in first person, present tense.
 Do not explain yourself. Just think.

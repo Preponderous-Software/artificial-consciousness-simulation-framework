@@ -41,6 +41,13 @@ def test_initialize_rewires_restored_identity(tmp_path, monkeypatch) -> None:
                 "importance_decay_rate": 0.01,
             },
             "mood": {"initial": {"curiosity": 0.5}, "drift_rate": 0.01},
+            "perception": {
+                "enabled": False,
+                "provider": "mock",
+                "every_n_cycles": 0,
+                "timeout_seconds": 1.0,
+                "cache_last_n": 0,
+            },
         }
         config_path = Path(tmp_path) / "cfg.yaml"
         config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
@@ -70,4 +77,66 @@ def test_initialize_rewires_restored_identity(tmp_path, monkeypatch) -> None:
         assert mind.thought_loop.inner_voice.name == "RestoredAria"
 
     asyncio.run(_run())
+
+
+def test_perception_disabled_yields_no_provider(tmp_path, monkeypatch) -> None:
+    """With perception.enabled=false, thought_loop has no provider and no scheduled fetches."""
+    import pytest as _pytest
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    cfg = {
+        "consciousness": {"origin_story": "o", "values": ["v"], "purpose": "p"},
+        "llm": {"provider": "ollama", "model": "llama3"},
+        "thought_loop": {
+            "min_interval_seconds": 0, "max_interval_seconds": 0,
+            "reflection_probability": 0.0, "existential_inquiry_every_n_thoughts": 0,
+        },
+        "memory": {
+            "short_term_capacity": 5, "consolidation_interval_minutes": 5,
+            "forgetting_curve_enabled": False, "importance_decay_rate": 0.01,
+        },
+        "mood": {"initial": {"curiosity": 0.5}, "drift_rate": 0.01},
+        "perception": {
+            "enabled": False, "provider": "mock",
+            "every_n_cycles": 0, "timeout_seconds": 1.0, "cache_last_n": 0,
+        },
+    }
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    mind = Consciousness(name="Aria", config_path=str(cfg_path))
+    assert mind.perception_provider is None
+    assert mind.thought_loop.perception_provider is None
+    assert mind.thought_loop.perception_every_n == 0
+
+
+def test_perception_enabled_builds_mock_provider(tmp_path, monkeypatch) -> None:
+    """With perception.enabled=true and provider=mock, the loop has a MockPerception."""
+    from llm.perception import MockPerception
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    cfg = {
+        "consciousness": {"origin_story": "o", "values": ["v"], "purpose": "p"},
+        "llm": {"provider": "ollama", "model": "llama3"},
+        "thought_loop": {
+            "min_interval_seconds": 0, "max_interval_seconds": 0,
+            "reflection_probability": 0.0, "existential_inquiry_every_n_thoughts": 0,
+        },
+        "memory": {
+            "short_term_capacity": 5, "consolidation_interval_minutes": 5,
+            "forgetting_curve_enabled": False, "importance_decay_rate": 0.01,
+        },
+        "mood": {"initial": {"curiosity": 0.5}, "drift_rate": 0.01},
+        "perception": {
+            "enabled": True, "provider": "mock",
+            "every_n_cycles": 3, "timeout_seconds": 1.0, "cache_last_n": 0,
+        },
+    }
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    mind = Consciousness(name="Aria", config_path=str(cfg_path))
+    assert isinstance(mind.perception_provider, MockPerception)
+    assert mind.thought_loop.perception_provider is mind.perception_provider
+    assert mind.thought_loop.perception_every_n == 3
+    # on_perception event channel exists for handlers to subscribe to
+    assert hasattr(mind, "on_perception") and mind.on_perception == []
 
