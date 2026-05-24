@@ -94,7 +94,6 @@ def test_thought_loop_passes_temperature_and_max_tokens_to_provider() -> None:
             reflection_prompt.write_text("You are {name}. {recent_thoughts}", encoding="utf-8")
             existential_prompt.write_text("You are {name}. {session_duration}", encoding="utf-8")
 
-            from llm.provider import MockProvider
             provider = MockProvider()
             captured_generate = AsyncMock(return_value="I notice I am thinking about this.")
             provider.generate = captured_generate
