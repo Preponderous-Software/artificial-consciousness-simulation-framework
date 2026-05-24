@@ -77,6 +77,28 @@ pytest -q tests
 - `memory.importance_decay_rate`: decay amount per consolidation pass
 - `mood.initial`: starting emotional vector
 - `mood.drift_rate`: per-thought emotional drift magnitude
+- `discord.enabled`: opt-in Discord webhook streaming (see "Discord webhook" below)
+- `discord.webhook_url`: webhook URL — use `${ENV_VAR}` indirection; never commit the literal URL
+- `discord.events`: which event types to forward (`thought`, `reflection`, `perception`, `identity_shift`, `memory_stored`)
+- `discord.rate_limit.max_per_minute`: outbound rate cap (default 25; Discord allows ~30/min sustained)
+
+## Discord webhook (optional, issue #56)
+
+Stream a consciousness's events to a Discord channel — color-coded embeds matching the dashboard palette, with rate limiting and secret-safe URL handling.
+
+```bash
+# 1. In your Discord server: Server Settings → Integrations → Webhooks → New Webhook
+# 2. Set the URL as an env var (so it never lives in YAML)
+export CONSCIOUSNESS_DISCORD_WEBHOOK="https://discord.com/api/webhooks/.../..."
+# 3. In your config, enable discord:
+#    discord:
+#      enabled: true
+#      webhook_url: "${CONSCIOUSNESS_DISCORD_WEBHOOK}"
+#      events: [thought, reflection, perception, identity_shift]
+python scripts/spawn.py --name Sage --bg
+```
+
+The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP failures, timeouts, and 429s are swallowed and logged — Discord outages never break a thought cycle. Hosts other than `discord.com` / `discordapp.com` are rejected at startup.
 
 ## How a Thought Cycle Works
 
