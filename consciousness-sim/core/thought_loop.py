@@ -122,7 +122,12 @@ class ThoughtLoop:
 
         raw = await self.provider.generate(
             prompt=f"{anchor}\n\n{prompt}",
-            system="Generate inner monologue only.",
+            system=(
+                "Generate inner monologue only. "
+                "Do not end with a question or invitation to the reader. "
+                "Do not use phrases like 'please continue', 'continue?', or 'tell me more'. "
+                "Stop when the thought is complete."
+            ),
             temperature=0.85,
             max_tokens=220,
         )

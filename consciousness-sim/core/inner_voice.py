@@ -10,12 +10,23 @@ language; no multi-modal encoding as CTM's Brainish requires.
 
 from __future__ import annotations
 
+import re
+
 
 class InnerVoice:
     """Applies narrative framing and register to raw model output."""
 
     def __init__(self, name: str) -> None:
         self.name = name
+
+    # Chat-style closers that llama3.2:3b appends when it "thinks" it's in a dialogue (#73).
+    # Stripped from the end of the rendered text before journaling / broadcasting.
+    _TRAILING_DIALOGUE_RE: re.Pattern[str] = re.compile(
+        r"\s*(?:please continue|continue\?|tell me more\.?|let me know|"
+        r"what would you like(?:\s+(?:to know|me to\s+\w+))?|shall i continue|"
+        r"if you(?:'d| would) like\b.*|i hope this helps\b.*)[.!?…]*\s*$",
+        re.IGNORECASE,
+    )
 
     # First words that indicate the LLM produced a complete sentence with its own subject.
     # Prepending "I " onto these produces ungrammatical output ("I the void stirs…").
@@ -45,6 +56,8 @@ class InnerVoice:
         subject_present = first_word in self._NOUN_PHRASE_STARTERS
         if not already_first_person and not subject_present:
             text = f"I {text[0].lower() + text[1:] if len(text) > 1 else text.lower()}"
+        # Scrub trailing chat-style dialogue coda before the text enters the workspace (#73).
+        text = self._TRAILING_DIALOGUE_RE.sub("", text).rstrip() or text
         if register == "remembering":
             return f"{text} I remember this as {self.name}."
         if register == "questioning" and "?" not in text:

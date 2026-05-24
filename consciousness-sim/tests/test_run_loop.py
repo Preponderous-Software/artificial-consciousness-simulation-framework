@@ -445,16 +445,25 @@ _NEW_SHIFT_MARKERS = [
 
 @pytest.mark.parametrize("marker_phrase", _NEW_SHIFT_MARKERS)
 def test_broadened_marker_fires_identity_shift(tmp_path, monkeypatch, marker_phrase) -> None:
-    """Each new identity_shift marker phrase must trigger apply_amendment (#71)."""
+    """Each new identity_shift marker phrase must trigger apply_amendment (#71).
+
+    The reflection is a realistic two-sentence form: a first-person first sentence
+    (which becomes the amendment text) followed by the marker phrase.  This matches
+    how llama3.2:3b actually produces these phrases — embedded in a longer reflection
+    rather than as a standalone sentence.
+    """
     mind = _make_mind(tmp_path, monkeypatch)
 
     from core.thought_loop import ThoughtCycleResult
+
+    # First sentence is valid first-person → passes Fix B.  Marker appears later → marker gate fires.
+    reflection = f"I pause and reflect on my recent experience. {marker_phrase}."
 
     async def _cycle(n: int) -> ThoughtCycleResult:
         mind._stop_event.set()
         return ThoughtCycleResult(
             thought="A thought.",
-            reflection=marker_phrase,
+            reflection=reflection,
             existential=None,
         )
 
@@ -472,6 +481,131 @@ def test_broadened_marker_fires_identity_shift(tmp_path, monkeypatch, marker_phr
 
     asyncio.run(_run())
     assert len(shifts) == 1, f"Marker {marker_phrase!r} must fire exactly one identity_shift"
+
+
+# ---------------------------------------------------------------------------
+# Amendment validation — issue #76
+# ---------------------------------------------------------------------------
+
+# First sentences that are LLM meta-commentary, not genuine self-revision.
+# Each is paired with a trailing clause containing a shift marker so the
+# marker gate fires — only the validation gate should then reject the amendment.
+_META_FIRST_SENTENCES = [
+    # Fix A (meta-prefix) + Fix B (non-first-person) — Wren's observed pattern
+    "Here is a rewritten version of the text in the style of a personal reflection",
+    "Here's a rewritten version of the text in the style of a personal reflection",
+    "Sure, here is a personal reflection on the matter",
+    "Certainly, here is an introspective account",
+    "Of course, here is the requested reflection",
+    # Fix A only — starts with "i'" so Fix B would pass, but Fix A catches it
+    "I'll provide a rewritten version of the previous thought",
+    "I can rewrite this in a more introspective register",
+    "I will rewrite the previous thought in first person",
+]
+
+
+@pytest.mark.parametrize("bad_first_sentence", _META_FIRST_SENTENCES)
+def test_amendment_rejects_meta_commentary_first_sentence(tmp_path, monkeypatch, bad_first_sentence) -> None:
+    """Reflections whose first sentence is LLM meta-commentary must not produce an amendment (#76)."""
+    mind = _make_mind(tmp_path, monkeypatch)
+
+    from core.thought_loop import ThoughtCycleResult
+
+    original_concept = mind.identity.self_concept
+
+    # Marker fires on the trailing clause; first_sentence is the meta text → must be rejected.
+    reflection = f"{bad_first_sentence}. I realize that I have changed dramatically."
+
+    async def _cycle(n: int) -> ThoughtCycleResult:
+        mind._stop_event.set()
+        return ThoughtCycleResult(
+            thought="A thought.",
+            reflection=reflection,
+            existential=None,
+        )
+
+    mind.thought_loop.run_cycle = _cycle
+    shifts: list[dict] = []
+
+    async def _capture(payload: dict) -> None:
+        shifts.append(payload)
+
+    mind.on_identity_shift.append(_capture)
+
+    async def _run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    asyncio.run(_run())
+    assert shifts == [], (
+        f"Meta-commentary first sentence {bad_first_sentence!r} must not produce identity_shift"
+    )
+    assert mind.identity.self_concept == original_concept, "Self-concept must be unchanged"
+
+
+def test_amendment_rejects_non_first_person_first_sentence(tmp_path, monkeypatch) -> None:
+    """A reflection whose first sentence is not first-person must not produce an amendment (#76)."""
+    mind = _make_mind(tmp_path, monkeypatch)
+
+    from core.thought_loop import ThoughtCycleResult
+
+    original_concept = mind.identity.self_concept
+    shifts: list[dict] = []
+
+    async def _capture(payload: dict) -> None:
+        shifts.append(payload)
+
+    mind.on_identity_shift.append(_capture)
+
+    # "Here's a rewritten..." is NOT first-person → must be rejected
+    async def _cycle(n: int) -> ThoughtCycleResult:
+        mind._stop_event.set()
+        return ThoughtCycleResult(
+            thought="A thought.",
+            reflection="Here's a rewritten version of the text. I realize that I have changed.",
+            existential=None,
+        )
+
+    mind.thought_loop.run_cycle = _cycle
+
+    async def _run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    asyncio.run(_run())
+    assert shifts == [], "Non-first-person first-sentence must not produce an identity_shift"
+    assert mind.identity.self_concept == original_concept, "Self-concept must be unchanged"
+
+
+def test_amendment_accepts_valid_first_person_content(tmp_path, monkeypatch) -> None:
+    """A genuine first-person self-revision must still produce an amendment after validation (#76)."""
+    mind = _make_mind(tmp_path, monkeypatch)
+
+    from core.thought_loop import ThoughtCycleResult
+
+    shifts: list[dict] = []
+
+    async def _capture(payload: dict) -> None:
+        shifts.append(payload)
+
+    mind.on_identity_shift.append(_capture)
+
+    async def _cycle(n: int) -> ThoughtCycleResult:
+        mind._stop_event.set()
+        return ThoughtCycleResult(
+            thought="A thought.",
+            reflection="I realize now that my thinking has fundamentally deepened.",
+            existential=None,
+        )
+
+    mind.thought_loop.run_cycle = _cycle
+
+    async def _run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    asyncio.run(_run())
+    assert len(shifts) == 1, "Valid first-person amendment must still fire identity_shift"
 
 
 # ---------------------------------------------------------------------------
