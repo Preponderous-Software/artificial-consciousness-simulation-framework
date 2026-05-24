@@ -51,7 +51,7 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 
 | Code | Indicator | Status | Implementation | Gap |
 |------|-----------|--------|----------------|-----|
-| AST-1 | Attention schema — dynamic internal model tracking the state of attention | ✗ | `IdentityDocument` holds a stable self-model (name, values, mood) but does not model the *state of attention* | No attention state data structure; see issue #22 |
+| AST-1 | Attention schema — dynamic internal model tracking the state of attention | ◑ | `core/identity.py` — `AttentionSchema` dataclass tracks `focus` (dominant cycle kind: introspection/memory/reflection/perception/existential), `theme` (first content word extracted from cycle output), `salience` (0–1, decays 0.1/cycle, resets to 1.0 on update), and `history` (last 10 foci). Updated by `ThoughtLoop.run_cycle()` after every thought; rendered into the identity anchor prompt via `anchor_payload()["attention_state"]` so each thought is conditioned on the prior cycle's attention state. Persisted in `state.json` with backward-compat for old snapshots (issue #22). | Focus is derived from discrete event type, not a learned or competitive allocation model; theme extraction is a simple keyword heuristic; salience decay is linear; no social attribution of attention to other agents (Graziano 2013, §4) |
 
 ---
 
@@ -69,8 +69,8 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 | Status | Count | Indicators |
 |--------|-------|-----------|
 | ✓ Full | 0 | — |
-| ◑ Partial | 9 | RPT-1, GWT-1, GWT-2, GWT-3, HOT-1, HOT-3, HOT-4, AE-1, HOT-2* |
-| ✗ None | 5 | RPT-2, GWT-4, PP-1, AST-1, AE-2 |
+| ◑ Partial | 10 | RPT-1, GWT-1, GWT-2, GWT-3, HOT-1, HOT-3, HOT-4, AE-1, HOT-2*, AST-1 |
+| ✗ None | 4 | RPT-2, GWT-4, PP-1, AE-2 |
 
 *HOT-2 upgraded from ✗ to ◑ by deep_reflection now making a real LLM call with pattern-seeking prompt.
 
