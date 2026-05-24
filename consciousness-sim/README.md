@@ -38,17 +38,19 @@ This project explores consciousness *simulation* as an engineering pattern: pers
 
 ## Quickstart
 
+Requires **Python 3.11+** (per `pyproject.toml`).
+
 ```bash
 cd consciousness-sim
-python -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-ollama pull llama3.1
+ollama pull llama3.2:3b
 python scripts/spawn.py --name "Test"
 ```
 
-By default the framework is configured for a **local open-source model via Ollama** (`provider: ollama`).
+By default the framework is configured for a **local open-source model via Ollama** (`provider: ollama`, `model: llama3.2:3b`).
 Cloud providers (`openai`, `anthropic`) remain optional overrides.
 
 For local test tooling:
@@ -57,6 +59,39 @@ For local test tooling:
 pip install -r requirements-dev.txt
 pytest -q tests
 ```
+
+### Running modes
+
+`scripts/spawn.py` supports several composable modes:
+
+```bash
+# Interactive TUI (default)
+python scripts/spawn.py --name Aria
+
+# Headless foreground — log-only, no TUI
+python scripts/spawn.py --name Aria --headless
+
+# Background daemon — detaches, logs to ~/.consciousness/Aria/run.log
+python scripts/spawn.py --name Aria --bg
+
+# Web dashboard on a port — composable with all above modes
+python scripts/spawn.py --name Aria --bg --web-port 8080
+# Default bind is 127.0.0.1; opt into LAN with --web-host 0.0.0.0
+
+# Stop a --bg instance (SIGTERM, 5s grace window)
+python scripts/stop.py --name Aria
+
+# Attach a live TUI to a --bg instance via Unix socket (PR #59)
+python scripts/attach.py --name Aria
+```
+
+### Web dashboard (PR #52)
+
+Adding `--web-port N` to any `spawn.py` invocation starts a FastAPI + SSE dashboard on that port — a vanilla-JS SPA renders the thought stream, mood vector, identity, perception bubbles, and instance picker live. Open `http://localhost:N/#/Aria` (or any other instance name) to view a specific agent; the URL hash is bookmarkable. The dashboard is **read-only**.
+
+### Perception specialist (PR #54, issue #53)
+
+When enabled (`perception.enabled: true`, default), every Nth thought cycle fetches an external snippet from `perception.provider` (e.g. a random Wikipedia article summary) and injects it into the LLM prompt. Solves the closed-loop attractor problem where, without external input, the LLM samples only from its prior and collapses into a single semantic basin. See the perception block emitted in journal/episodic with kind `perception`.
 
 ## Configuration Guide (`config/default_consciousness.yaml`)
 
@@ -77,17 +112,23 @@ pytest -q tests
 - `memory.importance_decay_rate`: decay amount per consolidation pass
 - `mood.initial`: starting emotional vector
 - `mood.drift_rate`: per-thought emotional drift magnitude
+- `perception.enabled`: opt in to the perception specialist (PR #54)
+- `perception.provider`: `wikipedia | mock` — source of external stimulus
+- `perception.every_n_cycles`: fetch cadence (default 3)
+- `perception.timeout_seconds`: per-fetch HTTP timeout (failures gracefully skip)
+- `perception.cache_last_n`: don't replay the same snippet within N fetches
 
 ## How a Thought Cycle Works
 
 1. Build current context from short-term memory
 2. Embed context and retrieve similar long-term memories
-3. Inject identity anchor + mood + recent stream into prompt
-4. Generate next thought through provider abstraction
-5. Save to episodic log + short-term buffer + journal
-6. Probabilistically trigger reflection
-7. Periodically trigger existential inquiry
-8. Background consolidator compresses episodic traces into durable long-term memories
+3. Every Nth cycle (per `perception.every_n_cycles`): fetch a perception and add it to short-term + episodic
+4. Inject identity anchor + mood + recent stream + perception block into prompt
+5. Generate next thought through provider abstraction
+6. Save to episodic log + short-term buffer + journal
+7. Probabilistically trigger reflection
+8. Periodically trigger existential inquiry
+9. Background consolidator compresses episodic traces into durable long-term memories
 
 ## Extending the System
 
@@ -116,6 +157,6 @@ This repository is an experiment in computational self-modeling. It treats quest
 
 ## Assumptions and Limitations
 
-- Local/offline behavior uses deterministic fallback outputs when provider credentials are unavailable.
-- Anthropic embeddings are approximated via deterministic fallback in this experimental baseline.
-- This framework is designed for research iteration, not production critical workloads.
+- **Provider failures raise** (issue #46 / commit 9649c5d). When a configured LLM provider is unreachable, returns empty content, or times out, the cycle logs a `WARNING` and is skipped; after 20 consecutive failures the run shuts down cleanly. No silent deterministic fallback in production providers — only `MockProvider` (used in tests) still generates canned output.
+- **Anthropic embeddings are unsupported.** `AnthropicProvider.embed` raises `NotImplementedError`. Use Ollama or OpenAI if you need embeddings (`provider.embed` is called every cycle for similarity retrieval).
+- This framework is designed for research iteration, not production-critical workloads.
