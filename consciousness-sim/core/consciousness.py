@@ -198,6 +198,8 @@ class Consciousness:
             existential_every_n=int(self.config["thought_loop"]["existential_inquiry_every_n_thoughts"]),
             perception_provider=self.perception_provider,
             perception_every_n=int(perc_cfg.get("every_n_cycles", 0)) if self.perception_provider else 0,
+            thought_temperature=float(llm_cfg.get("temperature", 0.85)),
+            thought_max_tokens=int(llm_cfg.get("max_tokens", 220)),
         )
         self.consolidator = MemoryConsolidator(
             provider=self.provider,

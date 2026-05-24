@@ -12,8 +12,8 @@ consciousness:
 llm:
   provider: "ollama"
   model: "llama3.2:3b"
-  temperature: 0.85
-  max_tokens: 300
+  temperature: 0.85   # thought-generation sampling temperature (0.0–1.0)
+  max_tokens: 220     # max tokens per thought (≈2–5 sentences for llama3.2:3b)
 
 thought_loop:
   min_interval_seconds: 10

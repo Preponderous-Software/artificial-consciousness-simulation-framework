@@ -80,6 +80,8 @@ class ThoughtLoop:
         existential_every_n: int = 75,
         perception_provider: PerceptionProvider | None = None,
         perception_every_n: int = 0,
+        thought_temperature: float = 0.85,
+        thought_max_tokens: int = 220,
     ) -> None:
         self.provider = provider
         self.identity = identity
@@ -93,6 +95,8 @@ class ThoughtLoop:
         self.existential_every_n = max(0, int(existential_every_n))
         self.perception_provider = perception_provider
         self.perception_every_n = max(0, int(perception_every_n))
+        self.thought_temperature = float(thought_temperature)
+        self.thought_max_tokens = int(thought_max_tokens)
         self.inner_voice = InnerVoice(identity.name)
 
     async def run_cycle(self, thought_count: int) -> ThoughtCycleResult:
@@ -128,8 +132,8 @@ class ThoughtLoop:
                 "Do not use phrases like 'please continue', 'continue?', or 'tell me more'. "
                 "Stop when the thought is complete."
             ),
-            temperature=0.85,
-            max_tokens=220,
+            temperature=self.thought_temperature,
+            max_tokens=self.thought_max_tokens,
         )
         thought = self.inner_voice.render(raw, register=_select_register(raw, bool(related)))
         self.short_term.add("thought", thought)
