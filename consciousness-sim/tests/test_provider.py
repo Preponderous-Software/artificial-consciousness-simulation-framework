@@ -131,46 +131,33 @@ def test_ollama_generate_timeout_logs_warning(monkeypatch) -> None:
         assert any("timed out" in c for c in warning_calls), f"Expected timeout warning, got: {warning_calls}"
 
 
-def test_try_ensure_running_returns_true_when_reachable(monkeypatch) -> None:
+def test_try_ensure_running_returns_true_when_healthy(monkeypatch) -> None:
     provider = OllamaProvider(model="llama3.2:3b")
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     monkeypatch.delenv("OLLAMA_HOST", raising=False)
 
-    async def _fake_open_connection(host, port):
-        reader = MagicMock()
-        writer = MagicMock()
-        writer.close = MagicMock()
-        writer.wait_closed = AsyncMock()
-        return reader, writer
-
-    with patch("asyncio.open_connection", _fake_open_connection):
+    with patch("llm.provider.OllamaProvider._is_ollama_healthy", new=AsyncMock(return_value=True)):
         result = asyncio.run(provider.try_ensure_running())
     assert result is True
 
 
-def test_try_ensure_running_starts_ollama_when_unreachable(monkeypatch) -> None:
+def test_try_ensure_running_starts_ollama_when_unhealthy(monkeypatch) -> None:
     provider = OllamaProvider(model="llama3.2:3b")
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     monkeypatch.delenv("OLLAMA_HOST", raising=False)
 
     call_count = 0
 
-    async def _fail_then_succeed(host, port):
+    async def _fail_then_succeed(self):
         nonlocal call_count
         call_count += 1
-        if call_count == 1:
-            raise ConnectionRefusedError("not up yet")
-        reader = MagicMock()
-        writer = MagicMock()
-        writer.close = MagicMock()
-        writer.wait_closed = AsyncMock()
-        return reader, writer
+        return call_count > 1
 
     async def _fake_sleep(_):
         pass
 
     popen_mock = MagicMock()
-    with patch("asyncio.open_connection", _fail_then_succeed), \
+    with patch("llm.provider.OllamaProvider._is_ollama_healthy", new=_fail_then_succeed), \
          patch("asyncio.sleep", _fake_sleep), \
          patch("llm.provider.subprocess.Popen", popen_mock):
         result = asyncio.run(provider.try_ensure_running())
@@ -186,13 +173,10 @@ def test_try_ensure_running_returns_false_when_binary_missing(monkeypatch) -> No
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     monkeypatch.delenv("OLLAMA_HOST", raising=False)
 
-    async def _always_fail(host, port):
-        raise ConnectionRefusedError("not up")
-
     def _popen_not_found(*args, **kwargs):
         raise FileNotFoundError("ollama not found")
 
-    with patch("asyncio.open_connection", _always_fail), \
+    with patch("llm.provider.OllamaProvider._is_ollama_healthy", new=AsyncMock(return_value=False)), \
          patch("llm.provider.subprocess.Popen", _popen_not_found):
         result = asyncio.run(provider.try_ensure_running())
 

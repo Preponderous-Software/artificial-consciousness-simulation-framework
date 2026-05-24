@@ -285,24 +285,26 @@ class OllamaProvider(LLMProvider):
             logger.debug("Ollama embed succeeded (model=%r, dims=%d)", self.model, len(emb))
             return [float(v) for v in emb]
 
-    async def _is_ollama_reachable(self) -> bool:
+    async def _is_ollama_healthy(self) -> bool:
+        # HTTP check against /api/tags is more reliable than a raw TCP connect:
+        # a hung Ollama process keeps the port open but stops answering HTTP.
         raw = self._resolve_base_url() or "http://localhost:11434"
-        parsed = urllib.parse.urlparse(raw if "://" in raw else f"http://{raw}")
-        host = parsed.hostname or "127.0.0.1"
-        port = parsed.port or 11434
+        base = raw if "://" in raw else f"http://{raw}"
+        url = base.rstrip("/") + "/api/tags"
+        loop = asyncio.get_event_loop()
         try:
-            _, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port), timeout=2.0
+            import urllib.request as _req
+            await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: _req.urlopen(url, timeout=5)),
+                timeout=6.0,
             )
-            writer.close()
-            await writer.wait_closed()
             return True
         except Exception:
             return False
 
     async def try_ensure_running(self) -> bool:
-        """Start 'ollama serve' if unreachable; poll up to 30s for it to come up."""
-        if await self._is_ollama_reachable():
+        """Start 'ollama serve' if unhealthy; poll up to 30s for it to come up."""
+        if await self._is_ollama_healthy():
             return True
         logger.warning("Ollama unreachable; attempting auto-start via 'ollama serve'")
         try:
@@ -320,7 +322,7 @@ class OllamaProvider(LLMProvider):
             return False
         for _ in range(15):
             await asyncio.sleep(2.0)
-            if await self._is_ollama_reachable():
+            if await self._is_ollama_healthy():
                 logger.info("Ollama came up after auto-start")
                 return True
         logger.error("Ollama did not become healthy within 30s after auto-start")
