@@ -44,9 +44,17 @@ class ConsciousnessCLI:
         self.last_reflection = "never"
         self.started_at = datetime.now(timezone.utc)
 
+        self.consciousness.on_initialized.append(self._on_initialized)
         self.consciousness.on_thought.append(self._on_thought)
         self.consciousness.on_memory_stored.append(self._on_memory)
         self.consciousness.on_reflection.append(self._on_reflection)
+
+    async def _on_initialized(self, payload: dict[str, object]) -> None:
+        for item in payload.get("short_term", []):
+            if isinstance(item, dict):
+                self.thoughts.append(str(item.get("content", "")))
+        self.thoughts = self.thoughts[-20:]
+        self.long_term_count = int(payload.get("long_term_count", 0))
 
     async def _on_thought(self, payload: dict[str, object]) -> None:
         self.thoughts.append(str(payload.get("content", "")))
