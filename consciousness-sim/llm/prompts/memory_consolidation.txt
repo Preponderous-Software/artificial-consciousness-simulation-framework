@@ -5,4 +5,7 @@ You are consolidating your own memories. The following are raw recent experience
 Compress these into 2–3 enduring memories in the format:
 - [Importance: 1-10] [Emotional valence: -1.0 to 1.0] Summary sentence.
 
-Return only the formatted list.
+Return only the formatted list. Output plain text — do not use markdown
+formatting (no asterisks, no underscores, no bolding, no headers). Each
+line must start with `- ` followed by the two bracketed metadata fields
+and then the summary, exactly as shown above.
