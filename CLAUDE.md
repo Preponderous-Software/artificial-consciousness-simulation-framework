@@ -241,28 +241,43 @@ python scripts/spawn.py --name "Aria" --log-level DEBUG
 # Watch logs in real time (separate terminal)
 tail -f ~/.consciousness/Aria/run.log
 
-# Run all tests
-python3.10 -m pytest tests/ -v
+# Run all tests (project requires Python 3.11+; activate the venv first)
+python -m pytest tests/ -v
 
 # Run a single test file
-python3.10 -m pytest tests/test_bug_fixes.py -v
+python -m pytest tests/test_bug_fixes.py -v
 
 # Run a single test by name
-python3.10 -m pytest tests/test_bug_fixes.py::test_validate_config_raises_on_missing_section -v
+python -m pytest tests/test_bug_fixes.py::test_validate_config_raises_on_missing_section -v
 
 # Inspect a running consciousness (separate terminal)
 python scripts/inspect.py --name "Aria"
 
 # Resume a paused consciousness
 python scripts/resume.py --name "Aria"
+
+# Stop a background instance cleanly (SIGTERM, 5s grace window)
+python scripts/stop.py --name "Aria"
+
+# Attach a live TUI to a --bg instance via Unix socket relay (#59)
+python scripts/attach.py --name "Aria"
+
+# Spawn with the web dashboard (PR #52) on a port — composes with all modes
+python scripts/spawn.py --name "Aria" --web-port 8080              # TUI + web
+python scripts/spawn.py --name "Aria" --bg --web-port 8080         # bg + web
+python scripts/spawn.py --name "Aria" --headless --web-port 8080   # foreground log-only + web
+# Default web bind host is 127.0.0.1; pass --web-host 0.0.0.0 to opt into LAN exposure
 ```
 
 **Environment variables:**
 - `CONSCIOUSNESS_HOME` — override persistence root (default: `~/.consciousness/`)
 - `OLLAMA_BASE_URL` / `OLLAMA_HOST` — point at a non-default Ollama endpoint
 - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` — required only for cloud providers
+- Config values support `${VAR}` substitution at load time (`core/consciousness.py:_expand_env_vars`) — used to keep secrets like webhook URLs out of the YAML
 
-**Local-first default:** The framework defaults to `ollama` with `llama3.1`. Pull the model with `ollama pull llama3.1` before first run. All providers fall back to deterministic `DeterministicFallbackMixin` output if the provider is unreachable.
+**Local-first default:** The framework defaults to `ollama` with `llama3.2:3b`. Pull the model with `ollama pull llama3.2:3b` before first run.
+
+**Provider failure behavior (changed in #46, commit 9649c5d):** Production providers (Ollama / Anthropic / OpenAI) **raise on any failure** — no silent deterministic fallback. The run loop catches per-cycle exceptions, logs a `WARNING` with a consecutive-failure count, and shuts down cleanly after 20 consecutive failures. `DeterministicFallbackMixin` still exists but is used only by `MockProvider` (for tests). `AnthropicProvider.embed` raises `NotImplementedError` — Anthropic embeddings are unsupported, not approximated.
 
 ---
 
@@ -271,10 +286,13 @@ python scripts/resume.py --name "Aria"
 ```
 consciousness-sim/
 ├── core/
-│   ├── consciousness.py     # Orchestrator: lifecycle, config, event emission
-│   ├── thought_loop.py      # Per-cycle generation, memory retrieval, reflection triggers
+│   ├── consciousness.py     # Orchestrator: lifecycle, config, event emission,
+│   │                        #   ${VAR} substitution, perception/discord wiring
+│   ├── thought_loop.py      # Per-cycle generation, memory retrieval, perception
+│   │                        #   fetch, reflection triggers
 │   ├── reflection.py        # Shallow / deep / existential reflection engine
-│   ├── identity.py          # Self-model (IdentityDocument), mood drift, amendments
+│   ├── identity.py          # Self-model (IdentityDocument), mood drift,
+│   │                        #   amendments, AttentionSchema (AST-1, #22 / #61)
 │   └── inner_voice.py       # Render raw LLM output into the agent's voice register
 ├── memory/
 │   ├── short_term.py        # Sliding-window buffer (GWT workspace analog)
@@ -287,16 +305,29 @@ consciousness-sim/
 │   └── paths.py             # CONSCIOUSNESS_HOME resolution + name sanitization
 ├── llm/
 │   ├── provider.py          # LLMProvider ABC + Ollama/Anthropic/OpenAI/Mock impls
+│   ├── perception.py        # PerceptionProvider ABC + WikipediaPerception +
+│   │                        #   MockPerception (issue #53 / PR #54)
 │   └── prompts/             # Prompt templates (thought_generation, self_reflection,
 │                            #   identity_anchoring, existential_inquiry,
 │                            #   memory_consolidation)
 ├── interfaces/
 │   ├── cli.py               # Rich live dashboard (ConsciousnessCLI)
-│   └── observer.py          # Observer utilities
+│   ├── observer.py          # Observer utilities
+│   ├── event_relay.py       # Unix-socket event relay for detach/attach (#59)
+│   ├── web/                 # FastAPI + SSE dashboard + vanilla-JS SPA (PR #52)
+│   │   ├── server.py
+│   │   └── static/index.html
+│   └── discord/             # DiscordWebhookSink — embed posts per event (PR #65)
+│       └── webhook.py
 ├── scripts/
-│   ├── spawn.py             # Entry point: create + run a named consciousness
+│   ├── spawn.py             # Entry point: build mind + optional web dashboard
+│   │                        #   + optional perception + sinks; foreground / --bg
+│   │                        #   / --headless / --web-port / --web-host
+│   ├── stop.py              # Send SIGTERM to a --bg instance (5s grace)
+│   ├── attach.py            # Connect a TUI to a --bg instance via Unix socket (#59)
 │   ├── resume.py            # Restore from saved state
-│   └── inspect.py           # Read-only inspection of a running instance
+│   ├── inspect.py           # Read-only inspection of a running instance
+│   └── _logging.py          # Per-instance rotating-file log config
 └── config/
     └── default_consciousness.yaml   # All tunable parameters
 ```
@@ -304,11 +335,12 @@ consciousness-sim/
 **Data flow per thought cycle:**
 1. `short_term.render_for_prompt()` → context string
 2. `provider.embed(context)` → query vector → `long_term.similarity_search()` → related memories
-3. Identity anchor + mood + memories + context → prompt → `provider.generate()` → raw thought
-4. `inner_voice.render()` → styled thought → `short_term.add()` + `episodic.append()` + `journal.append()`
-5. Probabilistic reflection trigger → `reflection_engine.shallow/deep_reflection()`
-6. Events emitted via `Consciousness._emit()` to registered handlers (CLI, observer)
-7. Background: `MemoryConsolidator.consolidate_once()` every N minutes — episodic → LLM summary → long-term embeddings
+3. Every `perception.every_n_cycles` cycles (default 3): `perception_provider.fetch()` → optional `Perception`; lingers in short-term + episodic so subsequent cycles can reference it (PR #54)
+4. Identity anchor (includes `AttentionSchema` state per AST-1) + mood + memories + context + perception block → prompt → `provider.generate()` → raw thought
+5. `inner_voice.render()` → styled thought → `short_term.add()` + `episodic.append()` + `journal.append()` → `AttentionSchema.update()` for the next cycle
+6. Probabilistic reflection trigger → `reflection_engine.shallow/deep_reflection()`
+7. Events emitted via `Consciousness._emit()` to registered handlers (CLI, observer, web SSE, Discord sink if configured)
+8. Background: `MemoryConsolidator.consolidate_once()` every N minutes — episodic → LLM summary → long-term embeddings
 
 **Key invariants:**
 - `_emit()` never propagates handler exceptions — each handler is isolated in `try/except`.

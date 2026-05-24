@@ -33,8 +33,8 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 | Code | Indicator | Status | Implementation | Gap |
 |------|-----------|--------|----------------|-----|
 | HOT-1 | Generative/top-down perception — ability to imagine or simulate sensory input | ◑ | LLM generation from identity + memory context is top-down; `reflection.py` generates representations of representations | Not grounded in perception; purely linguistic |
-| HOT-2 | Metacognitive monitoring — system labels thoughts as reliable or noise | ✗ | None | Reflection is 15%-chance probabilistic, not continuous monitoring; no reliability tagging; see issue #20 |
-| HOT-3 | Agentive consumer — higher-order states guide belief formation and action | ◑ | `IdentityDocument.apply_amendment()` updates self-concept from reflections; mood drift modulates generation temperature indirectly | Amendments are additive text appends, not structured belief updates; no downstream action |
+| HOT-2 | Metacognitive monitoring — system labels thoughts as reliable or noise | ◑ | `core/reflection.py:deep_reflection` makes a real LLM call with a pattern-seeking prompt over recent thoughts | Reflection is 15%-chance probabilistic, not continuous monitoring; no per-thought reliability tagging; see issue #20 |
+| HOT-3 | Agentive consumer — higher-order states guide belief formation and action | ◑ | `IdentityDocument.apply_amendment()` updates self-concept from reflections; mood drift (issue #62: reverts to baseline rather than monotonically decaying) is injected into the thought-generation prompt as `{mood_vector}` text and so influences generation content via the LLM's response to that context | Amendments are additive text appends, not structured belief updates; no downstream action; mood does not modulate generation temperature — temperature is hardcoded in `core/thought_loop.py` |
 | HOT-4 | Smooth, graded representation spaces | ◑ | Embedding space in `memory/long_term.py` is continuous; cosine similarity provides graded retrieval | Representation smoothness is a property of the upstream model, not verified or enforced here |
 
 ---
@@ -51,7 +51,7 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 
 | Code | Indicator | Status | Implementation | Gap |
 |------|-----------|--------|----------------|-----|
-| AST-1 | Attention schema — dynamic internal model tracking the state of attention | ✗ | `IdentityDocument` holds a stable self-model (name, values, mood) but does not model the *state of attention* | No attention state data structure; see issue #22 |
+| AST-1 | Attention schema — dynamic internal model tracking the state of attention | ◑ | `core/identity.py` — `AttentionSchema` dataclass tracks `focus` (dominant cycle kind: introspection/memory/reflection/perception/existential), `theme` (first content word extracted from cycle output), `salience` (0–1, decays 0.1/cycle, resets to 1.0 on update), and `history` (last 10 foci). Updated by `ThoughtLoop.run_cycle()` after every thought; rendered into the identity anchor prompt via `anchor_payload()["attention_state"]` so each thought is conditioned on the prior cycle's attention state. Persisted in `state.json` with backward-compat for old snapshots (issue #22). | Focus is derived from discrete event type, not a learned or competitive allocation model; theme extraction is a simple keyword heuristic; salience decay is linear; no social attribution of attention to other agents (Graziano 2013, §4) |
 
 ---
 
@@ -59,7 +59,7 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 
 | Code | Indicator | Status | Implementation | Gap |
 |------|-----------|--------|----------------|-----|
-| AE-1 | Agency — ability to learn from feedback and pursue goals flexibly | ◑ | `MemoryConsolidator` updates long-term memory from experience; mood drift adjusts affective state; identity amendments update self-concept | No external feedback loop; no goal-directed action beyond thought generation |
+| AE-1 | Agency — ability to learn from feedback and pursue goals flexibly | ◑ | `MemoryConsolidator` updates long-term memory from experience; mood drift adjusts affective state from thought + perception text (issue #62 fix); identity amendments update self-concept | No external feedback loop; no goal-directed action beyond thought generation |
 | AE-2 | Embodiment — modeling how one's actions affect incoming sensations | ✗ | None | Perception is now received (`llm/perception.py`, issue #53), but it is unsolicited — the agent does not yet *choose* what to perceive, so there is no action→sensation loop to model. Issue #53 Phase 3 (let the agent query for the next perception) is the first concrete step toward AE-2 |
 
 ---
@@ -69,9 +69,7 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 | Status | Count | Indicators |
 |--------|-------|-----------|
 | ✓ Full | 0 | — |
-| ◑ Partial | 9 | RPT-1, GWT-1, GWT-2, GWT-3, HOT-1, HOT-3, HOT-4, AE-1, HOT-2* |
-| ✗ None | 5 | RPT-2, GWT-4, PP-1, AST-1, AE-2 |
-
-*HOT-2 upgraded from ✗ to ◑ by deep_reflection now making a real LLM call with pattern-seeking prompt.
+| ◑ Partial | 10 | RPT-1, GWT-1, GWT-2, GWT-3, HOT-1, HOT-2, HOT-3, HOT-4, AE-1, AST-1 |
+| ✗ None | 4 | RPT-2, GWT-4, PP-1, AE-2 |
 
 **Update this file whenever a capability is added, changed, or removed.**
