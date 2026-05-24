@@ -6,6 +6,8 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from core.inner_voice import InnerVoice
 from core.reflection import ReflectionEngine
 from llm.provider import MockProvider
@@ -114,9 +116,6 @@ def test_inner_voice_bare_verb_still_gets_i_prefix() -> None:
 # ---------------------------------------------------------------------------
 # InnerVoice trailing-dialogue scrub — issue #73
 # ---------------------------------------------------------------------------
-
-import pytest
-
 
 @pytest.mark.parametrize("suffix,base", [
     ("Please continue…", "I ponder the silence."),
