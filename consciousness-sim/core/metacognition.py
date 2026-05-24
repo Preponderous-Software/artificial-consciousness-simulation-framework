@@ -57,12 +57,11 @@ class MetacognitiveMonitor:
         if len(thought_words) < _MIN_CONTENT_WORDS:
             return "uncertain"
 
-        recent_words: frozenset[str] = frozenset().union(
-            *(
-                _content_words(item.content)
-                for item in recent_items
-                if item.kind == "thought"
-            )
+        recent_words: frozenset[str] = frozenset(
+            word
+            for item in recent_items
+            if item.kind == "thought"
+            for word in _content_words(item.content)
         )
         if not recent_words:
             return "high"
