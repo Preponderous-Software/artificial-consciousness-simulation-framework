@@ -82,10 +82,11 @@ def test_inner_voice_as_i_still_normalises_to_i() -> None:
 
 
 def test_inner_voice_as_noun_left_alone() -> None:
-    """'As the patterns evoke…' must NOT become 'I the patterns evoke…'."""
+    """'As the patterns evoke…' must be left intact — not mangled to 'I as the patterns…'."""
     voice = InnerVoice("Aria")
     result = voice.render("As the patterns on Conognatha splendens' elytra evoke a sense of intricacy")
-    assert not result.lower().startswith("i the"), f"Got 'I the …': {result!r}"
+    assert not result.lower().startswith("i "), f"Got 'I …' prepended to an 'As <noun>' sentence: {result!r}"
+    assert result.startswith("As "), f"'As <noun>' sentence should be preserved as-is: {result!r}"
 
 
 def test_inner_voice_the_subject_left_alone() -> None:

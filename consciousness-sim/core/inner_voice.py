@@ -24,6 +24,10 @@ class InnerVoice:
         "my", "your", "his", "her", "its", "their", "our",
         "time", "perhaps", "maybe", "somewhere", "somehow",
         "silence", "something", "nothing", "everything",
+        # "As <non-I> …" sentences have their own subject; no strip happens so
+        # the leading word seen by the prepend check is "as" — treat it as
+        # subject-present to avoid "I as the patterns evoke…" (#70).
+        "as",
     })
 
     def render(self, raw_text: str, register: str = "wondering") -> str:
