@@ -17,7 +17,9 @@ import logging
 import os
 import select
 import sys
+import termios
 import threading
+import tty
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -99,9 +101,14 @@ class ConsciousnessCLI:
     async def _keyboard_loop(self) -> None:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[str | None] = asyncio.Queue()
-        # Pipe used to wake the reader thread when we want it to stop, so it
-        # doesn't block in readline() waiting for a second Enter press.
         stop_r, stop_w = os.pipe()
+
+        fd = sys.stdin.fileno()
+        is_tty = sys.stdin.isatty()
+        old_settings = termios.tcgetattr(fd) if is_tty else None
+        if is_tty:
+            # cbreak: keys arrive immediately without Enter; signals (Ctrl+C) still work.
+            tty.setcbreak(fd)
 
         def _reader() -> None:
             try:
@@ -109,10 +116,11 @@ class ConsciousnessCLI:
                     ready, _, _ = select.select([sys.stdin, stop_r], [], [])
                     if stop_r in ready:
                         break
-                    line = sys.stdin.readline()
-                    loop.call_soon_threadsafe(queue.put_nowait, line or None)
-                    if not line:
+                    ch = os.read(fd, 1)
+                    if not ch:
+                        loop.call_soon_threadsafe(queue.put_nowait, None)
                         break
+                    loop.call_soon_threadsafe(queue.put_nowait, ch.decode(errors="replace"))
             except OSError:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
             finally:
@@ -140,11 +148,11 @@ class ConsciousnessCLI:
                 if stop_task in done or self.consciousness._stop_event.is_set():
                     return
                 if get_task in done:
-                    line = get_task.result()
-                    if line is None:
+                    ch = get_task.result()
+                    if ch is None:
                         logger.debug("stdin closed — keyboard loop exiting")
                         return
-                    cmd = line.strip().lower()
+                    cmd = ch.lower()
                     if cmd == "r":
                         await self.consciousness.request_reflection()
                     elif cmd == "j":
@@ -154,14 +162,16 @@ class ConsciousnessCLI:
                         self.consciousness._stop_event.set()
                         return
         finally:
-            # Signal the reader thread to stop so it doesn't block in readline()
-            # waiting for a keystroke that will never come.
-            for fd in (stop_w,):
+            if is_tty and old_settings is not None:
                 try:
-                    os.write(fd, b"\x00")
-                    os.close(fd)
-                except OSError:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                except termios.error:
                     pass
+            try:
+                os.write(stop_w, b"\x00")
+                os.close(stop_w)
+            except OSError:
+                pass
 
     async def run(self) -> None:
         thinker = asyncio.create_task(self.consciousness.run())
