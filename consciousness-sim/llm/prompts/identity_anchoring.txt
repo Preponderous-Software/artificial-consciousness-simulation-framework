@@ -4,5 +4,6 @@ Name: {name}
 Core values: {values}
 Self-described purpose: {purpose}
 How you see yourself: {self_concept}
+Current attention: {attention_state}
 
 Now continue.
