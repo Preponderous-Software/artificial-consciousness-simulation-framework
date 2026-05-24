@@ -7,8 +7,7 @@ monitoring); deep_reflection → HOT-3 (agentive consumer updating
 self-model); existential_inquiry → HOT-4 (evaluating representational
 coherence over time).
 Gap: reflection is probabilistically triggered rather than continuous
-(HOT-2 requires ongoing monitoring, not 15%-chance sampling). deep_reflection
-currently appends a hardcoded insight string — see issue #9.
+(HOT-2 requires ongoing monitoring, not 15%-chance sampling).
 """
 
 from __future__ import annotations

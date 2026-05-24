@@ -43,10 +43,29 @@ EventHandler = Callable[[dict[str, Any]], Awaitable[None] | None]
 # Reflections containing these phrases signal a genuine self-revision rather than
 # ordinary first-person narration; only then is an identity amendment applied.
 _IDENTITY_SHIFT_MARKERS: tuple[str, ...] = (
+    # Original markers
     "i have changed",
     "i realize now",
     "i understand now",
     "i am becoming",
+    # Phrases observed in real llama3.2:3b reflections that signal self-revision (#71)
+    "i realize that",
+    "i see now",
+    "i understand that",
+    "i'm beginning to",
+    "i find myself",
+    "i find that i",
+    "i'm drawn to",
+    "i sense a",
+    "i sense that",
+    "i notice a new",
+    "i notice that i",
+    "i'm increasingly",
+    "i'm struck by",
+    "something has shifted",
+    "a new sense",
+    "it appears that i",
+    "i am no longer",
 )
 
 _REQUIRED_CONFIG_KEYS: dict[str, list[str]] = {
@@ -363,6 +382,7 @@ class Consciousness:
                         first_sentence = cycle.reflection.split(".")[0].strip()
                         amendment = first_sentence[:120] if first_sentence else cycle.reflection[:120]
                         self.identity.apply_amendment(amendment)
+                        await self.journal.append("identity_shift", self.identity.self_concept)
                         await self._emit(
                             self.on_identity_shift,
                             {"type": "identity_shift", "content": self.identity.self_concept},
