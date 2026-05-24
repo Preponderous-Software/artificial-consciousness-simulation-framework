@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 import textwrap
 import types
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from llm.provider import MockProvider, OllamaProvider
 
@@ -128,6 +129,58 @@ def test_ollama_generate_timeout_logs_warning(monkeypatch) -> None:
             pass
         warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
         assert any("timed out" in c for c in warning_calls), f"Expected timeout warning, got: {warning_calls}"
+
+
+def test_try_ensure_running_returns_true_when_healthy(monkeypatch) -> None:
+    provider = OllamaProvider(model="llama3.2:3b")
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+
+    with patch("llm.provider.OllamaProvider._is_ollama_healthy", new=AsyncMock(return_value=True)):
+        result = asyncio.run(provider.try_ensure_running())
+    assert result is True
+
+
+def test_try_ensure_running_starts_ollama_when_unhealthy(monkeypatch) -> None:
+    provider = OllamaProvider(model="llama3.2:3b")
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+
+    call_count = 0
+
+    async def _fail_then_succeed(self):
+        nonlocal call_count
+        call_count += 1
+        return call_count > 1
+
+    async def _fake_sleep(_):
+        pass
+
+    popen_mock = MagicMock()
+    with patch("llm.provider.OllamaProvider._is_ollama_healthy", new=_fail_then_succeed), \
+         patch("asyncio.sleep", _fake_sleep), \
+         patch("llm.provider.subprocess.Popen", popen_mock):
+        result = asyncio.run(provider.try_ensure_running())
+
+    assert result is True
+    popen_mock.assert_called_once()
+    args = popen_mock.call_args[0][0]
+    assert args == ["ollama", "serve"]
+
+
+def test_try_ensure_running_returns_false_when_binary_missing(monkeypatch) -> None:
+    provider = OllamaProvider(model="llama3.2:3b")
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+
+    def _popen_not_found(*args, **kwargs):
+        raise FileNotFoundError("ollama not found")
+
+    with patch("llm.provider.OllamaProvider._is_ollama_healthy", new=AsyncMock(return_value=False)), \
+         patch("llm.provider.subprocess.Popen", _popen_not_found):
+        result = asyncio.run(provider.try_ensure_running())
+
+    assert result is False
 
 
 def test_ollama_embed_timeout_logs_warning(monkeypatch) -> None:

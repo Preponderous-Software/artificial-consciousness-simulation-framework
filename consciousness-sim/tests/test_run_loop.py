@@ -175,7 +175,9 @@ def test_run_loop_journals_thoughts(tmp_path, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 def test_run_loop_continues_after_thought_loop_exception(tmp_path, monkeypatch, caplog) -> None:
-    """If run_cycle raises on one iteration, the loop must continue rather than crash."""
+    """A single run_cycle failure must not crash the loop — the next cycle succeeds."""
+    from core.thought_loop import ThoughtCycleResult
+
     mind = _make_mind(tmp_path, monkeypatch)
     call_count = 0
 
@@ -183,31 +185,61 @@ def test_run_loop_continues_after_thought_loop_exception(tmp_path, monkeypatch, 
         nonlocal call_count
         await mind.long_term.initialize()
 
-        original = mind.thought_loop.run_cycle
+        fake_result = ThoughtCycleResult(
+            thought="test thought",
+            reflection=None,
+            existential=None,
+            perception=None,
+        )
 
         async def _flaky(n: int):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 raise RuntimeError("transient failure")
+            mind._stop_event.set()
+            return fake_result
+
+        mind.thought_loop.run_cycle = _flaky
+        await mind.run()
+
+    asyncio.run(_run())
+    assert call_count == 2
+
+
+def test_run_loop_triggers_provider_recovery_after_threshold(tmp_path, monkeypatch) -> None:
+    """After _RECOVERY_TRIGGER consecutive failures, try_ensure_running is called."""
+    mind = _make_mind(tmp_path, monkeypatch)
+    recovery_calls = 0
+    call_count = 0
+
+    async def _run() -> None:
+        nonlocal recovery_calls, call_count
+
+        await mind.long_term.initialize()
+
+        original = mind.thought_loop.run_cycle
+
+        async def _failing(n: int):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 3:
+                raise ConnectionError("ollama down")
             result = await original(n)
             mind._stop_event.set()
             return result
 
-        mind.thought_loop.run_cycle = _flaky
+        async def _mock_recovery() -> bool:
+            nonlocal recovery_calls
+            recovery_calls += 1
+            return True
 
-        # Patch run() to catch errors per cycle so the loop can continue.
-        # Currently the loop does NOT catch run_cycle exceptions — this test
-        # documents the current behaviour and will need updating if #20 adds
-        # per-cycle error handling.
-        try:
-            await mind.run()
-        except RuntimeError:
-            pass  # Expected until per-cycle error handling is added.
+        mind.thought_loop.run_cycle = _failing
+        mind.provider.try_ensure_running = _mock_recovery
+        await mind.run()
 
     asyncio.run(_run())
-    # At minimum the first call happened before the error.
-    assert call_count >= 1
+    assert recovery_calls >= 1
 
 
 def test_run_loop_consolidator_cancelled_on_stop(tmp_path, monkeypatch) -> None:

@@ -13,9 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
 from typing import Any
 
 from persistence.paths import consciousness_dir
+
+logger = logging.getLogger(__name__)
 
 
 class StateManager:
@@ -24,24 +28,39 @@ class StateManager:
     def __init__(self, name: str) -> None:
         self.path = consciousness_dir(name) / "state.json"
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = asyncio.Lock()
 
     async def save(self, state: dict[str, Any]) -> None:
-        # Atomic write: state.json is now refreshed every cycle, so a crash
-        # mid-write must not leave a half-written file that breaks restart.
-        def _write() -> None:
-            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-            with tmp.open("w", encoding="utf-8") as f:
-                json.dump(state, f, indent=2)
-            tmp.replace(self.path)
+        # Lock prevents concurrent saves from racing on the same .tmp path,
+        # which would interleave writes and corrupt the JSON.
+        async with self._lock:
+            def _write() -> None:
+                # Per-PID temp name avoids collisions if two processes ever
+                # share the same CONSCIOUSNESS_HOME directory.
+                tmp = self.path.with_suffix(f".{os.getpid()}.tmp")
+                with tmp.open("w", encoding="utf-8") as f:
+                    json.dump(state, f, indent=2)
+                tmp.replace(self.path)
 
-        await asyncio.to_thread(_write)
+            await asyncio.to_thread(_write)
 
     async def load(self) -> dict[str, Any] | None:
         if not self.path.exists():
             return None
 
-        def _read() -> dict[str, Any]:
-            with self.path.open("r", encoding="utf-8") as f:
-                return dict(json.load(f))
+        async with self._lock:
+            def _read() -> dict[str, Any] | None:
+                with self.path.open("r", encoding="utf-8") as f:
+                    try:
+                        return dict(json.load(f))
+                    except json.JSONDecodeError as exc:
+                        logger.warning(
+                            "state.json is corrupt (%s) — starting fresh; "
+                            "corrupt file moved to %s.corrupt",
+                            exc,
+                            self.path,
+                        )
+                        self.path.rename(self.path.with_suffix(".json.corrupt"))
+                        return None
 
-        return await asyncio.to_thread(_read)
+            return await asyncio.to_thread(_read)
