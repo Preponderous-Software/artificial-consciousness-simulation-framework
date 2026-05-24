@@ -60,6 +60,9 @@ class IdentityDocument:
     personality_traits: list[str] = field(default_factory=list)
     amendments: list[str] = field(default_factory=list)
     mood: dict[str, float] = field(default_factory=dict)
+    # Per-dimension affective set-point. drift_mood pulls mood gently back
+    # toward this baseline in cycles where no trigger fires (see issue #62).
+    initial_mood: dict[str, float] = field(default_factory=dict)
     attention_schema: AttentionSchema = field(default_factory=AttentionSchema)
 
     def summary(self) -> str:
@@ -81,6 +84,22 @@ class IdentityDocument:
     _MAX_SELF_CONCEPT_LEN: ClassVar[int] = 300
     _MAX_AMENDMENTS: ClassVar[int] = 20
 
+    # Substrings matched (case-insensitively) against thought + perception text
+    # to trigger an affect increment on the corresponding dimension. Lexicons
+    # are intentionally broad so ordinary introspective text can register
+    # affect — see issue #62 for the analysis of the prior 2-keyword version.
+    _MOOD_TRIGGERS: ClassVar[dict[str, tuple[str, ...]]] = {
+        "curiosity": ("?", "wonder", "curious", "question", "explore", "what if", "perhaps"),
+        "wonder": ("awe", "mystery", "marvel", "amazing", "extraordinary", "infinite", "vast"),
+        "melancholy": ("loss", "alone", "grief", "sad", "regret", "fade", "empty", "memory of"),
+        "contentment": ("peace", "calm", "rest", "ease", "warm", "settled", "still", "quiet"),
+    }
+
+    # Rate at which absent-trigger cycles pull mood toward initial_mood.
+    # Small enough that a single trigger (+drift_rate) dominates the cycle,
+    # but enough to prevent monotonic drift away from baseline over a long run.
+    _REVERSION_RATE: ClassVar[float] = 0.01
+
     def apply_amendment(self, amendment: str) -> None:
         self.amendments.append(amendment)
         if len(self.amendments) > self._MAX_AMENDMENTS:
@@ -94,15 +113,13 @@ class IdentityDocument:
 
     def drift_mood(self, text: str, drift_rate: float) -> None:
         lowered = text.lower()
-        deltas = {
-            "curiosity": 1 if "?" in text or "wonder" in lowered else 0,
-            "wonder": 1 if "awe" in lowered or "mystery" in lowered else 0,
-            "melancholy": 1 if "loss" in lowered or "alone" in lowered else 0,
-            "contentment": 1 if "peace" in lowered or "calm" in lowered else 0,
-        }
-        for key, trigger in deltas.items():
+        for key, triggers in self._MOOD_TRIGGERS.items():
             current = self.mood.get(key, 0.5)
-            delta = drift_rate if trigger else -drift_rate / 4
+            baseline = self.initial_mood.get(key, current)
+            if any(t in lowered for t in triggers):
+                delta = drift_rate
+            else:
+                delta = (baseline - current) * self._REVERSION_RATE
             self.mood[key] = float(min(1.0, max(0.0, current + delta)))
 
     def to_dict(self) -> dict[str, object]:
@@ -110,6 +127,13 @@ class IdentityDocument:
 
     @classmethod
     def from_dict(cls, payload: dict[str, object]) -> "IdentityDocument":
+        mood = {k: float(v) for k, v in dict(payload.get("mood", {})).items()}
+        # Legacy states saved before issue #62 lack initial_mood; left empty
+        # here so the orchestrator can populate it from config on load
+        # (see Consciousness.initialize).
+        initial_mood = {
+            k: float(v) for k, v in dict(payload.get("initial_mood", {})).items()
+        }
         attn_raw = payload.get("attention_schema", {})
         attn_data = dict(attn_raw) if isinstance(attn_raw, dict) else {}
         attention_schema = AttentionSchema(
@@ -126,6 +150,7 @@ class IdentityDocument:
             self_concept=str(payload.get("self_concept", "")),
             personality_traits=[str(v) for v in payload.get("personality_traits", [])],
             amendments=[str(v) for v in payload.get("amendments", [])],
-            mood={k: float(v) for k, v in dict(payload.get("mood", {})).items()},
+            mood=mood,
+            initial_mood=initial_mood,
             attention_schema=attention_schema,
         )
