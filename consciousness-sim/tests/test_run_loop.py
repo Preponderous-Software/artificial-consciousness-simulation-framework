@@ -342,6 +342,57 @@ def test_run_loop_no_amendment_on_generic_i_am_reflection(tmp_path, monkeypatch)
 
 
 # ---------------------------------------------------------------------------
+# on_initialized — pre-existing state visibility (#59)
+# ---------------------------------------------------------------------------
+
+def test_on_initialized_fires_with_restored_short_term(tmp_path, monkeypatch) -> None:
+    """on_initialized must emit restored short-term items so the CLI can seed its display."""
+    from core.thought_loop import ThoughtCycleResult
+
+    mind = _make_mind(tmp_path, monkeypatch)
+
+    # Run one cycle so state is saved with a known thought.
+    # The mock must call short_term.add() explicitly because real run_cycle does it internally.
+    async def _once(n: int) -> ThoughtCycleResult:
+        mind._stop_event.set()
+        thought = "pre-existing thought"
+        mind.short_term.add("thought", thought)
+        return ThoughtCycleResult(thought=thought, reflection=None, existential=None)
+
+    mind.thought_loop.run_cycle = _once
+
+    async def _first_run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    asyncio.run(_first_run())
+
+    # Now spawn a fresh mind pointing at the same persistence dir.
+    mind2 = _make_mind(tmp_path, monkeypatch)
+    initialized_payloads: list[dict] = []
+
+    async def _capture(payload: dict) -> None:
+        initialized_payloads.append(payload)
+
+    mind2.on_initialized.append(_capture)
+
+    async def _initialize_only() -> None:
+        await mind2.initialize()
+
+    asyncio.run(_initialize_only())
+
+    assert initialized_payloads, "on_initialized must fire during initialize()"
+    payload = initialized_payloads[0]
+    assert payload["type"] == "initialized"
+    contents = [item["content"] for item in payload.get("short_term", [])]
+    assert any("pre-existing thought" in c for c in contents), (
+        f"Restored short-term items must appear in on_initialized payload; got {contents}"
+    )
+    assert isinstance(payload["long_term_count"], int)
+    assert payload["thought_count"] == 1
+
+
+# ---------------------------------------------------------------------------
 # Observer integration
 # ---------------------------------------------------------------------------
 

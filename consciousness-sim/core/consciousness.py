@@ -160,6 +160,7 @@ class Consciousness:
         self.on_reflection: list[EventHandler] = []
         self.on_identity_shift: list[EventHandler] = []
         self.on_perception: list[EventHandler] = []
+        self.on_initialized: list[EventHandler] = []
 
     async def _emit(self, handlers: list[EventHandler], payload: dict[str, Any]) -> None:
         for handler in handlers:
@@ -181,6 +182,17 @@ class Consciousness:
                 if isinstance(item, dict):
                     self.short_term.add(str(item.get("kind", "thought")), str(item.get("content", "")))
             self.thought_count = int(restored.get("thought_count", 0))
+
+        lt_count = await self.long_term.count()
+        await self._emit(
+            self.on_initialized,
+            {
+                "type": "initialized",
+                "short_term": [{"kind": i.kind, "content": i.content} for i in self.short_term.list()],
+                "long_term_count": lt_count,
+                "thought_count": self.thought_count,
+            },
+        )
 
     async def _save_state(self) -> None:
         await self.state_manager.save(
