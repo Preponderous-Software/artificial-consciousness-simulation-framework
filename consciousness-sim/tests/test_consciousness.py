@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import yaml
@@ -75,6 +76,37 @@ def test_initialize_rewires_restored_identity(tmp_path, monkeypatch) -> None:
         assert mind.identity.name == "RestoredAria"
         assert mind.thought_loop.identity is mind.identity
         assert mind.thought_loop.inner_voice.name == "RestoredAria"
+
+    asyncio.run(_run())
+
+
+def test_state_manager_concurrent_saves_do_not_corrupt(tmp_path, monkeypatch) -> None:
+    """Concurrent save() calls must not produce a corrupted state.json."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+
+    async def _run() -> None:
+        sm = StateManager("Aria")
+        states = [{"thought_count": i, "identity": {}, "short_term": []} for i in range(20)]
+        await asyncio.gather(*[sm.save(s) for s in states])
+        loaded = await sm.load()
+        assert loaded is not None
+        assert "thought_count" in loaded
+
+    asyncio.run(_run())
+
+
+def test_state_manager_load_recovers_from_corrupt_file(tmp_path, monkeypatch) -> None:
+    """A corrupt state.json must not crash startup — return None and move the file."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+
+    async def _run() -> None:
+        sm = StateManager("Aria")
+        sm.path.write_text('{"valid": true}\n{"extra": "data"}', encoding="utf-8")
+        result = await sm.load()
+        assert result is None
+        corrupt_path = sm.path.with_suffix(".json.corrupt")
+        assert corrupt_path.exists(), "corrupt file should be preserved for inspection"
+        assert not sm.path.exists(), "original corrupt path should be gone"
 
     asyncio.run(_run())
 
