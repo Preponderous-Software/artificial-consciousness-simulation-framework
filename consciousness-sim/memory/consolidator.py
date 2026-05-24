@@ -60,8 +60,12 @@ class MemoryConsolidator:
 
         stored = 0
         fallback_candidates: list[str] = []
-        for line in output.splitlines():
-            line = line.strip()
+        for raw_line in output.splitlines():
+            # Strip markdown emphasis (* and _) BEFORE the prefix check so lines
+            # like `- **[Importance: 9] [Emotional valence: 0.8]** summary` (the
+            # dominant llama3.2:3b output, per issue #63) parse correctly. Also
+            # handles `**- [Importance...]**` if the model wraps the whole line.
+            line = re.sub(r"[*_]+", "", raw_line).strip()
             if not line.startswith("-"):
                 continue
             match = re.match(
@@ -69,7 +73,7 @@ class MemoryConsolidator:
                 line,
             )
             if not match:
-                logging.warning("Consolidation: skipping unparseable line: %r", line)
+                logging.warning("Consolidation: skipping unparseable line: %r", raw_line)
                 fallback_candidates.append(line.lstrip("- ").strip())
                 continue
             importance = float(match.group(1))
