@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import select
 import sys
 from datetime import datetime, timezone
 
@@ -96,36 +95,52 @@ class ConsciousnessCLI:
 
     async def _keyboard_loop(self) -> None:
         loop = asyncio.get_running_loop()
-        while not self.consciousness._stop_event.is_set():
-            # Poll stdin with a short timeout so we unblock promptly when the
-            # stop event fires (Ctrl+C or 'q') without leaving a thread stuck
-            # in input() that would prevent asyncio.run() from shutting down.
-            try:
-                ready = await loop.run_in_executor(
-                    None, lambda: select.select([sys.stdin], [], [], 0.5)[0]
+        # Use asyncio's native pipe reader so stdin is non-blocking on the
+        # event loop — no executor threads, no readline() blocking the loop.
+        reader = asyncio.StreamReader()
+        protocol = asyncio.StreamReaderProtocol(reader)
+        try:
+            transport, _ = await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+        except Exception as exc:
+            logger.debug("Could not attach async stdin reader (%s); keyboard input disabled", exc)
+            await self.consciousness._stop_event.wait()
+            return
+
+        try:
+            while not self.consciousness._stop_event.is_set():
+                stop_task = asyncio.create_task(self.consciousness._stop_event.wait())
+                read_task = asyncio.create_task(reader.readline())
+                done, pending = await asyncio.wait(
+                    {stop_task, read_task},
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
-            except (ValueError, OSError):
-                return  # stdin closed
-            if self.consciousness._stop_event.is_set():
-                return
-            if not ready:
-                continue
-            try:
-                line = sys.stdin.readline()
-            except OSError:
-                return
-            if not line:
-                logger.debug("stdin closed — keyboard loop exiting")
-                return
-            cmd = line.strip().lower()
-            if cmd == "r":
-                await self.consciousness.request_reflection()
-            elif cmd == "j":
-                events = await self.consciousness.journal.recent(limit=5)
-                self.console.print(Panel("\n".join(f"{e['timestamp']} {e['type']}: {e['content']}" for e in events), title="Journal"))
-            elif cmd == "q":
-                self.consciousness._stop_event.set()
-                return
+                for t in pending:
+                    t.cancel()
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
+                if stop_task in done or self.consciousness._stop_event.is_set():
+                    return
+                if read_task in done:
+                    try:
+                        raw = read_task.result()
+                    except Exception:
+                        return
+                    if not raw:
+                        logger.debug("stdin closed — keyboard loop exiting")
+                        return
+                    cmd = raw.decode(errors="replace").strip().lower()
+                    if cmd == "r":
+                        await self.consciousness.request_reflection()
+                    elif cmd == "j":
+                        events = await self.consciousness.journal.recent(limit=5)
+                        self.console.print(Panel("\n".join(f"{e['timestamp']} {e['type']}: {e['content']}" for e in events), title="Journal"))
+                    elif cmd == "q":
+                        self.consciousness._stop_event.set()
+                        return
+        finally:
+            transport.close()
 
     async def run(self) -> None:
         thinker = asyncio.create_task(self.consciousness.run())
