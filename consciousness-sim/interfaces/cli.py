@@ -113,7 +113,9 @@ class ConsciousnessCLI:
         def _reader() -> None:
             try:
                 while True:
-                    ready, _, _ = select.select([sys.stdin, stop_r], [], [])
+                    # Use raw fd ints — passing sys.stdin (TextIOWrapper) lets
+                    # Python's read-ahead buffer hide data from select in cbreak mode.
+                    ready, _, _ = select.select([fd, stop_r], [], [])
                     if stop_r in ready:
                         break
                     ch = os.read(fd, 1)
