@@ -12,8 +12,10 @@ ignition threshold (GNWT). No prediction-error cycle (PP-1).
 
 from __future__ import annotations
 
+import logging
 import re
 import random
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -84,6 +86,7 @@ class ThoughtLoop:
         perception_every_n: int = 0,
         thought_temperature: float = 0.85,
         thought_max_tokens: int = 220,
+        perf_log_every_n: int = 10,
     ) -> None:
         self.provider = provider
         self.identity = identity
@@ -99,17 +102,27 @@ class ThoughtLoop:
         self.perception_every_n = max(0, int(perception_every_n))
         self.thought_temperature = float(thought_temperature)
         self.thought_max_tokens = int(thought_max_tokens)
+        self.perf_log_every_n = max(0, int(perf_log_every_n))
         self.inner_voice = InnerVoice(identity.name)
         self.monitor = MetacognitiveMonitor()
 
     async def run_cycle(self, thought_count: int) -> ThoughtCycleResult:
         self.identity.attention_schema.decay()
         context = self.short_term.render_for_prompt()
+
+        _t = time.monotonic()
         query_embedding = await self.provider.embed(context)
+        _embed_ms = (time.monotonic() - _t) * 1000
+
+        _t = time.monotonic()
         related = await self.long_term.similarity_search(query_embedding, limit=3)
+        _search_ms = (time.monotonic() - _t) * 1000
+
         memories = "\n".join(f"- {m.summary}" for m in related) or "(none retrieved)"
 
+        _t = time.monotonic()
         perception = await self._maybe_fetch_perception(thought_count)
+        _perception_ms = (time.monotonic() - _t) * 1000
         if perception is not None:
             # Lingers into subsequent cycles via short-term buffer and gets
             # consolidated by the memory consolidator from episodic.
@@ -126,9 +139,11 @@ class ThoughtLoop:
             short_term_buffer=context,
             perception_block=render_perception_block(perception),
         )
+        prompt_text = f"{anchor}\n\n{prompt}"
 
+        _t = time.monotonic()
         raw = await self.provider.generate(
-            prompt=f"{anchor}\n\n{prompt}",
+            prompt=prompt_text,
             system=(
                 "Generate inner monologue only. "
                 "Do not end with a question or invitation to the reader. "
@@ -138,6 +153,15 @@ class ThoughtLoop:
             temperature=self.thought_temperature,
             max_tokens=self.thought_max_tokens,
         )
+        _generate_ms = (time.monotonic() - _t) * 1000
+
+        if self.perf_log_every_n > 0 and thought_count % self.perf_log_every_n == 0:
+            logging.info(
+                "Cycle %d perf — embed: %.0fms  search: %.0fms  generate: %.0fms"
+                "  perception: %.0fms  prompt_chars: %d",
+                thought_count,
+                _embed_ms, _search_ms, _generate_ms, _perception_ms, len(prompt_text),
+            )
         thought = self.inner_voice.render(raw, register=_select_register(raw, bool(related)))
         label = self.monitor.score(thought, self.short_term.list())
         self.short_term.add("thought", thought, importance=self.monitor.importance(label))

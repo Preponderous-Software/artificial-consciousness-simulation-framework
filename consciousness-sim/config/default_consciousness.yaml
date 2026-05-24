@@ -20,6 +20,7 @@ thought_loop:
   max_interval_seconds: 30
   reflection_probability: 0.15
   existential_inquiry_every_n_thoughts: 75
+  perf_log_every_n: 10          # log per-component cycle timing every N thoughts (0 = off)
 
 memory:
   short_term_capacity: 20

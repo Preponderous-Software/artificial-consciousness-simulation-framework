@@ -35,6 +35,23 @@ def test_long_term_similarity_retrieval() -> None:
     asyncio.run(_run())
 
 
+def test_long_term_index_exists_after_initialize() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            import aiosqlite
+            db_path = Path(d) / "mem.db"
+            ltm = LongTermMemory(db_path)
+            await ltm.initialize()
+            async with aiosqlite.connect(db_path) as db:
+                cursor = await db.execute("PRAGMA index_list(memories)")
+                indexes = [row[1] for row in await cursor.fetchall()]
+            assert "idx_memories_dim_importance" in indexes, (
+                f"Expected index idx_memories_dim_importance, got: {indexes}"
+            )
+
+    asyncio.run(_run())
+
+
 def test_long_term_rejects_dimension_mismatch_on_store() -> None:
     async def _run() -> None:
         with tempfile.TemporaryDirectory() as d:
