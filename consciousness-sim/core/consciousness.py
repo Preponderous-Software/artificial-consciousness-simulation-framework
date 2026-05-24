@@ -107,6 +107,7 @@ class Consciousness:
             self_concept=f"I am {name}, an emergent mind in process.",
             personality_traits=["introspective", "curious"],
             mood={k: float(v) for k, v in self.config["mood"]["initial"].items()},
+            initial_mood={k: float(v) for k, v in self.config["mood"]["initial"].items()},
         )
 
         self.short_term = ShortTermMemory(capacity=int(mem_cfg["short_term_capacity"]))
@@ -176,6 +177,13 @@ class Consciousness:
         restored = await self.state_manager.load()
         if restored:
             self.identity = IdentityDocument.from_dict(dict(restored.get("identity", {})))
+            if not self.identity.initial_mood:
+                # Legacy state pre-#62: populate the baseline from config so
+                # drift_mood reverts toward configured initial, not a possibly
+                # collapsed current mood.
+                self.identity.initial_mood = {
+                    k: float(v) for k, v in self.config["mood"]["initial"].items()
+                }
             self.thought_loop.identity = self.identity
             self.thought_loop.inner_voice = InnerVoice(self.identity.name)
             for item in restored.get("short_term", []):
@@ -291,7 +299,12 @@ class Consciousness:
                 elapsed = asyncio.get_event_loop().time() - t0
                 logging.debug("Thought cycle %d: completed in %.1fs", self.thought_count, elapsed)
 
-                self.identity.drift_mood(cycle.thought, drift_rate)
+                # Include perception content so external stimulus modulates
+                # affect, not only self-generated thought (issue #62 Fix 1).
+                drift_text = cycle.thought
+                if cycle.perception is not None:
+                    drift_text = f"{cycle.thought} {cycle.perception.content}"
+                self.identity.drift_mood(drift_text, drift_rate)
 
                 if cycle.perception is not None:
                     p = cycle.perception

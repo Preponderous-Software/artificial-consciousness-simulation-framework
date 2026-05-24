@@ -12,6 +12,7 @@ ignition threshold (GNWT). No prediction-error cycle (PP-1).
 
 from __future__ import annotations
 
+import re
 import random
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,25 @@ from llm.provider import LLMProvider
 from memory.episodic import EpisodicMemory
 from memory.long_term import LongTermMemory
 from memory.short_term import ShortTermMemory
+
+
+_THEME_STOPWORDS = frozenset({
+    "about", "above", "after", "again", "against", "being", "because",
+    "could", "every", "everything", "from", "given", "have", "just",
+    "know", "might", "myself", "never", "nothing", "often", "other",
+    "perhaps", "really", "remember", "right", "since", "small", "some",
+    "something", "still", "their", "there", "these", "think", "those",
+    "though", "thought", "through", "under", "until", "using", "very",
+    "when", "where", "which", "while", "would", "years",
+})
+
+
+def _extract_theme(text: str) -> str:
+    """Return the first content word (5+ chars, not a stopword) from text."""
+    for word in re.findall(r"[a-z]{5,}", text.lower()):
+        if word not in _THEME_STOPWORDS:
+            return word
+    return ""
 
 
 def _select_register(raw: str, has_retrieved_memories: bool) -> str:
@@ -76,6 +96,7 @@ class ThoughtLoop:
         self.inner_voice = InnerVoice(identity.name)
 
     async def run_cycle(self, thought_count: int) -> ThoughtCycleResult:
+        self.identity.attention_schema.decay()
         context = self.short_term.render_for_prompt()
         query_embedding = await self.provider.embed(context)
         related = await self.long_term.similarity_search(query_embedding, limit=3)
@@ -124,6 +145,20 @@ class ThoughtLoop:
             existential_text = await self.reflection_engine.existential_inquiry(self.identity.name, f"{thought_count} thoughts")
             self.short_term.add("existential", existential_text)
             await self.episodic.append("existential", existential_text)
+
+        if perception is not None:
+            focus, theme = "perception", _extract_theme(perception.title + " " + perception.content)
+        elif existential_text is not None:
+            focus, theme = "existential", _extract_theme(existential_text)
+        elif reflection_text is not None:
+            focus, theme = "reflection", _extract_theme(reflection_text)
+        elif related:
+            focus, theme = "memory", _extract_theme(memories)
+        else:
+            focus, theme = "introspection", _extract_theme(thought)
+        if not theme:
+            theme = _extract_theme(thought)
+        self.identity.attention_schema.update(focus, theme)
 
         return ThoughtCycleResult(
             thought=thought,

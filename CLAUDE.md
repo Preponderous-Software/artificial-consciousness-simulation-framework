@@ -291,7 +291,8 @@ consciousness-sim/
 │   ├── thought_loop.py      # Per-cycle generation, memory retrieval, perception
 │   │                        #   fetch, reflection triggers
 │   ├── reflection.py        # Shallow / deep / existential reflection engine
-│   ├── identity.py          # Self-model (IdentityDocument), mood drift, amendments
+│   ├── identity.py          # Self-model (IdentityDocument), mood drift,
+│   │                        #   amendments, AttentionSchema (AST-1, #22 / #61)
 │   └── inner_voice.py       # Render raw LLM output into the agent's voice register
 ├── memory/
 │   ├── short_term.py        # Sliding-window buffer (GWT workspace analog)
@@ -333,8 +334,8 @@ consciousness-sim/
 1. `short_term.render_for_prompt()` → context string
 2. `provider.embed(context)` → query vector → `long_term.similarity_search()` → related memories
 3. Every `perception.every_n_cycles` cycles (default 3): `perception_provider.fetch()` → optional `Perception`; lingers in short-term + episodic so subsequent cycles can reference it (PR #54)
-4. Identity anchor + mood + memories + context + perception block → prompt → `provider.generate()` → raw thought
-5. `inner_voice.render()` → styled thought → `short_term.add()` + `episodic.append()` + `journal.append()`
+4. Identity anchor (includes `AttentionSchema` state per AST-1) + mood + memories + context + perception block → prompt → `provider.generate()` → raw thought
+5. `inner_voice.render()` → styled thought → `short_term.add()` + `episodic.append()` + `journal.append()` → `AttentionSchema.update()` for the next cycle
 6. Probabilistic reflection trigger → `reflection_engine.shallow/deep_reflection()`
 7. Events emitted via `Consciousness._emit()` to registered handlers (CLI, observer, web SSE, Discord sink if configured)
 8. Background: `MemoryConsolidator.consolidate_once()` every N minutes — episodic → LLM summary → long-term embeddings
