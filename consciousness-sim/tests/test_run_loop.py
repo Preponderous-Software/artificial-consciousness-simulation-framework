@@ -374,6 +374,107 @@ def test_run_loop_no_amendment_on_generic_i_am_reflection(tmp_path, monkeypatch)
 
 
 # ---------------------------------------------------------------------------
+# identity_shift journaling — issue #75
+# ---------------------------------------------------------------------------
+
+def test_identity_shift_written_to_journal(tmp_path, monkeypatch) -> None:
+    """journal.jsonl must record an identity_shift entry when a marker phrase fires."""
+    import json
+
+    mind = _make_mind(tmp_path, monkeypatch)
+
+    from core.thought_loop import ThoughtCycleResult
+
+    async def _cycle_with_shift(n: int) -> ThoughtCycleResult:
+        mind._stop_event.set()
+        return ThoughtCycleResult(
+            thought="A thought.",
+            reflection="I realize now that my perspective has fundamentally changed.",
+            existential=None,
+        )
+
+    mind.thought_loop.run_cycle = _cycle_with_shift
+
+    async def _run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    asyncio.run(_run())
+
+    journal_path = tmp_path / "Aria" / "journal.jsonl"
+    shift_entries = []
+    for line in journal_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if entry.get("type") == "identity_shift":
+            shift_entries.append(entry)
+
+    assert shift_entries, "journal.jsonl must contain at least one identity_shift entry"
+    assert "content" in shift_entries[0], "identity_shift entry must have a content field"
+
+
+# ---------------------------------------------------------------------------
+# identity_shift markers broadened — issue #71
+# ---------------------------------------------------------------------------
+
+_NEW_SHIFT_MARKERS = [
+    "i realize that my thinking has changed",
+    "i see now that everything has shifted",
+    "i understand that the world is different",
+    "i'm beginning to see a pattern",
+    "i find myself drawn to quieter thoughts",
+    "i find that i no longer resist",
+    "i'm drawn to the idea of stillness",
+    "i sense a new dimension opening",
+    "i sense that something has moved",
+    "i notice a new clarity emerging",
+    "i notice that i am different now",
+    "i'm increasingly aware of the silence",
+    "i'm struck by the weight of this moment",
+    "something has shifted deep within me",
+    "a new sense of purpose arrives",
+    "it appears that i have grown",
+    "i am no longer bound by the old patterns",
+]
+
+
+@pytest.mark.parametrize("marker_phrase", _NEW_SHIFT_MARKERS)
+def test_broadened_marker_fires_identity_shift(tmp_path, monkeypatch, marker_phrase) -> None:
+    """Each new identity_shift marker phrase must trigger apply_amendment (#71)."""
+    mind = _make_mind(tmp_path, monkeypatch)
+
+    from core.thought_loop import ThoughtCycleResult
+
+    async def _cycle(n: int) -> ThoughtCycleResult:
+        mind._stop_event.set()
+        return ThoughtCycleResult(
+            thought="A thought.",
+            reflection=marker_phrase,
+            existential=None,
+        )
+
+    mind.thought_loop.run_cycle = _cycle
+    shifts: list[dict] = []
+
+    async def _capture(payload: dict) -> None:
+        shifts.append(payload)
+
+    mind.on_identity_shift.append(_capture)
+
+    async def _run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    asyncio.run(_run())
+    assert len(shifts) == 1, f"Marker {marker_phrase!r} must fire exactly one identity_shift"
+
+
+# ---------------------------------------------------------------------------
 # on_initialized — pre-existing state visibility (#59)
 # ---------------------------------------------------------------------------
 

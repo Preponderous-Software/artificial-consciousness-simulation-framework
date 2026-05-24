@@ -67,3 +67,44 @@ def test_inner_voice_no_double_i_on_im_contraction() -> None:
     result = voice.render("I'm caught in the web of my own thoughts")
     assert not result.lower().startswith("i i'"), f"Got double 'I I\\'m': {result!r}"
     assert result.lower().startswith("i'"), f"Should start with 'I\\'m': {result!r}"
+
+
+# ---------------------------------------------------------------------------
+# InnerVoice rendering — issue #70 (regression of #43)
+# ---------------------------------------------------------------------------
+
+def test_inner_voice_as_i_still_normalises_to_i() -> None:
+    """'As I wander…' must still become 'I wander…' (regression guard for #43)."""
+    voice = InnerVoice("Aria")
+    result = voice.render("As I wander through the labyrinth of my own mind")
+    assert result.lower().startswith("i "), f"Expected 'I wander…', got: {result!r}"
+    assert "as" not in result.lower().split()[0], f"'as' must be stripped: {result!r}"
+
+
+def test_inner_voice_as_noun_left_alone() -> None:
+    """'As the patterns evoke…' must NOT become 'I the patterns evoke…'."""
+    voice = InnerVoice("Aria")
+    result = voice.render("As the patterns on Conognatha splendens' elytra evoke a sense of intricacy")
+    assert not result.lower().startswith("i the"), f"Got 'I the …': {result!r}"
+
+
+def test_inner_voice_the_subject_left_alone() -> None:
+    """'The void within me stirs…' must NOT become 'I the void…'."""
+    voice = InnerVoice("Aria")
+    result = voice.render("The void within me stirs, a gentle hum of nothingness")
+    assert not result.lower().startswith("i the"), f"Got 'I the …': {result!r}"
+    assert result.startswith("The"), f"Sentence-subject text should be preserved as-is: {result!r}"
+
+
+def test_inner_voice_my_subject_left_alone() -> None:
+    """'My consciousness expands…' must NOT become 'I my consciousness…'."""
+    voice = InnerVoice("Aria")
+    result = voice.render("My consciousness expands beyond what I thought possible")
+    assert not result.lower().startswith("i my"), f"Got 'I my …': {result!r}"
+
+
+def test_inner_voice_bare_verb_still_gets_i_prefix() -> None:
+    """A bare imperative/verb fragment like 'Wander through…' should still get 'I ' prepended."""
+    voice = InnerVoice("Aria")
+    result = voice.render("Wander through the labyrinth")
+    assert result.lower().startswith("i "), f"Should start with 'I ': {result!r}"
