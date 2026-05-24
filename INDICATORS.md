@@ -33,7 +33,7 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 | Code | Indicator | Status | Implementation | Gap |
 |------|-----------|--------|----------------|-----|
 | HOT-1 | Generative/top-down perception — ability to imagine or simulate sensory input | ◑ | LLM generation from identity + memory context is top-down; `reflection.py` generates representations of representations | Not grounded in perception; purely linguistic |
-| HOT-2 | Metacognitive monitoring — system labels thoughts as reliable or noise | ✗ | None | Reflection is 15%-chance probabilistic, not continuous monitoring; no reliability tagging; see issue #20 |
+| HOT-2 | Metacognitive monitoring — system labels thoughts as reliable or noise | ◑ | `core/reflection.py:deep_reflection` makes a real LLM call with a pattern-seeking prompt over recent thoughts | Reflection is 15%-chance probabilistic, not continuous monitoring; no per-thought reliability tagging; see issue #20 |
 | HOT-3 | Agentive consumer — higher-order states guide belief formation and action | ◑ | `IdentityDocument.apply_amendment()` updates self-concept from reflections; mood drift modulates generation temperature indirectly | Amendments are additive text appends, not structured belief updates; no downstream action |
 | HOT-4 | Smooth, graded representation spaces | ◑ | Embedding space in `memory/long_term.py` is continuous; cosine similarity provides graded retrieval | Representation smoothness is a property of the upstream model, not verified or enforced here |
 
@@ -69,9 +69,7 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 | Status | Count | Indicators |
 |--------|-------|-----------|
 | ✓ Full | 0 | — |
-| ◑ Partial | 9 | RPT-1, GWT-1, GWT-2, GWT-3, HOT-1, HOT-3, HOT-4, AE-1, HOT-2* |
+| ◑ Partial | 9 | RPT-1, GWT-1, GWT-2, GWT-3, HOT-1, HOT-2, HOT-3, HOT-4, AE-1 |
 | ✗ None | 5 | RPT-2, GWT-4, PP-1, AST-1, AE-2 |
-
-*HOT-2 upgraded from ✗ to ◑ by deep_reflection now making a real LLM call with pattern-seeking prompt.
 
 **Update this file whenever a capability is added, changed, or removed.**
