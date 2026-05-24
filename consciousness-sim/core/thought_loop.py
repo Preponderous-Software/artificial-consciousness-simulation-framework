@@ -19,6 +19,7 @@ from pathlib import Path
 
 from core.identity import IdentityDocument
 from core.inner_voice import InnerVoice
+from core.metacognition import MetacognitiveMonitor
 from core.reflection import ReflectionEngine
 from llm.perception import Perception, PerceptionProvider, render_perception_block
 from llm.provider import LLMProvider
@@ -61,6 +62,7 @@ class ThoughtCycleResult:
     reflection: str | None
     existential: str | None
     perception: Perception | None = None
+    metacognitive_label: str = "high"
 
 
 class ThoughtLoop:
@@ -98,6 +100,7 @@ class ThoughtLoop:
         self.thought_temperature = float(thought_temperature)
         self.thought_max_tokens = int(thought_max_tokens)
         self.inner_voice = InnerVoice(identity.name)
+        self.monitor = MetacognitiveMonitor()
 
     async def run_cycle(self, thought_count: int) -> ThoughtCycleResult:
         self.identity.attention_schema.decay()
@@ -136,12 +139,20 @@ class ThoughtLoop:
             max_tokens=self.thought_max_tokens,
         )
         thought = self.inner_voice.render(raw, register=_select_register(raw, bool(related)))
-        self.short_term.add("thought", thought)
+        label = self.monitor.score(thought, self.short_term.list())
+        self.short_term.add("thought", thought, importance=self.monitor.importance(label))
         await self.episodic.append("thought", thought)
 
         reflection_text: str | None = None
         existential_text: str | None = None
-        if random.random() < self.reflection_probability:
+        # reflection_probability=0.0 means "disabled"; boost only applies when a
+        # baseline is set, preserving the existing semantics of explicit zero.
+        effective_reflection_prob = (
+            min(1.0, self.reflection_probability + self.monitor.reflection_boost(label))
+            if self.reflection_probability > 0.0
+            else 0.0
+        )
+        if random.random() < effective_reflection_prob:
             recent = self.short_term.render_for_prompt()
             if self.reflection_engine.should_deep_reflect(thought_count):
                 reflection_text = await self.reflection_engine.deep_reflection(self.identity.name, recent)
@@ -174,6 +185,7 @@ class ThoughtLoop:
             reflection=reflection_text,
             existential=existential_text,
             perception=perception,
+            metacognitive_label=label,
         )
 
     async def _maybe_fetch_perception(self, thought_count: int) -> Perception | None:
