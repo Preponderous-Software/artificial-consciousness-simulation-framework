@@ -17,6 +17,8 @@ import hashlib
 import logging
 import os
 import re
+import subprocess
+import urllib.parse
 from abc import ABC, abstractmethod
 from typing import Any, Sequence
 
@@ -34,6 +36,10 @@ class LLMProvider(ABC):
     @abstractmethod
     async def embed(self, text: str) -> list[float]:
         raise NotImplementedError
+
+    async def try_ensure_running(self) -> bool:
+        """Check provider health and attempt recovery if needed. Returns True if healthy."""
+        return True
 
     async def with_backoff(self, func: Any, *args: Any, retries: int = 5, **kwargs: Any) -> Any:
         delay = 1.0
@@ -278,6 +284,47 @@ class OllamaProvider(LLMProvider):
                 raise RuntimeError(f"Ollama returned no embedding for model {self.model!r}")
             logger.debug("Ollama embed succeeded (model=%r, dims=%d)", self.model, len(emb))
             return [float(v) for v in emb]
+
+    async def _is_ollama_reachable(self) -> bool:
+        raw = self._resolve_base_url() or "http://localhost:11434"
+        parsed = urllib.parse.urlparse(raw if "://" in raw else f"http://{raw}")
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 11434
+        try:
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=2.0
+            )
+            writer.close()
+            await writer.wait_closed()
+            return True
+        except Exception:
+            return False
+
+    async def try_ensure_running(self) -> bool:
+        """Start 'ollama serve' if unreachable; poll up to 30s for it to come up."""
+        if await self._is_ollama_reachable():
+            return True
+        logger.warning("Ollama unreachable; attempting auto-start via 'ollama serve'")
+        try:
+            subprocess.Popen(
+                ["ollama", "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except FileNotFoundError:
+            logger.error("'ollama' binary not found — cannot auto-start")
+            return False
+        except Exception as exc:
+            logger.error("Failed to launch 'ollama serve': %s", exc)
+            return False
+        for _ in range(15):
+            await asyncio.sleep(2.0)
+            if await self._is_ollama_reachable():
+                logger.info("Ollama came up after auto-start")
+                return True
+        logger.error("Ollama did not become healthy within 30s after auto-start")
+        return False
 
 
 class MockProvider(LLMProvider, DeterministicFallbackMixin):

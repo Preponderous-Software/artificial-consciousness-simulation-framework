@@ -250,7 +250,10 @@ class Consciousness:
             drift_rate = float(self.config["mood"]["drift_rate"])
 
             _MAX_CONSECUTIVE_FAILURES = 20
+            _RECOVERY_TRIGGER = 3
+            _MAX_RECOVERY_ATTEMPTS = 3
             consecutive_failures = 0
+            recovery_attempts = 0
 
             while not self._stop_event.is_set():
                 self.thought_count += 1
@@ -270,9 +273,21 @@ class Consciousness:
                         )
                         self._stop_event.set()
                     else:
+                        if (consecutive_failures % _RECOVERY_TRIGGER == 0
+                                and recovery_attempts < _MAX_RECOVERY_ATTEMPTS):
+                            recovery_attempts += 1
+                            logging.warning(
+                                "Attempting provider recovery (attempt %d/%d)",
+                                recovery_attempts, _MAX_RECOVERY_ATTEMPTS,
+                            )
+                            if await self.provider.try_ensure_running():
+                                logging.info("Provider recovered; resuming thought loop")
+                                consecutive_failures = 0
+                                continue
                         await asyncio.sleep(random.uniform(min_interval, max_interval))
                     continue
                 consecutive_failures = 0
+                recovery_attempts = 0
                 elapsed = asyncio.get_event_loop().time() - t0
                 logging.debug("Thought cycle %d: completed in %.1fs", self.thought_count, elapsed)
 
