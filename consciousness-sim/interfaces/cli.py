@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import select
+import sys
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -93,11 +95,27 @@ class ConsciousnessCLI:
         return table
 
     async def _keyboard_loop(self) -> None:
-        while True:
+        loop = asyncio.get_running_loop()
+        while not self.consciousness._stop_event.is_set():
+            # Poll stdin with a short timeout so we unblock promptly when the
+            # stop event fires (Ctrl+C or 'q') without leaving a thread stuck
+            # in input() that would prevent asyncio.run() from shutting down.
             try:
-                line = await asyncio.to_thread(input, "")
-            except EOFError:
-                logger.debug("stdin closed — keyboard loop exiting (headless mode)")
+                ready = await loop.run_in_executor(
+                    None, lambda: select.select([sys.stdin], [], [], 0.5)[0]
+                )
+            except (ValueError, OSError):
+                return  # stdin closed
+            if self.consciousness._stop_event.is_set():
+                return
+            if not ready:
+                continue
+            try:
+                line = sys.stdin.readline()
+            except OSError:
+                return
+            if not line:
+                logger.debug("stdin closed — keyboard loop exiting")
                 return
             cmd = line.strip().lower()
             if cmd == "r":
@@ -119,4 +137,5 @@ class ConsciousnessCLI:
                     await asyncio.sleep(0.25)
         finally:
             self.consciousness._stop_event.set()
+            keys.cancel()
             await asyncio.gather(thinker, keys, return_exceptions=True)
