@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
+import re
 import signal
 from dataclasses import asdict
 from pathlib import Path
@@ -25,6 +27,7 @@ from core.identity import IdentityDocument
 from core.inner_voice import InnerVoice
 from core.reflection import ReflectionEngine
 from core.thought_loop import ThoughtLoop
+from interfaces.discord.webhook import build_sink_from_config as build_discord_sink
 from llm.perception import PerceptionProvider, build_perception_provider
 from llm.provider import build_provider
 from memory.consolidator import MemoryConsolidator
@@ -82,13 +85,34 @@ def _validate_config(config: dict[str, Any]) -> None:
                 raise KeyError(f"Config missing required key: '{section}.{key}'")
 
 
+_ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _expand_env_vars(value: Any) -> Any:
+    """Recursively replace ${VAR} references in strings with os.environ values.
+
+    Used at config load time so secrets (e.g. Discord webhook URLs, API keys)
+    can live in the config file as references rather than literal values.
+    Unresolved variables become empty strings — downstream validators decide
+    whether that's an error (DiscordWebhookSink raises on unresolved ${VAR}).
+    """
+    if isinstance(value, str):
+        return _ENV_VAR_RE.sub(lambda m: os.environ.get(m.group(1), ""), value)
+    if isinstance(value, list):
+        return [_expand_env_vars(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _expand_env_vars(v) for k, v in value.items()}
+    return value
+
+
 class Consciousness:
     """Coordinates subsystems and runs an indefinitely iterative thought process."""
 
     def __init__(self, name: str, config_path: str) -> None:
         self.name = name
         self.config_path = Path(config_path)
-        self.config = yaml.safe_load(self.config_path.read_text(encoding="utf-8"))
+        raw = yaml.safe_load(self.config_path.read_text(encoding="utf-8"))
+        self.config = _expand_env_vars(raw)
         _validate_config(self.config)
         self._stop_event = asyncio.Event()
         self.thought_count = 0
@@ -162,6 +186,13 @@ class Consciousness:
         self.on_identity_shift: list[EventHandler] = []
         self.on_perception: list[EventHandler] = []
         self.on_initialized: list[EventHandler] = []
+
+        # Optional Discord webhook sink (issue #56). Built after event lists
+        # exist so register() can subscribe to them. The section is optional in
+        # config; absent or `enabled: false` → sink is None, zero behaviour change.
+        self.discord_sink = build_discord_sink(self.config.get("discord", {}))
+        if self.discord_sink is not None:
+            self.discord_sink.register(self)
 
     async def _emit(self, handlers: list[EventHandler], payload: dict[str, Any]) -> None:
         for handler in handlers:

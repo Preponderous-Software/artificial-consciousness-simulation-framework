@@ -93,6 +93,24 @@ Adding `--web-port N` to any `spawn.py` invocation starts a FastAPI + SSE dashbo
 
 When enabled (`perception.enabled: true`, default), every Nth thought cycle fetches an external snippet from `perception.provider` (e.g. a random Wikipedia article summary) and injects it into the LLM prompt. Solves the closed-loop attractor problem where, without external input, the LLM samples only from its prior and collapses into a single semantic basin. See the perception block emitted in journal/episodic with kind `perception`.
 
+### Discord webhook (PR #65, issue #56)
+
+Stream consciousness events to a Discord channel — color-coded embeds matching the dashboard palette, with rate limiting and secret-safe URL handling.
+
+```bash
+# 1. In your Discord server: Server Settings → Integrations → Webhooks → New Webhook
+# 2. Set the URL as an env var so it never lives in YAML
+export CONSCIOUSNESS_DISCORD_WEBHOOK="https://discord.com/api/webhooks/.../..."
+# 3. In your config, enable discord:
+#    discord:
+#      enabled: true
+#      webhook_url: "${CONSCIOUSNESS_DISCORD_WEBHOOK}"
+#      events: [thought, reflection, perception, identity_shift]
+python scripts/spawn.py --name Sage --bg
+```
+
+The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP failures, timeouts, and 429s are swallowed and logged — Discord outages never break a thought cycle. Hosts other than `discord.com` / `discordapp.com` are rejected at startup.
+
 ## Configuration Guide (`config/default_consciousness.yaml`)
 
 - `consciousness.name`: default identity name (overridden by CLI)
@@ -117,6 +135,11 @@ When enabled (`perception.enabled: true`, default), every Nth thought cycle fetc
 - `perception.every_n_cycles`: fetch cadence (default 3)
 - `perception.timeout_seconds`: per-fetch HTTP timeout (failures gracefully skip)
 - `perception.cache_last_n`: don't replay the same snippet within N fetches
+- `discord.enabled`: opt in to Discord webhook streaming (see "Discord webhook" above)
+- `discord.webhook_url`: webhook URL — use `${ENV_VAR}` indirection; never commit the literal URL
+- `discord.events`: which event types to forward (`thought`, `reflection`, `perception`, `identity_shift`, `memory_stored`)
+- `discord.rate_limit.max_per_minute`: outbound rate cap (default 25; Discord allows ~30/min sustained)
+- `discord.truncate_chars`: max embed description length (default 1800; Discord cap 4096)
 
 ## How a Thought Cycle Works
 

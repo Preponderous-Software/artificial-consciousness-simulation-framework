@@ -314,9 +314,11 @@ consciousness-sim/
 │   ├── cli.py               # Rich live dashboard (ConsciousnessCLI)
 │   ├── observer.py          # Observer utilities
 │   ├── event_relay.py       # Unix-socket event relay for detach/attach (#59)
-│   └── web/                 # FastAPI + SSE dashboard + vanilla-JS SPA (PR #52)
-│       ├── server.py
-│       └── static/index.html
+│   ├── web/                 # FastAPI + SSE dashboard + vanilla-JS SPA (PR #52)
+│   │   ├── server.py
+│   │   └── static/index.html
+│   └── discord/             # DiscordWebhookSink — embed posts per event (PR #65)
+│       └── webhook.py
 ├── scripts/
 │   ├── spawn.py             # Entry point: build mind + optional web dashboard
 │   │                        #   + optional perception + sinks; foreground / --bg

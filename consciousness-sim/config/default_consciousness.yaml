@@ -44,3 +44,22 @@ perception:
   every_n_cycles: 3
   timeout_seconds: 10
   cache_last_n: 5                # don't replay the same snippet within N fetches
+
+discord:
+  # Optional — stream consciousness events to a Discord channel via webhook.
+  # When enabled, post a colored embed per event to the configured webhook URL.
+  # Issue #56. Set webhook_url to a ${ENV_VAR} reference; the env var is
+  # substituted at load time so the URL never lives in this file.
+  enabled: false
+  webhook_url: "${CONSCIOUSNESS_DISCORD_WEBHOOK}"
+  username: null                 # null → use consciousness name
+  avatar_url: null
+  events:                        # which event types to forward
+    - thought
+    - reflection
+    - perception
+    - identity_shift
+  rate_limit:
+    max_per_minute: 25           # stays under Discord's 30/min sustained limit
+  truncate_chars: 1800           # below Discord's 4096 embed.description cap
+  include_perception_url: true   # let Discord auto-unfurl Wikipedia links
