@@ -4,8 +4,11 @@ Theory mapping — HOT (Rosenthal 2005 / Brown et al. 2019): generates
 higher-order representations of recent first-order thoughts, the core
 requirement of HOT theories. shallow_reflection → HOT-2 (metacognitive
 monitoring); deep_reflection → HOT-3 (agentive consumer updating
-self-model); existential_inquiry → HOT-4 (evaluating representational
-coherence over time).
+self-model); existential_inquiry → recursive HOT-3 over a long horizon
+(higher-order self-evaluation of identity coherence). Note: HOT-4
+('smooth, graded representation spaces') is a substrate property
+implemented by the embedding space in memory/long_term.py, not by this
+module.
 Gap: reflection is probabilistically triggered rather than continuous
 (HOT-2 requires ongoing monitoring, not 15%-chance sampling).
 """
