@@ -347,4 +347,8 @@ def build_provider(provider: str, model: str) -> LLMProvider:
         return AnthropicProvider(model)
     if normalized == "ollama":
         return OllamaProvider(model)
+    if normalized == "mock":
+        # Deterministic fallback — used by the experiment harness (#57) and any
+        # configuration that wants to run offline without an LLM round-trip.
+        return MockProvider()
     raise ValueError(f"Unsupported provider: {provider}")

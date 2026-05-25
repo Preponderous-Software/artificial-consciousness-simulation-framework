@@ -267,6 +267,11 @@ python scripts/spawn.py --name "Aria" --web-port 8080              # TUI + web
 python scripts/spawn.py --name "Aria" --bg --web-port 8080         # bg + web
 python scripts/spawn.py --name "Aria" --headless --web-port 8080   # foreground log-only + web
 # Default web bind host is 127.0.0.1; pass --web-host 0.0.0.0 to opt into LAN exposure
+
+# Experiment harness (issue #57) — reproducible run from a YAML manifest
+python scripts/experiment.py run experiments/manifests/mock-smoke-baseline.yaml
+python scripts/experiment.py list
+python scripts/experiment.py replay-analysis experiments/<name>/<UTC-timestamp>/
 ```
 
 **Environment variables:**
@@ -330,7 +335,19 @@ consciousness-sim/
 │   ├── attach.py            # Connect a TUI to a --bg instance via Unix socket (#59)
 │   ├── resume.py            # Restore from saved state
 │   ├── inspect.py           # Read-only inspection of a running instance
+│   ├── experiment.py        # Experiment harness CLI (issue #57): run / list /
+│   │                        #   replay-analysis subcommands
 │   └── _logging.py          # Per-instance rotating-file log config
+├── experiments/
+│   ├── manifest.py          # Pydantic ExperimentManifest (YAML schema)
+│   ├── metrics.py           # Pure metric functions: vocabulary, mood,
+│   │                        #   perception influence, cycle rate
+│   ├── runner.py            # spawn → wait → stop → snapshot → metrics → report
+│   ├── report.py            # Renders metrics + manifest → markdown report
+│   ├── golden/              # Four canonical reference runs (Rafael/Sage/Echo/Wren)
+│   ├── manifests/           # Shippable experiment specs
+│   └── <name>/<UTC-ts>/     # Recorded runs (manifest, meta, journal, state,
+│                            #   metrics, report)
 └── config/
     └── default_consciousness.yaml   # All tunable parameters
 ```

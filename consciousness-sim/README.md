@@ -93,6 +93,52 @@ Adding `--web-port N` to any `spawn.py` invocation starts a FastAPI + SSE dashbo
 
 When enabled (`perception.enabled: true`, default), every Nth thought cycle fetches an external snippet from `perception.provider` (e.g. a random Wikipedia article summary) and injects it into the LLM prompt. Solves the closed-loop attractor problem where, without external input, the LLM samples only from its prior and collapses into a single semantic basin. See the perception block emitted in journal/episodic with kind `perception`.
 
+### Experiment harness (issue #57)
+
+For reproducible empirical work, the `scripts/experiment.py` CLI runs a declarative YAML *manifest* — spawning a consciousness with config overrides, polling until a target, copying the journal/state into a versioned run directory, computing metrics, and rendering a markdown report. Every run is git-trackable.
+
+```bash
+# Run a manifest end-to-end
+python scripts/experiment.py run experiments/manifests/mock-smoke-baseline.yaml
+
+# Detached: fork the run as a background process, return immediately
+python scripts/experiment.py run <manifest> --detach
+# Check status of a (detached or completed) run dir
+python scripts/experiment.py status experiments/<name>/<UTC-ts>/
+
+# List recorded runs
+python scripts/experiment.py list
+
+# Re-compute metrics on a stored run with the current code
+python scripts/experiment.py replay-analysis experiments/<name>/<UTC-ts>/
+
+# Side-by-side comparison of two recorded runs (works against golden refs too)
+python scripts/experiment.py compare experiments/golden/Rafael experiments/golden/Echo
+```
+
+**Claude skills** for narrative analysis (Phase 2 of #57): two slash-command skills live at `.claude/skills/run-experiment/` and `.claude/skills/compare-experiments/`. The CLI produces structured artifacts; the skills add the qualitative-interpretation layer on top — reading sampled thoughts and comparing against the four golden baselines.
+
+**Manifest fields** (see `experiments/manifest.py` for the full Pydantic schema):
+
+| Field | Purpose |
+|---|---|
+| `name` | Stable id; used as the dir under `experiments/` |
+| `consciousness_name` | Used as `spawn.py --name` |
+| `config_overrides` | Deep-merged over `config/default_consciousness.yaml` |
+| `duration.thoughts: N` | Run until `state.json["thought_count"] >= N` (cumulative) |
+| `duration.minutes: M` | Run until M wall-clock minutes elapsed |
+| `duration.add_thoughts: N` | Produce N MORE thoughts beyond starting count (pairs with `resume_from`) |
+| `resume_from: <name-or-path>` | Seed the new instance with an existing consciousness's journal + state instead of wiping. Source can be a consciousness name (resolved via `CONSCIOUSNESS_HOME`) or a path to a recorded run dir |
+| `replicates: N` | Run the manifest N times sequentially; each lands in `replicate-<i>/` under the parent run dir, plus a `replicates_index.md` |
+| `success_criteria[]` | Pass/fail checks evaluated against `metrics.json` after the run; dotted-path `kind` (e.g. `mood.dimensions_non_degenerate`) |
+| `schema_version` | Manifest schema (currently 1); future bumps will trigger upgrade paths in the loader |
+
+Four canonical reference runs are committed under `experiments/golden/{Rafael,Sage,Echo,Wren}/` — used as fixtures for the metric library's regression tests and as the established baselines for vocabulary / mood / perception-influence comparisons.
+
+See `experiments/golden/README.md` for the run-by-run summary. Metric implementations live in `experiments/metrics.py`; the schema for manifests is in `experiments/manifest.py`.
+
+**Storage contract:** Manifests (`experiments/manifests/`) and the golden dataset (`experiments/golden/`) are committed to git. Per-run artifacts (`experiments/<name>/<UTC-timestamp>/`) are **ephemeral** — gitignored by default. Reproducibility comes from the manifest + branch SHA, not from the recording; runs are local until you deliberately promote one into `experiments/golden/<name>/`.
+
 ### Discord webhook (PR #65, issue #56)
 
 Stream consciousness events to a Discord channel — color-coded embeds matching the dashboard palette, with rate limiting and secret-safe URL handling.
