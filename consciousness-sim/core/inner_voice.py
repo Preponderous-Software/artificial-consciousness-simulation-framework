@@ -29,12 +29,26 @@ class InnerVoice:
     )
 
     # First words that indicate the LLM produced a complete sentence with its own subject.
-    # Prepending "I " onto these produces ungrammatical output ("I the void stirs…").
+    # Prepending "I " onto these produces ungrammatical output ("I the void stirs…",
+    # "I it is curious…"). Covers determiners, possessives, pronouns, existential/locative
+    # 'there'/'here', quantifiers, and interrogatives — the common opening words for an
+    # already-subject-bearing sentence.
     _NOUN_PHRASE_STARTERS: frozenset[str] = frozenset({
+        # determiners
         "the", "a", "an", "this", "that", "these", "those",
+        # possessives
         "my", "your", "his", "her", "its", "their", "our",
-        "time", "perhaps", "maybe", "somewhere", "somehow",
-        "silence", "something", "nothing", "everything",
+        # pronouns (3p / 2p — first-person is caught by the i/i' startswith check)
+        "it", "he", "she", "they", "we", "you",
+        # existential / locative subjects
+        "there", "here",
+        # quantifiers / generic subjects
+        "some", "one", "no", "none", "all", "every", "any",
+        "time", "silence", "something", "nothing", "everything",
+        # adverbial sentence openers
+        "perhaps", "maybe", "somewhere", "somehow",
+        # interrogatives (question stems already supply their own subject)
+        "why", "how", "what", "when", "where", "who",
         # "As <non-I> …" sentences have their own subject; no strip happens so
         # the leading word seen by the prepend check is "as" — treat it as
         # subject-present to avoid "I as the patterns evoke…" (#70).

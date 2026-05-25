@@ -1,0 +1,17 @@
+# Claude Code harness state — per-user, not for the repo
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Local virtualenv
+.venv/
+venv/
+
+# OS / editor cruft
+.DS_Store
+*.swp
