@@ -63,6 +63,60 @@
     .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--offline); flex-shrink: 0; }
     .tab.online .dot { background: var(--online); }
 
+    /* "+ New" tab — visually distinct from named instance tabs */
+    .tab.new-tab { color: var(--accent); padding: 12px 14px; font-weight: bold; }
+    .tab.new-tab:hover { background: var(--thought-bg); color: var(--text); }
+
+    /* Modal */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); z-index: 50;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .modal {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 22px 24px; min-width: 340px; max-width: 90vw;
+      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.6);
+    }
+    .modal h3 { font-size: 14px; margin-bottom: 14px; font-family: monospace; }
+    .modal label {
+      display: block; font-size: 11px; font-family: monospace;
+      color: var(--muted); margin-bottom: 4px; margin-top: 12px;
+      text-transform: uppercase; letter-spacing: .08em;
+    }
+    .modal input, .modal select {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); padding: 8px 10px; border-radius: 4px;
+      font-family: monospace; font-size: 13px;
+    }
+    .modal input:focus, .modal select:focus {
+      border-color: var(--accent); outline: none;
+    }
+    .modal-actions {
+      display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px;
+    }
+    .modal-actions button {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: 7px 14px; border-radius: 4px; cursor: pointer;
+      font-family: monospace; font-size: 12px;
+    }
+    .modal-actions button.primary {
+      background: var(--accent); border-color: var(--accent); color: #fff;
+    }
+    .modal-actions button:hover { border-color: var(--accent); }
+    .modal-error {
+      color: var(--offline); font-size: 12px; font-family: monospace;
+      margin-top: 10px; min-height: 14px;
+    }
+
+    /* Stop button in the status panel */
+    #stop-btn {
+      background: transparent; border: 1px solid var(--offline); color: var(--offline);
+      padding: 5px 10px; border-radius: 4px; cursor: pointer;
+      font-family: monospace; font-size: 11px; margin-top: 10px; display: none;
+    }
+    #stop-btn:hover { background: var(--offline); color: #fff; }
+    #stop-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
     #header-right {
       display: flex; align-items: center; gap: 12px;
       padding: 0 16px; flex-shrink: 0; border-left: 1px solid var(--border);
@@ -329,8 +383,8 @@ function showEmptyState() {
   $("main-area").innerHTML = `
     <div id="no-instance">
       <div>No consciousness instances yet.</div>
-      <div class="hint">Spawn one with:</div>
-      <code>python scripts/spawn.py --name Aria --bg --web-port 8080</code>
+      <div class="hint">Click <strong>+ New</strong> above to spawn one, or from the CLI:</div>
+      <code>python scripts/spawn.py --name Aria --bg</code>
     </div>`;
   $("current-name").textContent = "";
   $("status-indicator").textContent = "—";
@@ -361,18 +415,24 @@ function renderTabs(instances) {
   for (const inst of instances) {
     const tab = document.createElement("button");
     const isActive = inst.id === currentId;
-    const live = inst.streamable;
     tab.className = "tab" + (inst.running ? " online" : "") + (isActive ? " active" : "");
-    tab.title = inst.running
-      ? (live ? "Online (live stream)" : "Online (history only — not registered here)")
-      : "Offline — showing last known state";
+    tab.title = inst.running ? "Online (live stream)" : "Offline — showing last known state";
     tab.setAttribute("role", "tab");
     tab.setAttribute("aria-selected", String(isActive));
-    tab.setAttribute("aria-label", `${inst.name}, ${inst.running ? (live ? "online, live" : "online, history only") : "offline"}`);
+    tab.setAttribute("aria-label", `${inst.name}, ${inst.running ? "online" : "offline"}`);
     tab.innerHTML = `<span class="dot" aria-hidden="true"></span>${esc(inst.name)}`;
     tab.onclick = () => selectInstance(inst.id, instances);
     container.appendChild(tab);
   }
+  // "+ New" tab — opens the spawn modal
+  const newTab = document.createElement("button");
+  newTab.className = "tab new-tab";
+  newTab.setAttribute("role", "tab");
+  newTab.setAttribute("aria-label", "Spawn a new consciousness instance");
+  newTab.title = "Spawn a new consciousness instance";
+  newTab.textContent = "+ New";
+  newTab.onclick = openSpawnModal;
+  container.appendChild(newTab);
   // After layout: recompute overflow shadows and scroll active tab into view
   requestAnimationFrame(() => {
     updateTabOverflow();
@@ -523,6 +583,16 @@ function renderStatus(data) {
     <span class="stat-label">memories</span>       <span class="stat-value" id="stat-lt">${ltMemories}</span>
     <span class="stat-label">last reflection</span><span class="stat-value" id="stat-refl">${lastReflection}</span>
     <span class="stat-label">uptime</span>         <span class="stat-value" id="stat-uptime">—</span>`;
+  const sidebarStatus = grid.parentElement;
+  let stopBtn = $("stop-btn");
+  if (!stopBtn) {
+    stopBtn = document.createElement("button");
+    stopBtn.id = "stop-btn";
+    stopBtn.textContent = "Stop instance";
+    stopBtn.onclick = stopCurrentInstance;
+    sidebarStatus.appendChild(stopBtn);
+  }
+  stopBtn.style.display = currentOnline ? "inline-block" : "none";
   tickUptime();
 }
 
@@ -792,6 +862,136 @@ setInterval(() => {
   const refl = $("stat-refl");
   if (refl && refl.dataset.ts) refl.textContent = relTime(refl.dataset.ts);
 }, 30_000);
+
+// ── spawn / stop ──────────────────────────────────────────────────────────
+
+let providerCache = null;
+async function loadProviders() {
+  if (providerCache) return providerCache;
+  try {
+    const res = await fetch("/providers");
+    if (res.ok) providerCache = await res.json();
+  } catch (_) {}
+  return providerCache || {};
+}
+
+async function openSpawnModal() {
+  const providers = await loadProviders();
+  const providerKeys = Object.keys(providers);
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop";
+  backdrop.setAttribute("role", "dialog");
+  backdrop.setAttribute("aria-modal", "true");
+  backdrop.setAttribute("aria-label", "Spawn a new consciousness instance");
+
+  const defaultProvider = providerKeys[0] || "";
+  backdrop.innerHTML = `
+    <form class="modal" id="spawn-form">
+      <h3>Spawn a new consciousness</h3>
+      <label for="spawn-name">Name</label>
+      <input type="text" id="spawn-name" required pattern="[A-Za-z0-9_-]+"
+             maxlength="64" autocomplete="off" placeholder="e.g. Aria" />
+      <label for="spawn-provider">Provider</label>
+      <select id="spawn-provider">
+        <option value="">(default)</option>
+        ${providerKeys.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("")}
+      </select>
+      <label for="spawn-model">Model</label>
+      <select id="spawn-model"><option value="">(default)</option></select>
+      <div class="modal-error" id="spawn-error" role="alert"></div>
+      <div class="modal-actions">
+        <button type="button" id="spawn-cancel">Cancel</button>
+        <button type="submit" class="primary" id="spawn-submit">Spawn</button>
+      </div>
+    </form>`;
+  document.body.appendChild(backdrop);
+
+  const providerSelect = $("spawn-provider");
+  const modelSelect    = $("spawn-model");
+  const refreshModels = () => {
+    const p = providerSelect.value;
+    const models = (providers[p] || []);
+    modelSelect.innerHTML = `<option value="">(default)</option>` +
+      models.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
+  };
+  providerSelect.onchange = refreshModels;
+  if (defaultProvider) { providerSelect.value = defaultProvider; refreshModels(); }
+
+  const close = () => { backdrop.remove(); document.removeEventListener("keydown", onEsc); };
+  const onEsc = e => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onEsc);
+  backdrop.addEventListener("click", e => { if (e.target === backdrop) close(); });
+  $("spawn-cancel").onclick = close;
+
+  // Focus name input
+  requestAnimationFrame(() => $("spawn-name").focus());
+
+  $("spawn-form").onsubmit = async e => {
+    e.preventDefault();
+    const submit = $("spawn-submit");
+    const err = $("spawn-error");
+    err.textContent = "";
+    const payload = {
+      name: $("spawn-name").value.trim(),
+      provider: providerSelect.value || null,
+      model: modelSelect.value || null,
+    };
+    if (!payload.name) { err.textContent = "Name is required."; return; }
+
+    submit.disabled = true;
+    submit.textContent = "Spawning…";
+    try {
+      const res = await fetch("/instances", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        err.textContent = data.detail || `Spawn failed (${res.status})`;
+        submit.disabled = false;
+        submit.textContent = "Spawn";
+        return;
+      }
+      const created = await res.json();
+      toast(`Spawned “${created.id}”`);
+      close();
+      // Refresh tabs and switch to the new instance
+      await loadInstances();
+      const instances = await (await fetch("/instances")).json();
+      selectInstance(created.id, instances);
+    } catch (e) {
+      err.textContent = "Network error.";
+      submit.disabled = false;
+      submit.textContent = "Spawn";
+    }
+  };
+}
+
+async function stopCurrentInstance() {
+  if (!currentId) return;
+  if (!confirm(`Stop "${currentName}"? It will exit cleanly after the current thought cycle.`)) return;
+  const btn = $("stop-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Stopping…"; }
+  try {
+    const res = await fetch(`/instances/${encodeURIComponent(currentId)}/stop`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      toast(`Stop failed: ${data.detail || res.status}`);
+    } else {
+      toast(`SIGTERM sent to “${currentName}”`);
+    }
+  } catch (_) {
+    toast("Network error stopping instance.");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Stop instance"; }
+    // Refresh state — tab dot will turn offline once the agent exits.
+    await loadInstances();
+  }
+}
 
 // ── boot ──────────────────────────────────────────────────────────────────
 

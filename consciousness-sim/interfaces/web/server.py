@@ -1,10 +1,17 @@
-"""Web dashboard backend for real-time consciousness observation.
+"""Standalone web dashboard for the consciousness simulation framework.
 
-Theory mapping — GWT-3 (global broadcast): the web server makes the
-workspace broadcast externally legible to remote observers, extending
-the broadcast to any HTTP client without requiring a co-located terminal.
-Gap: observers are read-only; they cannot inject into the workspace
-(write endpoints are out of scope for this issue).
+Theory mapping — GWT-3 (global broadcast): the dashboard is the external
+broadcast surface. It owns no consciousness itself; it discovers running
+instances by scanning CONSCIOUSNESS_HOME, tails their append-only journals,
+and acts as a process manager (spawn / stop / archive). Decoupling the
+dashboard from any single agent makes the broadcast horizontal — many
+instances feed one observer (issue #55).
+
+Architecture: this server is always standalone (launched via
+``scripts/web.py``). Live events arrive exclusively through the journal
+tailer; there is no in-process event handler path. POST and DELETE
+endpoints (spawn / stop / archive) are localhost-only by default to
+prevent remote process control of the host.
 """
 
 from __future__ import annotations
@@ -13,51 +20,121 @@ import asyncio
 import json
 import logging
 import os
+import shutil
+import signal
+import subprocess
+import sys
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
+from interfaces.web.journal_tail import JournalTailer
 from persistence.journal import Journal
-from persistence.paths import consciousness_dir, consciousness_root
+from persistence.paths import (
+    consciousness_dir,
+    consciousness_root,
+    sanitize_consciousness_name,
+)
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Consciousness Dashboard", docs_url=None, redoc_url=None)
 
-# In-process registry: name -> Consciousness (populated by register())
-_registry: dict[str, Any] = {}
-# Per-instance SSE queues: name -> list of Queue (one per connected client)
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    configure_tailer().start()
+    logger.info("Web dashboard ready (standalone mode, journal tail active)")
+    try:
+        yield
+    finally:
+        if _tailer is not None:
+            await _tailer.stop()
+
+
+app = FastAPI(
+    title="Consciousness Dashboard",
+    docs_url=None,
+    redoc_url=None,
+    lifespan=_lifespan,
+)
+
+# Per-instance SSE queues — populated by the journal tailer, drained by SSE
+# clients in stream_events().
 _sse_queues: dict[str, list[asyncio.Queue[dict[str, Any]]]] = {}
-# Start times for in-process instances
-_started_at: dict[str, str] = {}
+
+# Provider/model allowlist surfaced to the UI and enforced on POST /instances.
+# Keep this tight — any value here becomes a runnable provider/model on the
+# host. New options should be added intentionally.
+PROVIDER_ALLOWLIST: dict[str, list[str]] = {
+    "ollama": ["llama3.2:3b", "llama3.1:8b", "mistral:7b"],
+    "anthropic": [
+        "claude-opus-4-7",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001",
+    ],
+    "openai": ["gpt-4o", "gpt-4o-mini"],
+    "mock": ["mock"],
+}
+
+# Allow non-localhost mutations only when explicitly enabled at startup.
+_allow_remote_spawn = False
+
+_tailer: JournalTailer | None = None
 
 
-def register(mind: Any) -> None:
-    """Hook a running Consciousness instance into the live event stream."""
-    name = mind.name
-    _registry[name] = mind
-    _started_at[name] = datetime.now(timezone.utc).isoformat()
-    _sse_queues.setdefault(name, [])
+def _on_tail_event(instance_id: str, payload: dict[str, Any]) -> None:
+    """Dispatch a tailed journal event to every SSE subscriber for this instance."""
+    queues = _sse_queues.get(instance_id)
+    if not queues:
+        return
+    for q in list(queues):
+        try:
+            q.put_nowait(payload)
+        except asyncio.QueueFull:
+            # Slow consumer — drop the event rather than back-pressure the tailer.
+            logger.debug("SSE queue full for %s; dropping event", instance_id)
 
-    async def _broadcast(payload: dict[str, Any]) -> None:
-        for q in list(_sse_queues.get(name, [])):
-            try:
-                q.put_nowait(payload)
-            except asyncio.QueueFull:
-                pass
 
-    mind.on_thought.append(_broadcast)
-    mind.on_reflection.append(_broadcast)
-    mind.on_memory_stored.append(_broadcast)
-    mind.on_identity_shift.append(_broadcast)
-    if hasattr(mind, "on_perception"):
-        mind.on_perception.append(_broadcast)
-    logger.info("Web dashboard: registered '%s' for live streaming", name)
+def _is_localhost(request: Request) -> bool:
+    """Approximate localhost-only guard for mutating endpoints.
+
+    Trusts request.client.host directly — uvicorn populates it from the TCP
+    peer, not from forwarded headers, so this isn't spoofable via X-Forwarded-For.
+    """
+    client = request.client
+    if client is None:
+        return False
+    host = client.host
+    return host in ("127.0.0.1", "::1", "localhost")
+
+
+def _require_local(request: Request) -> None:
+    if _allow_remote_spawn or _is_localhost(request):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="Process-management endpoints are localhost-only. "
+               "Re-run scripts/web.py with --allow-remote-spawn to override (no auth — opt-in).",
+    )
+
+
+def _pid_alive(pid_path: Path) -> int | None:
+    """Return the live PID from a pid file, or None if missing/stale."""
+    if not pid_path.exists():
+        return None
+    try:
+        pid = int(pid_path.read_text().strip())
+        os.kill(pid, 0)
+        return pid
+    except (ProcessLookupError, OSError, ValueError):
+        return None
 
 
 @app.get("/instances")
@@ -69,7 +146,7 @@ async def list_instances() -> list[dict[str, Any]]:
         return result
 
     for d in sorted(root.iterdir()):
-        if not d.is_dir():
+        if not d.is_dir() or d.name.startswith("."):
             continue
         state_path = d / "state.json"
         if not state_path.exists():
@@ -80,32 +157,19 @@ async def list_instances() -> list[dict[str, Any]]:
             continue
 
         identity = state.get("identity", {})
-        # Directory name is the stable id used by /stream/{id}; identity.name
-        # is just a display label that can drift (e.g. amended identity).
         dir_name = d.name
         display_name = identity.get("name", dir_name)
-
-        pid_path = d / "pid"
-        # streamable: this dashboard process can broadcast live events for it.
-        # running:    a process is alive on disk (pid exists + responding).
-        # online (legacy alias): true if either is true — kept for the frontend.
-        streamable = dir_name in _registry
-        running = streamable
-        started_at: str | None = _started_at.get(dir_name)
-
-        if not running and pid_path.exists():
+        pid = _pid_alive(d / "pid")
+        running = pid is not None
+        started_at: str | None = None
+        if running:
             try:
-                pid = int(pid_path.read_text().strip())
-                os.kill(pid, 0)
-                running = True
-                if started_at is None:
-                    started_at = datetime.fromtimestamp(
-                        pid_path.stat().st_mtime, tz=timezone.utc
-                    ).isoformat()
-            except (ProcessLookupError, OSError, ValueError):
+                started_at = datetime.fromtimestamp(
+                    (d / "pid").stat().st_mtime, tz=timezone.utc
+                ).isoformat()
+            except OSError:
                 pass
-
-        if started_at is None and state_path.exists():
+        if started_at is None:
             try:
                 started_at = datetime.fromtimestamp(
                     state_path.stat().st_mtime, tz=timezone.utc
@@ -118,7 +182,11 @@ async def list_instances() -> list[dict[str, Any]]:
             "name": display_name,
             "online": running,
             "running": running,
-            "streamable": streamable,
+            # Streamable === running in standalone mode (the tailer can deliver
+            # live events for any running instance with a journal). Retained as
+            # a separate field so the existing frontend keeps working.
+            "streamable": running,
+            "pid": pid,
             "thought_count": state.get("thought_count", 0),
             "mood": identity.get("mood", {}),
             "self_concept": identity.get("self_concept", ""),
@@ -129,15 +197,17 @@ async def list_instances() -> list[dict[str, Any]]:
     return result
 
 
+@app.get("/providers")
+async def list_providers() -> dict[str, list[str]]:
+    """Return the provider/model allowlist used by the spawn UI."""
+    return PROVIDER_ALLOWLIST
+
+
 @app.get("/stream/{name}")
 async def stream_events(name: str) -> StreamingResponse:
     """SSE stream of live thought/reflection/memory events for a named instance."""
-    # Refuse unknown names so a GET cannot create a fresh directory under
-    # CONSCIOUSNESS_HOME via Journal's mkdir-on-construct. Only an in-process
-    # registered instance (no on-disk state yet) or a pre-existing directory
-    # is valid.
     instance_dir = consciousness_dir(name)
-    if name not in _registry and not instance_dir.exists():
+    if not instance_dir.exists():
         raise HTTPException(status_code=404, detail=f"Unknown instance: {name!r}")
 
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=200)
@@ -146,22 +216,32 @@ async def stream_events(name: str) -> StreamingResponse:
 
     journal_path = instance_dir / "journal.jsonl"
     history = await Journal(journal_path).recent(limit=50) if journal_path.exists() else []
-    # Whether this instance can deliver live events (i.e. is co-located)
-    is_live = name in _registry
+    # If the pid file is alive, the tailer will deliver future events through
+    # the queue — flag the connection as live.
+    is_live = _pid_alive(instance_dir / "pid") is not None
+
+    # Highest journal timestamp included in the history block. Any tailer
+    # event that arrives with timestamp <= this value has already been
+    # replayed and must be suppressed to avoid duplicate bubbles in the UI.
+    history_ts_high = max(
+        (h.get("timestamp", "") for h in history),
+        default="",
+    )
 
     async def generate() -> AsyncGenerator[str, None]:
-        # Tag history events so the client can style them differently
         for entry in history:
             yield f"data: {json.dumps({**entry, '_history': True})}\n\n"
 
-        # Signal end of history and whether live events will follow
         yield f"data: {json.dumps({'type': 'history_end', 'live': is_live})}\n\n"
 
-        # Stream live events; heartbeat every 25 s to keep connection alive
         try:
             while True:
                 try:
                     payload = await asyncio.wait_for(queue.get(), timeout=25.0)
+                    ts = payload.get("timestamp", "")
+                    if ts and history_ts_high and ts <= history_ts_high:
+                        # Already in the history block — skip.
+                        continue
                     yield f"data: {json.dumps(payload)}\n\n"
                 except asyncio.TimeoutError:
                     yield ": heartbeat\n\n"
@@ -178,29 +258,186 @@ async def stream_events(name: str) -> StreamingResponse:
     )
 
 
+class SpawnRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    provider: str | None = None
+    model: str | None = None
+
+
+@app.post("/instances")
+async def spawn_instance(req: SpawnRequest, request: Request) -> dict[str, Any]:
+    _require_local(request)
+    try:
+        safe_id = sanitize_consciousness_name(req.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    target_dir = consciousness_root() / safe_id
+    if _pid_alive(target_dir / "pid") is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Instance {safe_id!r} is already running.",
+        )
+
+    if req.provider is not None:
+        if req.provider not in PROVIDER_ALLOWLIST:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported provider: {req.provider!r}. "
+                       f"Allowed: {sorted(PROVIDER_ALLOWLIST)}",
+            )
+        if req.model is not None and req.model not in PROVIDER_ALLOWLIST[req.provider]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model {req.model!r} not in allowlist for provider "
+                       f"{req.provider!r}: {PROVIDER_ALLOWLIST[req.provider]}",
+            )
+    elif req.model is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="provider must be specified when model is given.",
+        )
+
+    # Pre-create the directory so the SSE endpoint can subscribe before the
+    # subprocess has written anything yet.
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    cmd: list[str] = [
+        sys.executable,
+        str(Path(__file__).resolve().parents[2] / "scripts" / "spawn.py"),
+        "--name", safe_id,
+        "--bg",
+    ]
+    if req.provider:
+        cmd.extend(["--provider", req.provider])
+    if req.model:
+        cmd.extend(["--model", req.model])
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        proc.wait(timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to spawn {safe_id!r}: {exc}",
+        )
+
+    pid = _pid_alive(target_dir / "pid")
+    return {
+        "id": safe_id,
+        "name": safe_id,
+        "pid": pid,
+        "running": pid is not None,
+    }
+
+
+@app.post("/instances/{name}/stop")
+async def stop_instance(name: str, request: Request) -> dict[str, Any]:
+    _require_local(request)
+    try:
+        safe_id = sanitize_consciousness_name(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    target_dir = consciousness_root() / safe_id
+    if not target_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Unknown instance: {safe_id!r}")
+
+    pid_path = target_dir / "pid"
+    pid = _pid_alive(pid_path)
+    if pid is None:
+        # Stale pid file → clean it up so the UI reflects offline state.
+        pid_path.unlink(missing_ok=True)
+        return {"id": safe_id, "running": False, "stopped": False, "detail": "not running"}
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except (ProcessLookupError, OSError) as exc:
+        raise HTTPException(status_code=500, detail=f"SIGTERM failed: {exc}")
+
+    return {"id": safe_id, "pid": pid, "running": True, "stopped": True, "detail": "SIGTERM sent"}
+
+
+@app.delete("/instances/{name}")
+async def archive_instance(name: str, request: Request) -> dict[str, Any]:
+    """Stop (if running) and archive the instance directory.
+
+    Archives to ``<home>/.archive/<id>-<utc-ts>/`` — destructive HTTP needs
+    to be reversible by default per the issue's open-question lean.
+    """
+    _require_local(request)
+    try:
+        safe_id = sanitize_consciousness_name(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    target_dir = consciousness_root() / safe_id
+    if not target_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Unknown instance: {safe_id!r}")
+
+    pid = _pid_alive(target_dir / "pid")
+    if pid is not None:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+        # Brief grace window — match scripts/stop.py's 5s.
+        for _ in range(20):
+            await asyncio.sleep(0.25)
+            if _pid_alive(target_dir / "pid") is None:
+                break
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+
+    archive_root = consciousness_root() / ".archive"
+    archive_root.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    archive_path = archive_root / f"{safe_id}-{ts}"
+    shutil.move(str(target_dir), str(archive_path))
+    return {"id": safe_id, "archived_to": str(archive_path)}
+
+
 # Serve the frontend SPA from the static/ subdirectory
 _static_dir = Path(__file__).parent / "static"
 app.mount("/", StaticFiles(directory=str(_static_dir), html=True), name="static")
 
 
-async def start(port: int, host: str = "127.0.0.1") -> None:
-    """Start the uvicorn server as a background asyncio task.
+def configure_tailer() -> JournalTailer:
+    """Return the singleton tailer for this process, creating it if needed."""
+    global _tailer
+    if _tailer is None:
+        _tailer = JournalTailer(consciousness_root(), _on_tail_event)
+    return _tailer
+
+
+async def start(port: int, host: str = "127.0.0.1", allow_remote_spawn: bool = False) -> None:
+    """Run the dashboard on the given host/port until the process exits.
 
     Defaults to localhost-only — the dashboard exposes raw thought/journal
-    content with no authentication, so binding 0.0.0.0 should be an opt-in.
+    content AND the spawn/stop control plane with no authentication.
+    Binding to 0.0.0.0 should be an explicit opt-in.
     """
     import uvicorn
+
+    global _allow_remote_spawn
+    _allow_remote_spawn = bool(allow_remote_spawn)
 
     config = uvicorn.Config(
         app,
         host=host,
         port=port,
         log_level="warning",
-        loop="none",   # reuse the running event loop
         access_log=False,
     )
     server = uvicorn.Server(config)
-    # Prevent uvicorn from hijacking signal handlers already installed
-    server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
-    asyncio.create_task(server.serve())
-    logger.info("Web dashboard available at http://%s:%d", host, port)
+    logger.info("Web dashboard listening at http://%s:%d", host, port)
+    await server.serve()

@@ -412,9 +412,14 @@ class Consciousness:
                             )
 
                 lt_count = await self.long_term.count()
+                memory_summary = f"Long-term store: {lt_count} memories"
+                # Journaled so out-of-process tailers (e.g. the standalone web
+                # dashboard, issue #55) can deliver memory updates live without
+                # requiring the in-process on_memory_stored hook.
+                await self.journal.append("memory", memory_summary)
                 await self._emit(
                     self.on_memory_stored,
-                    {"type": "memory", "long_term_count": lt_count, "content": f"Long-term store: {lt_count} memories"},
+                    {"type": "memory", "long_term_count": lt_count, "content": memory_summary},
                 )
 
                 await self._save_state()
