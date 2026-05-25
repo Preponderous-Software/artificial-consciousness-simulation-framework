@@ -195,9 +195,73 @@ def test_cycle_rate_trajectory_matches_floor_contract_exactly() -> None:
 
 
 def test_cycle_rate_trajectory_empty_when_below_window() -> None:
-    """Fewer thoughts than `window + 1` should yield an empty list."""
+    """Fewer thoughts than `window` should yield an empty list."""
     events = [_thought(f"t{i}", ts=f"2026-01-01T00:00:{i:02d}+00:00") for i in range(10)]
     assert cycle_rate_trajectory(events, window=30) == []
+
+
+def test_cycle_rate_trajectory_divides_by_intervals_not_window() -> None:
+    """Regression for PR #85 review: W consecutive thoughts have W-1 intervals
+    between them. Dividing by W (the count) instead of W-1 (the interval
+    count) underestimates s/thought systematically.
+
+    Construct a journal where every interval is exactly 10s, so each window's
+    avg s/thought must equal 10.0 regardless of which window.
+    """
+    from datetime import datetime, timedelta, timezone
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    events = [
+        {"type": "thought", "content": f"t{i}",
+         "timestamp": (t0 + timedelta(seconds=i * 10)).isoformat()}
+        for i in range(60)
+    ]
+    traj = cycle_rate_trajectory(events, window=30)
+    assert len(traj) == 2
+    for rate in traj:
+        assert rate == pytest.approx(10.0, abs=0.01), \
+            f"expected 10.0 s/thought (each interval is 10s), got {rate}"
+
+
+def test_mood_collapse_score_reads_initial_from_state_when_present() -> None:
+    """Regression for PR #85 review: mood_collapse_score should prefer the
+    initial mood persisted in state.identity.initial_mood (e.g. when a
+    manifest override changed it) instead of always using the project defaults.
+    """
+    # Override-via-state: pretend the run started with a different baseline
+    state = {
+        "identity": {
+            "initial_mood": {"curiosity": 0.5, "wonder": 0.5, "melancholy": 0.5, "contentment": 0.5},
+            "mood":         {"curiosity": 0.5, "wonder": 0.5, "melancholy": 0.5, "contentment": 0.5},
+        }
+    }
+    # Final equals initial, so score should be 0 — but only if the metric reads
+    # initial_mood from state. If it hardcodes the default {0.7, 0.6, 0.2, 0.5},
+    # the score would be nonzero.
+    from experiments.metrics import mood_collapse_score
+    assert mood_collapse_score(state) == pytest.approx(0.0)
+
+
+def test_compute_all_includes_mood_initial_section() -> None:
+    """metrics dict should expose `mood.initial` so report.py + compare.py can
+    render deltas without re-reading state.json."""
+    import tempfile, json as _json
+    from pathlib import Path as _Path
+    with tempfile.TemporaryDirectory() as tmp:
+        d = _Path(tmp)
+        (d / "journal.jsonl").write_text(
+            '{"timestamp": "2026-01-01T00:00:00+00:00", "type": "thought", "content": "x"}\n'
+        )
+        (d / "state.json").write_text(_json.dumps({
+            "identity": {
+                "initial_mood": {"curiosity": 0.3, "wonder": 0.3},
+                "mood": {"curiosity": 0.6, "wonder": 0.4},
+            },
+            "thought_count": 1,
+        }))
+        from experiments.metrics import compute_all
+        metrics = compute_all(d / "journal.jsonl", d / "state.json")
+    assert "initial" in metrics["mood"]
+    assert metrics["mood"]["initial"]["curiosity"] == 0.3
 
 
 # ---------------------------------------------------------------------------

@@ -134,15 +134,27 @@ def mood_dimensions_non_degenerate(
     return sum(1 for v in mood.values() if eps < float(v) < (1.0 - eps))
 
 
+_DEFAULT_INITIAL_MOOD = {"curiosity": 0.7, "wonder": 0.6, "melancholy": 0.2, "contentment": 0.5}
+
+
 def mood_collapse_score(state: dict[str, Any], initial: dict[str, float] | None = None) -> float:
     """Sum of squared L2 distances from each mood dim to its initial value.
 
     Higher = more drift from baseline. Doesn't distinguish "drifted up to ceiling"
     from "collapsed to floor" — use alongside `mood_dimensions_non_degenerate`
-    to interpret. Default `initial` matches `config/default_consciousness.yaml`.
+    to interpret.
+
+    Initial-mood resolution (in priority order):
+      1. The explicit `initial` argument
+      2. `state.identity.initial_mood` if persisted (the runtime started writing
+         this so the collapse score self-corrects for manifest overrides)
+      3. The default vector from `config/default_consciousness.yaml`
     """
     if initial is None:
-        initial = {"curiosity": 0.7, "wonder": 0.6, "melancholy": 0.2, "contentment": 0.5}
+        initial = (
+            state.get("identity", {}).get("initial_mood")
+            or _DEFAULT_INITIAL_MOOD
+        )
     mood = state.get("identity", {}).get("mood", {})
     return sum((float(mood.get(k, init)) - init) ** 2 for k, init in initial.items())
 
@@ -297,29 +309,32 @@ def cycle_rate_trajectory(
     events: list[dict[str, Any]],
     window: int = 30,
 ) -> list[float]:
-    """Rolling mean seconds/thought over consecutive non-overlapping windows.
+    """Mean seconds/thought over consecutive non-overlapping windows of W thoughts.
+
+    `len(out) == n_thoughts // window`. A window of size W covers W consecutive
+    thoughts; those W thoughts have W-1 intervals between them, so the average
+    is `span / (W - 1)`. (Dividing by W would systematically underestimate
+    s/thought for every window — the original implementation had this bug.)
 
     Echo showed 64s → 99s linearly over 200 thoughts; mean alone (~83s) hid this.
-    Returns one number per window; `len(out) == n_thoughts // window`.
-
-    A window of size `W` covers `W` thoughts whose interval span is computed
-    between the first and last timestamp of those `W` thoughts. The first
-    window covers thoughts `[0..W]` (inclusive), the second `[W..2W]`, etc.
     """
     thought_ts = [
         datetime.fromisoformat(e["timestamp"])
         for e in events if e.get("type") == "thought"
     ]
     n = len(thought_ts)
-    if n < window + 1:
+    if n < window:
         return []
     n_windows = n // window
     out: list[float] = []
+    intervals_per_window = window - 1
+    if intervals_per_window <= 0:
+        return []
     for w in range(n_windows):
         start = w * window
-        end = min(start + window, n - 1)
+        end = start + window - 1            # inclusive; W thoughts → indices start..start+W-1
         span = (thought_ts[end] - thought_ts[start]).total_seconds()
-        out.append(span / window)
+        out.append(span / intervals_per_window)
     return out
 
 
@@ -370,6 +385,10 @@ def compute_all(
             ),
         },
         "mood": {
+            "initial": (
+                state.get("identity", {}).get("initial_mood")
+                or _DEFAULT_INITIAL_MOOD
+            ),
             "final": state.get("identity", {}).get("mood", {}),
             "dimensions_non_degenerate": mood_dimensions_non_degenerate(state),
             "collapse_score": mood_collapse_score(state),

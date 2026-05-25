@@ -300,6 +300,46 @@ def test_status_reports_running_when_marker_present(tmp_path: Path) -> None:
     assert info["state"] == "running"
 
 
+def test_status_reports_done_for_replicates_parent_dir(tmp_path: Path) -> None:
+    """Regression for PR #85 review: a replicated run's parent dir doesn't
+    have a `report.md`; it has `replicates_index.md`. status() must detect that."""
+    parent = tmp_path / "replicated"
+    parent.mkdir()
+    (parent / "replicates_index.md").write_text("# 2 replicates\n")
+    (parent / "replicate-0").mkdir()
+    (parent / "replicate-1").mkdir()
+    info = status(parent)
+    assert info["state"] == "done"
+    assert info["kind"] == "replicated"
+    assert info["n_replicates"] == 2
+
+
+def test_replicates_loop_accepts_prebuilt_parent_dir(tmp_path: Path, monkeypatch) -> None:
+    """Regression for PR #85 review: when `start_detached` pre-creates the
+    parent dir, `run_experiment_replicated` must populate THAT dir rather
+    than creating its own timestamped sibling."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path / "home"))
+    base = _build_manifest("replicates-prebuilt", 2)
+    spec = base.model_dump(mode="json")
+    spec["replicates"] = 2
+    manifest = ExperimentManifest.model_validate(spec)
+
+    pre_built = tmp_path / "experiments" / "replicates-prebuilt" / "MY-FIXED-NAME"
+    pre_built.mkdir(parents=True)
+
+    returned = run_experiment_replicated(
+        manifest,
+        experiments_root=tmp_path / "experiments",
+        max_wall_clock_minutes=2.0,
+        poll_interval_s=0.2,
+        parent_dir=pre_built,
+    )
+    assert returned == pre_built, f"expected populate-in-place, got fresh dir {returned}"
+    assert (pre_built / "replicates_index.md").exists()
+    assert (pre_built / "replicate-0" / "report.md").exists()
+    assert (pre_built / "replicate-1" / "report.md").exists()
+
+
 # ---------------------------------------------------------------------------
 # Schema versioning in metrics output
 # ---------------------------------------------------------------------------

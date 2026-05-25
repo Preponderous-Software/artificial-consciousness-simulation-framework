@@ -42,7 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from experiments.manifest import CURRENT_SCHEMA_VERSION, ExperimentManifest
+from experiments.manifest import ExperimentManifest
 from experiments.metrics import compute_all
 from experiments.report import render_report
 
@@ -332,12 +332,18 @@ def run_experiment_replicated(
     experiments_root: Path | None = None,
     max_wall_clock_minutes: float = 30.0,
     poll_interval_s: float = 1.0,
+    parent_dir: Path | None = None,
 ) -> Path:
     """Run the manifest N times if `replicates` is set, otherwise once.
 
     Returns the path to the parent run dir (which contains per-replicate
     subdirs `replicate-0/`, `replicate-1/`, … and a `replicates_index.md`)
     when N>1, or the single run dir when N is None or 1.
+
+    When `parent_dir` is provided (used by `start_detached`), populates that
+    pre-created dir instead of generating a fresh timestamped one. This is
+    what lets the detached child write into the same dir the parent process
+    just returned to the caller.
 
     Aggregation across replicates (mean / stddev across metrics) is a Phase-2
     follow-up; for now `replicates_index.md` just lists the child reports
@@ -350,12 +356,14 @@ def run_experiment_replicated(
             manifest, experiments_root=experiments_root,
             max_wall_clock_minutes=max_wall_clock_minutes,
             poll_interval_s=poll_interval_s,
+            run_dir=parent_dir,
         )
 
-    parent_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
-    parent_dir = experiments_root / manifest.name / parent_ts
-    parent_dir.parent.mkdir(parents=True, exist_ok=True)
-    parent_dir.mkdir()
+    if parent_dir is None:
+        parent_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
+        parent_dir = experiments_root / manifest.name / parent_ts
+        parent_dir.parent.mkdir(parents=True, exist_ok=True)
+        parent_dir.mkdir()
 
     child_dirs: list[Path] = []
     for i in range(n):
@@ -420,10 +428,14 @@ def start_detached(
     run_dir.mkdir()
     (run_dir / _STARTED_MARKER).touch()
 
-    # Hand off to a worker script that re-imports runner and calls
-    # run_experiment_replicated with the pre-created run_dir. We re-invoke
-    # the module so the child runs in a fresh interpreter (no shared async
+    # Hand off to a worker script that re-imports runner and calls the
+    # right entry point with the pre-created run_dir. We re-invoke the
+    # module so the child runs in a fresh interpreter (no shared async
     # state, no inherited signal handlers).
+    #
+    # Critical: pass run_dir as parent_dir when replicates > 1, otherwise
+    # run_experiment_replicated would create its own timestamped parent
+    # and the pre-created dir we returned to the caller would be orphaned.
     worker_code = (
         "import sys\n"
         f"sys.path.insert(0, {str(PROJECT_ROOT)!r})\n"
@@ -433,23 +445,27 @@ def start_detached(
         f"m = ExperimentManifest.from_yaml(Path({str(manifest_path)!r}))\n"
         f"run_dir = Path({str(run_dir)!r})\n"
         "if m.replicates and m.replicates > 1:\n"
-        "    # Re-invoke replicates loop with the pre-created parent dir\n"
-        "    from experiments.runner import EXPERIMENTS_ROOT\n"
         f"    run_experiment_replicated(m, experiments_root={str(experiments_root)!r},"
-        f" max_wall_clock_minutes={max_wall_clock_minutes})\n"
+        f" max_wall_clock_minutes={max_wall_clock_minutes}, parent_dir=run_dir)\n"
         "else:\n"
         f"    run_experiment(m, max_wall_clock_minutes={max_wall_clock_minutes}, run_dir=run_dir)\n"
     )
     detached_log = run_dir / "_detached.log"
     log_fh = open(detached_log, "w", encoding="utf-8")
-    subprocess.Popen(
-        [sys.executable, "-c", worker_code],
-        stdout=log_fh,
-        stderr=subprocess.STDOUT,
-        cwd=str(PROJECT_ROOT),
-        env={**os.environ},
-        start_new_session=True,
-    )
+    try:
+        subprocess.Popen(
+            [sys.executable, "-c", worker_code],
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            cwd=str(PROJECT_ROOT),
+            env={**os.environ},
+            start_new_session=True,
+        )
+    finally:
+        # Close our parent-side fd immediately — the child holds its own
+        # via the inherited fd. Keeps file-locking sane on Windows and
+        # avoids ResourceWarning on long-lived parent processes.
+        log_fh.close()
     # Parent does NOT wait — child runs until it writes report.md or fails.
     return run_dir
 
@@ -458,16 +474,26 @@ def status(run_dir: Path) -> dict[str, Any]:
     """Report the state of a run directory.
 
     Returns a dict with `state` ∈ {running, done, failed, unknown}
-    plus optional `exit_reason`, `wall_clock_minutes`, `started_at`.
+    plus optional `exit_reason`, `wall_clock_minutes`, `started_at`,
+    `kind` (`single` or `replicated`).
+
+    A run is considered "done" when either:
+      - `report.md` exists (single-run case), or
+      - `replicates_index.md` exists (parent dir of a replicated run)
     """
     run_dir = Path(run_dir)
     if not run_dir.exists():
         return {"state": "unknown", "reason": "run_dir does not exist"}
     if (run_dir / _FAILED_MARKER).exists():
         return {"state": "failed", "reason": "FAILED marker present; check _detached.log"}
-    if (run_dir / "report.md").exists():
+    has_report = (run_dir / "report.md").exists()
+    has_index = (run_dir / "replicates_index.md").exists()
+    if has_report or has_index:
+        info: dict[str, Any] = {
+            "state": "done",
+            "kind": "replicated" if has_index else "single",
+        }
         meta_path = run_dir / "meta.yaml"
-        info: dict[str, Any] = {"state": "done"}
         if meta_path.exists():
             try:
                 meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
@@ -478,7 +504,10 @@ def status(run_dir: Path) -> dict[str, Any]:
                 })
             except yaml.YAMLError:
                 pass
+        if has_index:
+            n_replicates = len(list(run_dir.glob("replicate-*")))
+            info["n_replicates"] = n_replicates
         return info
     if (run_dir / _STARTED_MARKER).exists():
-        return {"state": "running", "reason": "STARTED marker present, no report.md yet"}
-    return {"state": "unknown", "reason": "no markers and no report.md"}
+        return {"state": "running", "reason": "STARTED marker present, no report.md / replicates_index.md yet"}
+    return {"state": "unknown", "reason": "no markers and no report.md / replicates_index.md"}

@@ -94,7 +94,13 @@ def render_report(
     ]
 
     # --- mood ---
-    initial = {"curiosity": 0.7, "wonder": 0.6, "melancholy": 0.2, "contentment": 0.5}
+    # Initial values come from the metrics dict (which sources them from
+    # state.identity.initial_mood when persisted, else the default config).
+    # Falling back to the hardcoded default ensures the report renders cleanly
+    # for older runs that predate the metrics.mood.initial field.
+    initial = mood.get("initial") or {
+        "curiosity": 0.7, "wonder": 0.6, "melancholy": 0.2, "contentment": 0.5,
+    }
     mood_rows = []
     for k, init in initial.items():
         actual = float(mood.get("final", {}).get(k, init))

@@ -261,6 +261,58 @@ def render_comparison(a: RunRef, b: RunRef, k_samples: int = 3) -> str:
             )
         lines.append("")
 
+    # Top-word table (side-by-side top 10 of each run)
+    top_a = (_safe_get(a.metrics, "vocabulary.top_50", []) or [])[:10]
+    top_b = (_safe_get(b.metrics, "vocabulary.top_50", []) or [])[:10]
+    if top_a or top_b:
+        lines += [
+            "## Top 10 content words (side-by-side)",
+            "",
+            f"| # | A — `{a.label}` | count | B — `{b.label}` | count |",
+            "|---|---|---|---|---|",
+        ]
+        rows = max(len(top_a), len(top_b))
+        for i in range(rows):
+            wa, ca = (top_a[i] if i < len(top_a) else ["", ""])
+            wb, cb = (top_b[i] if i < len(top_b) else ["", ""])
+            lines.append(f"| {i+1} | `{wa}` | {ca} | `{wb}` | {cb} |")
+        lines.append("")
+
+    # Success criteria — show each run's pass/fail against its own manifest's criteria
+    crit_a = (a.manifest or {}).get("success_criteria") or []
+    crit_b = (b.manifest or {}).get("success_criteria") or []
+    if crit_a or crit_b:
+        from experiments.manifest import SuccessCriterion, evaluate_success_criterion
+        lines += ["## Success criteria status", ""]
+
+        def _eval(crit_list, metrics):
+            evals = []
+            for raw in crit_list:
+                try:
+                    c = SuccessCriterion.model_validate(raw)
+                except Exception:
+                    continue
+                passed, actual = evaluate_success_criterion(c, metrics)
+                evals.append((c, passed, actual))
+            return evals
+
+        for label, evals in (
+            (f"A — `{a.label}`", _eval(crit_a, a.metrics)),
+            (f"B — `{b.label}`", _eval(crit_b, b.metrics)),
+        ):
+            lines.append(f"**{label}**")
+            lines.append("")
+            if not evals:
+                lines.append("_(no criteria defined or all malformed)_")
+                lines.append("")
+                continue
+            lines += ["| | Metric | Expected | Actual |", "|---|---|---|---|"]
+            for c, passed, actual in evals:
+                mark = "✅" if passed else "❌"
+                actual_s = f"{actual:.3f}" if actual is not None else "missing"
+                lines.append(f"| {mark} | `{c.kind}` | `{c.op} {c.value}` | {actual_s} |")
+            lines.append("")
+
     # Attractor ranks
     if diff["attractor_ranks"]:
         lines += [
