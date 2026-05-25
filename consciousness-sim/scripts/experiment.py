@@ -1,14 +1,16 @@
-"""Experiment harness CLI — `python scripts/experiment.py {run|list|replay-analysis}`.
+"""Experiment harness CLI — `experiment.py {run|status|list|replay-analysis}`.
 
 See `experiments/__init__.py` for the architecture and issue #57 for the
-motivating design. Phase 1 of #57: this CLI ships `run`, `list`,
-`replay-analysis`. `compare` and the Claude skill are Phase 2 (deferred).
+motivating design. Phase 1 of #57 ships `run` (with `--detach`), `status`,
+`list`, and `replay-analysis`. `compare` and the Claude skill are Phase 2.
 
 Examples:
 
     python scripts/experiment.py run experiments/manifests/sage-perception-baseline.yaml
+    python scripts/experiment.py run <manifest> --detach   # fork; return immediately
+    python scripts/experiment.py status experiments/<name>/<UTC-ts>/
     python scripts/experiment.py list
-    python scripts/experiment.py replay-analysis experiments/sage-perception-baseline/2026-05-25T...Z/
+    python scripts/experiment.py replay-analysis experiments/<name>/<UTC-ts>/
 """
 
 from __future__ import annotations
@@ -30,7 +32,13 @@ import yaml
 from experiments.manifest import ExperimentManifest
 from experiments.metrics import compute_all
 from experiments.report import render_report
-from experiments.runner import EXPERIMENTS_ROOT, run_experiment
+from experiments.runner import (
+    EXPERIMENTS_ROOT,
+    run_experiment,
+    run_experiment_replicated,
+    start_detached,
+    status as runner_status,
+)
 
 
 @click.group()
@@ -44,17 +52,55 @@ def main() -> None:
     "--max-wall-clock-minutes", default=30.0, show_default=True, type=float,
     help="Hard cap on wall-clock runtime; runs that exceed it are SIGTERM'd and reported as such.",
 )
-def cmd_run(manifest_path: Path, max_wall_clock_minutes: float) -> None:
+@click.option(
+    "--detach", is_flag=True, default=False,
+    help="Fork the run as a background process and return immediately with the "
+         "run dir. Use `experiment.py status <run-dir>` to monitor progress.",
+)
+def cmd_run(manifest_path: Path, max_wall_clock_minutes: float, detach: bool) -> None:
     """Execute a manifest end-to-end and produce a versioned run record."""
     manifest = ExperimentManifest.from_yaml(manifest_path)
     click.echo(f"Running manifest: {manifest.name}")
     click.echo(f"  consciousness: {manifest.consciousness_name}")
     click.echo(f"  duration:      {manifest.duration}")
+    if manifest.resume_from:
+        click.echo(f"  resume_from:   {manifest.resume_from}")
+    if manifest.replicates and manifest.replicates > 1:
+        click.echo(f"  replicates:    {manifest.replicates}")
     click.echo(f"  tags:          {manifest.tags or '(none)'}")
-    run_dir = run_experiment(manifest, max_wall_clock_minutes=max_wall_clock_minutes)
+
+    if detach:
+        run_dir = start_detached(
+            manifest_path, max_wall_clock_minutes=max_wall_clock_minutes,
+        )
+        click.echo(f"\nDetached: {run_dir}")
+        click.echo(f"  monitor: python scripts/experiment.py status {run_dir}")
+        click.echo(f"  log:     {run_dir / '_detached.log'}")
+        return
+
+    run_dir = run_experiment_replicated(
+        manifest, max_wall_clock_minutes=max_wall_clock_minutes,
+    )
     click.echo(f"\nRun complete: {run_dir}")
-    click.echo(f"  report:  {run_dir / 'report.md'}")
-    click.echo(f"  metrics: {run_dir / 'metrics.json'}")
+    if manifest.replicates and manifest.replicates > 1:
+        click.echo(f"  index:   {run_dir / 'replicates_index.md'}")
+        click.echo(f"  ({manifest.replicates} replicates under {run_dir}/replicate-*/)")
+    else:
+        click.echo(f"  report:  {run_dir / 'report.md'}")
+        click.echo(f"  metrics: {run_dir / 'metrics.json'}")
+
+
+@main.command("status")
+@click.argument("run_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+def cmd_status(run_dir: Path) -> None:
+    """Report the state of a run directory (running / done / failed)."""
+    info = runner_status(run_dir)
+    state = info.get("state", "unknown")
+    click.echo(f"{run_dir}: {state}")
+    for k, v in info.items():
+        if k == "state":
+            continue
+        click.echo(f"  {k}: {v}")
 
 
 @main.command("list")

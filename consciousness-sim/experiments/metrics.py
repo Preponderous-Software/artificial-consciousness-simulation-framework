@@ -329,6 +329,11 @@ def cycle_rate_trajectory(
 
 DEFAULT_ATTRACTOR_WORDS = ["threads", "tapestry", "thread", "cosmic", "unfolding", "expanse", "whispers"]
 
+# Bump when the structure of `compute_all`'s return changes (new sections,
+# renamed keys, or changed types). Old `metrics.json` files written under an
+# earlier version still parse, but downstream code can branch on this field.
+METRICS_SCHEMA_VERSION = 1
+
 
 def compute_all(
     journal_path: Path,
@@ -352,6 +357,7 @@ def compute_all(
     trajectory = cycle_rate_trajectory(events)
 
     return {
+        "_schema_version": METRICS_SCHEMA_VERSION,
         "event_counts": counts,
         "vocabulary": {
             "top_50": [[w, c] for w, c in counter.most_common(50)],

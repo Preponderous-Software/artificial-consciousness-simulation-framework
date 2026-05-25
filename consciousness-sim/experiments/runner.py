@@ -1,19 +1,31 @@
 """Experiment runner — orchestrates spawn → wait → stop → snapshot → report.
 
 Reads an `ExperimentManifest`, materialises a config (default + overrides) to a
-tempfile, subprocess.Popen's a fresh consciousness, polls `state.json` until
-the duration is met, sends SIGTERM, copies the run artifacts into the
-experiment dir, computes metrics, and renders a markdown report.
+tempfile, subprocess.Popen's a consciousness, polls `state.json` until the
+duration is met, sends SIGTERM, copies the run artifacts into the experiment
+dir, computes metrics, and renders a markdown report.
+
+Features:
+- Three duration modes: `minutes` (wall clock), `thoughts` (cumulative
+  thought_count target), `add_thoughts` (produce this many more — pairs
+  with resume_from).
+- `resume_from` field: instead of wiping the consciousness dir, copy
+  journal.jsonl + state.json from a source (a name in ~/.consciousness/
+  or a path to a recorded run dir) into the new instance's dir before spawn.
+- `replicates: N` field: run the manifest N times sequentially, each into
+  its own `replicate-<i>/` subdir under the parent run dir.
+- `--detach` mode (via `start_detached`): fork a child process that runs
+  the experiment synchronously, parent returns immediately with the run dir.
+  `status(run_dir)` reports running / done / failed.
 
 Design notes:
-- Mirrors `scripts/spawn.py` invocation rather than importing it: keeps the
+- Mirrors `scripts/spawn.py` invocation rather than importing it; keeps the
   experiment harness decoupled from the spawn CLI's flag set.
-- Uses `MockProvider` + `MockPerception` by default in the example manifest so
-  CI runs and tests don't require Ollama or network.
-- Captures the current git SHA at run time into `meta.yaml` for reproducibility.
-- Wall-clock cap (`max_wall_clock_minutes` arg) hard-stops a hung run even if
-  the thought-count target isn't reached. Defaults to 30 minutes; raise for
-  long real-LLM runs.
+- Uses `MockProvider` + `MockPerception` by default in the example manifest
+  so CI runs and tests don't require Ollama or network.
+- Captures git SHA at run time into `meta.yaml` for reproducibility.
+- Wall-clock cap (`max_wall_clock_minutes`) hard-stops a hung run regardless
+  of which duration mode is in use.
 """
 
 from __future__ import annotations
@@ -30,7 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from experiments.manifest import ExperimentManifest
+from experiments.manifest import CURRENT_SCHEMA_VERSION, ExperimentManifest
 from experiments.metrics import compute_all
 from experiments.report import render_report
 
@@ -39,6 +51,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = REPO_ROOT / "consciousness-sim"
 DEFAULT_CONFIG = PROJECT_ROOT / "config" / "default_consciousness.yaml"
 EXPERIMENTS_ROOT = PROJECT_ROOT / "experiments"
+
+# Status markers written into the run dir. Used by `status()` to disambiguate
+# running / done / failed without parsing meta.yaml.
+_STARTED_MARKER = ".STARTED"
+_FAILED_MARKER = ".FAILED"
 
 
 class RunnerError(RuntimeError):
@@ -73,8 +90,6 @@ def _consciousness_dir(name: str) -> Path:
     """Resolve the on-disk directory for a consciousness, honoring the same
     name-sanitization rules the runtime uses (e.g. `-` → `_`).
     """
-    # Ensure the project root is on sys.path before importing — runner.py is
-    # importable from outside the consciousness-sim directory.
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
     from persistence.paths import consciousness_dir as _real_dir
@@ -88,50 +103,112 @@ def _read_thought_count(state_path: Path) -> int:
         return 0
 
 
+def _resolve_resume_source(resume_from: str) -> Path:
+    """Resolve `resume_from` to a directory containing journal.jsonl + state.json.
+
+    Accepts either:
+    - A consciousness name (e.g. "Echo") → resolved via CONSCIOUSNESS_HOME
+    - A path (absolute or relative) to a recorded run directory
+
+    Raises RunnerError if the source is missing or incomplete.
+    """
+    candidate = Path(resume_from)
+    if candidate.exists() and candidate.is_dir():
+        source = candidate
+    else:
+        source = _consciousness_dir(resume_from)
+    journal = source / "journal.jsonl"
+    state = source / "state.json"
+    if not (journal.exists() and state.exists()):
+        raise RunnerError(
+            f"resume_from={resume_from!r} resolved to {source} but it lacks "
+            f"journal.jsonl ({journal.exists()}) or state.json ({state.exists()})"
+        )
+    return source
+
+
+def _prepare_consciousness_dir(
+    cons_dir: Path,
+    resume_from: str | None,
+) -> int:
+    """Either wipe (fresh run) or seed from a resume source. Returns starting thought_count."""
+    if resume_from is None:
+        if cons_dir.exists():
+            shutil.rmtree(cons_dir)
+        return 0
+    source = _resolve_resume_source(resume_from)
+    if cons_dir.exists():
+        shutil.rmtree(cons_dir)
+    cons_dir.mkdir(parents=True)
+    for fname in ("journal.jsonl", "state.json", "episodic.jsonl"):
+        src = source / fname
+        if src.exists():
+            shutil.copy2(src, cons_dir / fname)
+    return _read_thought_count(cons_dir / "state.json")
+
+
 def run_experiment(
     manifest: ExperimentManifest,
     experiments_root: Path | None = None,
     max_wall_clock_minutes: float = 30.0,
     poll_interval_s: float = 1.0,
+    run_dir: Path | None = None,
 ) -> Path:
-    """Execute a manifest end-to-end, return the path to the run directory.
+    """Execute a single replicate of a manifest end-to-end.
+
+    Returns the path to the run directory. If `run_dir` is provided (used by
+    the replicates loop and detach mode), the runner writes into that dir;
+    otherwise it generates a fresh timestamped dir under
+    `experiments/<manifest.name>/`.
 
     Run directory layout:
-        experiments/<manifest.name>/<UTC-timestamp>/
-            manifest.yaml   # frozen copy of the spec
-            meta.yaml       # branch SHA, wall time, exit reason
+        <run_dir>/
+            manifest.yaml   # frozen copy of the spec (with schema_version)
+            meta.yaml       # branch SHA, wall time, exit reason, starting count
             journal.jsonl   # copy from ~/.consciousness/<name>/
             state.json
             episodic.jsonl  # if present
-            metrics.json    # compute_all() output
+            metrics.json    # compute_all() output + _schema_version
             report.md
     """
     experiments_root = experiments_root or EXPERIMENTS_ROOT
-    # Microsecond-precision timestamp to make collisions effectively impossible
-    # even if `run_experiment` is invoked back-to-back in the same second.
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
-    run_dir = experiments_root / manifest.name / timestamp
-    # `exist_ok=False` is the default — fail loudly if somehow the dir already
-    # exists rather than silently mixing artifacts from two runs.
-    run_dir.parent.mkdir(parents=True, exist_ok=True)
-    run_dir.mkdir()
+    if run_dir is None:
+        # Microsecond-precision timestamp so back-to-back calls don't collide.
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
+        run_dir = experiments_root / manifest.name / timestamp
+        run_dir.parent.mkdir(parents=True, exist_ok=True)
+        run_dir.mkdir()
+    # Status marker — cleared on success
+    (run_dir / _STARTED_MARKER).touch()
 
+    try:
+        return _run_one(manifest, run_dir, max_wall_clock_minutes, poll_interval_s)
+    except Exception:
+        (run_dir / _FAILED_MARKER).touch()
+        raise
+    finally:
+        marker = run_dir / _STARTED_MARKER
+        if marker.exists():
+            marker.unlink()
+
+
+def _run_one(
+    manifest: ExperimentManifest,
+    run_dir: Path,
+    max_wall_clock_minutes: float,
+    poll_interval_s: float,
+) -> Path:
     # 1. Materialise merged config to a tempfile next to the run
     base_cfg = yaml.safe_load(DEFAULT_CONFIG.read_text(encoding="utf-8"))
     merged_cfg = _merge_config(base_cfg, manifest.config_overrides)
     cfg_path = run_dir / "_spawn_config.yaml"
     cfg_path.write_text(yaml.safe_dump(merged_cfg, sort_keys=False), encoding="utf-8")
 
-    # 2. Make sure we start from a clean ~/.consciousness/<name>/ — otherwise
-    #    a previous run's state would resume and contaminate the experiment.
+    # 2. Prepare consciousness dir — wipe (fresh) or copy-from-source (resume)
     cons_dir = _consciousness_dir(manifest.consciousness_name)
-    if cons_dir.exists():
-        shutil.rmtree(cons_dir)
+    starting_thought_count = _prepare_consciousness_dir(cons_dir, manifest.resume_from)
 
-    # 3. Spawn the consciousness — invoke spawn.py with overrides pointing at
-    #    the merged config. spawn.py doesn't accept --config; instead we
-    #    invoke the orchestrator directly via a tiny launcher so we can pass
-    #    the merged config path.
+    # 3. Spawn the consciousness
     started_at = datetime.now(timezone.utc)
     launcher_code = (
         "import asyncio, sys, os\n"
@@ -141,9 +218,6 @@ def run_experiment(
         "asyncio.run(mind.run())\n"
     )
     log_path = run_dir / "spawn.log"
-    # Manage the log file handle explicitly so it's closed once the subprocess
-    # exits — leaving it implicit risks ResourceWarning and unflushed buffers
-    # on some interpreters.
     log_fh = open(log_path, "w", encoding="utf-8")
     process = subprocess.Popen(
         [sys.executable, "-c", launcher_code],
@@ -154,8 +228,8 @@ def run_experiment(
         start_new_session=True,
     )
 
-    # 4. Wait for the target — either thought count or wall-clock minutes
-    target_thoughts = manifest.duration.thoughts
+    # 4. Compute targets from the manifest's duration mode
+    target_thoughts = _compute_thought_target(manifest, starting_thought_count)
     target_minutes = manifest.duration.minutes
     state_path = cons_dir / "state.json"
 
@@ -168,20 +242,22 @@ def run_experiment(
     exit_reason = "unknown"
     try:
         while True:
-            # Process died unexpectedly?
             if process.poll() is not None:
                 exit_reason = f"process exited (code {process.returncode})"
                 break
-            # Hit wall-clock cap?
             if time.monotonic() > deadline:
                 exit_reason = f"max_wall_clock_minutes={max_wall_clock_minutes} exceeded"
                 break
-            # Hit thought target?
             if target_thoughts is not None:
                 if _read_thought_count(state_path) >= target_thoughts:
-                    exit_reason = f"reached target {target_thoughts} thoughts"
+                    if manifest.duration.add_thoughts is not None:
+                        exit_reason = (
+                            f"reached target {manifest.duration.add_thoughts} added "
+                            f"thoughts (start {starting_thought_count} → {target_thoughts})"
+                        )
+                    else:
+                        exit_reason = f"reached target {target_thoughts} thoughts"
                     break
-            # Hit time target?
             if target_time is not None and time.monotonic() >= target_time:
                 exit_reason = f"reached target {target_minutes} minutes"
                 break
@@ -190,7 +266,6 @@ def run_experiment(
         exit_reason = "KeyboardInterrupt"
         raise
     finally:
-        # 5. SIGTERM and wait for clean exit (5s grace per project convention)
         if process.poll() is None:
             try:
                 process.send_signal(signal.SIGTERM)
@@ -198,19 +273,16 @@ def run_experiment(
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
-        # Now that the subprocess has stopped, close our copy of its stdout fd
         log_fh.close()
 
     ended_at = datetime.now(timezone.utc)
 
-    # 6. Copy run artifacts into experiment dir (after process is stopped so
-    #    state.json's _save_state() finally-block has run)
+    # 5. Copy run artifacts
     for fname in ("journal.jsonl", "state.json", "episodic.jsonl"):
         src = cons_dir / fname
         if src.exists():
             shutil.copy2(src, run_dir / fname)
 
-    # 7. Compute metrics
     journal_path = run_dir / "journal.jsonl"
     state_dest = run_dir / "state.json"
     if not (journal_path.exists() and state_dest.exists()):
@@ -220,20 +292,193 @@ def run_experiment(
             f"Spawn log: {log_path}"
         )
     metrics = compute_all(journal_path, state_dest)
+    # _schema_version comes from compute_all itself — see metrics.METRICS_SCHEMA_VERSION
 
-    # 8. Persist manifest, meta, metrics, report
+    # 6. Persist artifacts
     (run_dir / "manifest.yaml").write_text(manifest.to_yaml(), encoding="utf-8")
     meta = {
+        "manifest_schema_version": manifest.schema_version,
         "branch_sha": manifest.branch_sha or _git_sha(),
         "started_at": started_at.isoformat(),
         "ended_at": ended_at.isoformat(),
         "wall_clock_minutes": (ended_at - started_at).total_seconds() / 60,
         "exit_reason": exit_reason,
+        "starting_thought_count": starting_thought_count,
         "spawn_log_path": str(log_path.relative_to(run_dir)),
     }
+    if manifest.resume_from is not None:
+        meta["resumed_from"] = manifest.resume_from
     (run_dir / "meta.yaml").write_text(yaml.safe_dump(meta, sort_keys=False), encoding="utf-8")
     (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     (run_dir / "report.md").write_text(render_report(manifest, meta, metrics), encoding="utf-8")
 
-    # Spawn config kept for forensics; remove if you want a smaller tree
     return run_dir
+
+
+def _compute_thought_target(
+    manifest: ExperimentManifest, starting_thought_count: int
+) -> int | None:
+    """Resolve `manifest.duration` to an absolute thought_count target, or None
+    if the duration is wall-clock-based."""
+    if manifest.duration.thoughts is not None:
+        return manifest.duration.thoughts          # cumulative target
+    if manifest.duration.add_thoughts is not None:
+        return starting_thought_count + manifest.duration.add_thoughts
+    return None                                      # minutes mode — target_time handles it
+
+
+def run_experiment_replicated(
+    manifest: ExperimentManifest,
+    experiments_root: Path | None = None,
+    max_wall_clock_minutes: float = 30.0,
+    poll_interval_s: float = 1.0,
+) -> Path:
+    """Run the manifest N times if `replicates` is set, otherwise once.
+
+    Returns the path to the parent run dir (which contains per-replicate
+    subdirs `replicate-0/`, `replicate-1/`, … and a `replicates_index.md`)
+    when N>1, or the single run dir when N is None or 1.
+
+    Aggregation across replicates (mean / stddev across metrics) is a Phase-2
+    follow-up; for now `replicates_index.md` just lists the child reports
+    and exit reasons.
+    """
+    experiments_root = experiments_root or EXPERIMENTS_ROOT
+    n = manifest.replicates
+    if n is None or n <= 1:
+        return run_experiment(
+            manifest, experiments_root=experiments_root,
+            max_wall_clock_minutes=max_wall_clock_minutes,
+            poll_interval_s=poll_interval_s,
+        )
+
+    parent_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
+    parent_dir = experiments_root / manifest.name / parent_ts
+    parent_dir.parent.mkdir(parents=True, exist_ok=True)
+    parent_dir.mkdir()
+
+    child_dirs: list[Path] = []
+    for i in range(n):
+        child_dir = parent_dir / f"replicate-{i}"
+        child_dir.mkdir()
+        run_experiment(
+            manifest,
+            experiments_root=experiments_root,
+            max_wall_clock_minutes=max_wall_clock_minutes,
+            poll_interval_s=poll_interval_s,
+            run_dir=child_dir,
+        )
+        child_dirs.append(child_dir)
+
+    # Write a simple index — aggregate metrics deferred per docstring
+    lines = [
+        f"# {manifest.name} — {n} replicates",
+        "",
+        f"Parent run: `{parent_dir.name}`",
+        "",
+        "| # | Replicate | Exit reason | Wall clock |",
+        "|---|---|---|---|",
+    ]
+    for i, child in enumerate(child_dirs):
+        meta = yaml.safe_load((child / "meta.yaml").read_text())
+        lines.append(
+            f"| {i} | `{child.name}` | {meta.get('exit_reason', '?')} "
+            f"| {meta.get('wall_clock_minutes', 0):.1f}m |"
+        )
+    (parent_dir / "replicates_index.md").write_text("\n".join(lines), encoding="utf-8")
+    return parent_dir
+
+
+# ---------------------------------------------------------------------------
+# Detach mode + status
+# ---------------------------------------------------------------------------
+
+def start_detached(
+    manifest_path: Path,
+    experiments_root: Path | None = None,
+    max_wall_clock_minutes: float = 30.0,
+) -> Path:
+    """Fork a child process that runs the manifest; return immediately with
+    the run dir.
+
+    The child is detached via `start_new_session=True` so it survives the
+    parent's exit. Status checks read marker files written by the child.
+
+    Limitations: no daemonization (no double-fork), no log redirection to
+    `~/.consciousness/`. The child writes its stdout/stderr to
+    `<run_dir>/_detached.log`.
+    """
+    experiments_root = experiments_root or EXPERIMENTS_ROOT
+    manifest = ExperimentManifest.from_yaml(Path(manifest_path))
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
+    if manifest.replicates and manifest.replicates > 1:
+        # For replicates, the timestamped dir is the parent; children land beneath
+        run_dir = experiments_root / manifest.name / timestamp
+    else:
+        run_dir = experiments_root / manifest.name / timestamp
+    run_dir.parent.mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir()
+    (run_dir / _STARTED_MARKER).touch()
+
+    # Hand off to a worker script that re-imports runner and calls
+    # run_experiment_replicated with the pre-created run_dir. We re-invoke
+    # the module so the child runs in a fresh interpreter (no shared async
+    # state, no inherited signal handlers).
+    worker_code = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(PROJECT_ROOT)!r})\n"
+        "from pathlib import Path\n"
+        "from experiments.manifest import ExperimentManifest\n"
+        "from experiments.runner import run_experiment, run_experiment_replicated\n"
+        f"m = ExperimentManifest.from_yaml(Path({str(manifest_path)!r}))\n"
+        f"run_dir = Path({str(run_dir)!r})\n"
+        "if m.replicates and m.replicates > 1:\n"
+        "    # Re-invoke replicates loop with the pre-created parent dir\n"
+        "    from experiments.runner import EXPERIMENTS_ROOT\n"
+        f"    run_experiment_replicated(m, experiments_root={str(experiments_root)!r},"
+        f" max_wall_clock_minutes={max_wall_clock_minutes})\n"
+        "else:\n"
+        f"    run_experiment(m, max_wall_clock_minutes={max_wall_clock_minutes}, run_dir=run_dir)\n"
+    )
+    detached_log = run_dir / "_detached.log"
+    log_fh = open(detached_log, "w", encoding="utf-8")
+    subprocess.Popen(
+        [sys.executable, "-c", worker_code],
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        cwd=str(PROJECT_ROOT),
+        env={**os.environ},
+        start_new_session=True,
+    )
+    # Parent does NOT wait — child runs until it writes report.md or fails.
+    return run_dir
+
+
+def status(run_dir: Path) -> dict[str, Any]:
+    """Report the state of a run directory.
+
+    Returns a dict with `state` ∈ {running, done, failed, unknown}
+    plus optional `exit_reason`, `wall_clock_minutes`, `started_at`.
+    """
+    run_dir = Path(run_dir)
+    if not run_dir.exists():
+        return {"state": "unknown", "reason": "run_dir does not exist"}
+    if (run_dir / _FAILED_MARKER).exists():
+        return {"state": "failed", "reason": "FAILED marker present; check _detached.log"}
+    if (run_dir / "report.md").exists():
+        meta_path = run_dir / "meta.yaml"
+        info: dict[str, Any] = {"state": "done"}
+        if meta_path.exists():
+            try:
+                meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
+                info.update({
+                    "exit_reason": meta.get("exit_reason"),
+                    "wall_clock_minutes": meta.get("wall_clock_minutes"),
+                    "started_at": meta.get("started_at"),
+                })
+            except yaml.YAMLError:
+                pass
+        return info
+    if (run_dir / _STARTED_MARKER).exists():
+        return {"state": "running", "reason": "STARTED marker present, no report.md yet"}
+    return {"state": "unknown", "reason": "no markers and no report.md"}

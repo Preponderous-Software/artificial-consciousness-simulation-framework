@@ -1,0 +1,38 @@
+# Real-Ollama 20-minute run with the full default config (perception + AST-1
+# attention schema + HOT-2 metacognition + PP-1 prediction error + mood-fix
+# baseline reversion). Useful as a "current head-of-main behaviour" snapshot —
+# what does an agent look like at 2026-05-25 main if you give it 20 minutes?
+#
+# Wall-clock-bound rather than thought-bound on purpose: at ~60-90s/cycle this
+# yields ~13-20 thoughts, comparable in scale to early-Echo / early-Wren windows.
+
+name: ollama-20min-atlas
+description: >
+  20-minute Ollama baseline of the full current configuration (perception +
+  AST-1 + HOT-2 + PP-1 + mood-fix). No config overrides — runs the default
+  config verbatim to capture what a vanilla spawn produces today.
+
+consciousness_name: Atlas
+
+# Empty: use config/default_consciousness.yaml verbatim. The point of the run
+# is to capture "the default" — any override would change the question.
+config_overrides: {}
+
+duration:
+  minutes: 20
+
+success_criteria:
+  # Mood-fix #66 should keep all 4 dims healthy in a clean run
+  - kind: mood.dimensions_non_degenerate
+    op: ">="
+    value: 2
+  # We expect at least a few thoughts in 20 minutes of real Ollama time
+  - kind: event_counts.thought
+    op: ">="
+    value: 5
+
+tags:
+  - real-ollama
+  - default-config
+  - 20min
+  - llama3.2-3b

@@ -107,3 +107,71 @@ def test_evaluate_supports_all_ops() -> None:
         c = SuccessCriterion(kind="x", op=op, value=value)
         passed, _ = evaluate_success_criterion(c, metrics)
         assert passed is expected, f"op={op}, value={value} expected {expected}"
+
+
+# ---------------------------------------------------------------------------
+# Schema versioning + new fields (resume_from, add_thoughts, replicates)
+# ---------------------------------------------------------------------------
+
+def test_manifest_default_schema_version_is_1() -> None:
+    m = ExperimentManifest.model_validate({
+        "name": "x", "consciousness_name": "X",
+        "duration": {"thoughts": 1},
+    })
+    assert m.schema_version == 1
+
+
+def test_manifest_accepts_explicit_schema_version(tmp_path) -> None:
+    p = tmp_path / "m.yaml"
+    p.write_text(
+        "schema_version: 1\nname: x\nconsciousness_name: X\nduration: {thoughts: 1}\n"
+    )
+    m = ExperimentManifest.from_yaml(p)
+    assert m.schema_version == 1
+    # to_yaml emits the field so future loaders can detect format
+    assert "schema_version: 1" in m.to_yaml()
+
+
+def test_duration_accepts_add_thoughts_xor_other_modes() -> None:
+    Duration(add_thoughts=5)             # fine on its own
+    with pytest.raises(ValueError, match="exactly one"):
+        Duration(add_thoughts=5, thoughts=10)
+    with pytest.raises(ValueError, match="exactly one"):
+        Duration(add_thoughts=5, minutes=2.0)
+    with pytest.raises(ValueError, match="positive"):
+        Duration(add_thoughts=0)
+    with pytest.raises(ValueError, match="positive"):
+        Duration(add_thoughts=-3)
+
+
+def test_manifest_accepts_resume_from(tmp_path) -> None:
+    p = tmp_path / "m.yaml"
+    p.write_text(
+        "name: x\nconsciousness_name: X\nresume_from: Echo\n"
+        "duration: {add_thoughts: 5}\n"
+    )
+    m = ExperimentManifest.from_yaml(p)
+    assert m.resume_from == "Echo"
+    assert m.duration.add_thoughts == 5
+
+
+def test_manifest_accepts_replicates(tmp_path) -> None:
+    p = tmp_path / "m.yaml"
+    p.write_text(
+        "name: x\nconsciousness_name: X\nreplicates: 3\n"
+        "duration: {thoughts: 5}\n"
+    )
+    m = ExperimentManifest.from_yaml(p)
+    assert m.replicates == 3
+
+
+def test_manifest_backward_compatible_with_no_new_fields(tmp_path) -> None:
+    """Pre-existing manifests without schema_version / resume_from / replicates
+    must still parse without error — defaults fill in the gaps."""
+    p = tmp_path / "old.yaml"
+    p.write_text("name: x\nconsciousness_name: X\nduration: {thoughts: 1}\n")
+    m = ExperimentManifest.from_yaml(p)
+    assert m.schema_version == 1
+    assert m.resume_from is None
+    assert m.replicates is None
+    assert m.duration.add_thoughts is None
