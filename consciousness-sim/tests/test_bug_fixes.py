@@ -176,6 +176,53 @@ def test_episodic_returns_empty_when_all_lines_corrupted(tmp_path) -> None:
     assert events == []
 
 
+# ---------------------------------------------------------------------------
+# EpisodicMemory._load_from_disk — bounded memory + tail correctness (#110)
+# ---------------------------------------------------------------------------
+
+def test_episodic_load_returns_last_max_cache_size_when_file_large(tmp_path) -> None:
+    """Lazy load on a journal larger than _MAX_CACHE_SIZE must populate the cache
+    with exactly _MAX_CACHE_SIZE most-recent events, regardless of file size."""
+    path = tmp_path / "episodic.jsonl"
+    n_events = EpisodicMemory._MAX_CACHE_SIZE + 100
+    with path.open("w", encoding="utf-8") as f:
+        for i in range(n_events):
+            f.write(json.dumps({
+                "timestamp": f"2026-01-01T00:00:{i:06d}+00:00",
+                "kind": "thought",
+                "content": f"e{i}",
+            }) + "\n")
+
+    mem = EpisodicMemory(path)
+    events = asyncio.run(mem.recent(limit=EpisodicMemory._MAX_CACHE_SIZE))
+    assert len(events) == EpisodicMemory._MAX_CACHE_SIZE
+    # Should be the LAST _MAX_CACHE_SIZE, in order
+    assert events[0].content == f"e{n_events - EpisodicMemory._MAX_CACHE_SIZE}"
+    assert events[-1].content == f"e{n_events - 1}"
+
+
+def test_episodic_load_preserves_n_valid_when_corruption_near_tail(tmp_path) -> None:
+    """Corruption clustered at the tail of the journal must not reduce the cached
+    event count below _MAX_CACHE_SIZE when enough valid events exist earlier."""
+    path = tmp_path / "episodic.jsonl"
+    valid_events = EpisodicMemory._MAX_CACHE_SIZE + 10
+    with path.open("w", encoding="utf-8") as f:
+        for i in range(valid_events):
+            f.write(json.dumps({
+                "timestamp": f"2026-01-01T00:00:{i:06d}+00:00",
+                "kind": "thought",
+                "content": f"v{i}",
+            }) + "\n")
+        for _ in range(5):
+            f.write("NOT_JSON\n")
+
+    mem = EpisodicMemory(path)
+    events = asyncio.run(mem.recent(limit=EpisodicMemory._MAX_CACHE_SIZE))
+    # Contract: corrupted tail lines must not crowd out earlier valid events
+    assert len(events) == EpisodicMemory._MAX_CACHE_SIZE
+    assert all(e.kind == "thought" for e in events)
+
+
 def test_journal_skips_corrupted_lines(tmp_path, caplog) -> None:
     path = tmp_path / "journal.jsonl"
     good = json.dumps({"timestamp": "2024-01-01T00:00:00+00:00", "type": "thought", "content": "hello"})

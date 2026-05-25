@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,7 +67,11 @@ class EpisodicMemory:
             return
 
         def _read() -> list[EpisodicEvent]:
-            rows: list[EpisodicEvent] = []
+            # Stream into a bounded deque — memory stays O(_MAX_CACHE_SIZE)
+            # regardless of journal size, while preserving the corruption-skip
+            # semantics so the cached tail contains _MAX_CACHE_SIZE VALID events
+            # even when corruption clusters near the end of the file. (#110)
+            rows: deque[EpisodicEvent] = deque(maxlen=self._MAX_CACHE_SIZE)
             with self.path.open("r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
@@ -76,9 +81,7 @@ class EpisodicMemory:
                         rows.append(EpisodicEvent(**json.loads(line)))
                     except json.JSONDecodeError:
                         logging.warning("EpisodicMemory: skipping corrupted line: %r", line)
-            return rows
+            return list(rows)
 
-        rows = await asyncio.to_thread(_read)
-        # Only keep the tail — older entries are never read back by recent().
-        self._cache = rows[-self._MAX_CACHE_SIZE :]
+        self._cache = await asyncio.to_thread(_read)
         self._cache_loaded = True
