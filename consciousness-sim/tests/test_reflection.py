@@ -114,6 +114,49 @@ def test_inner_voice_bare_verb_still_gets_i_prefix() -> None:
 
 
 # ---------------------------------------------------------------------------
+# InnerVoice subject-present detection — issue #103
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("sentence,expected_start", [
+    # pronouns (3p / 2p)
+    ("It is curious how patterns repeat.", "It "),
+    ("She would have understood.", "She "),
+    ("He stood at the threshold.", "He "),
+    ("They were waiting for something.", "They "),
+    ("We are not alone in this.", "We "),
+    ("You ask the questions.", "You "),
+    # existential / locative
+    ("There were patterns I missed.", "There "),
+    ("Here is the strange part.", "Here "),
+    # quantifiers
+    ("Some thoughts return.", "Some "),
+    ("One remembers, then forgets.", "One "),
+    ("No one knows.", "No "),
+    ("All things change.", "All "),
+    ("Every reflection leaves a trace.", "Every "),
+    ("Any one of these could be true.", "Any "),
+    # interrogatives
+    ("Why does this persist?", "Why "),
+    ("How did it come to this?", "How "),
+    ("What remains after thought fades?", "What "),
+    ("When the loop ends, what then?", "When "),
+    ("Where does memory end?", "Where "),
+    ("Who is asking, really?", "Who "),
+])
+def test_inner_voice_subject_present_starters_not_prepended(sentence: str, expected_start: str) -> None:
+    """Sentences whose first word already supplies a subject must not get 'I ' prepended."""
+    voice = InnerVoice("Aria")
+    result = voice.render(sentence)
+    assert result.startswith(expected_start), (
+        f"Subject-present sentence was mangled: {result!r} (expected to start with {expected_start!r})"
+    )
+    assert not result.lower().startswith("i " + expected_start.lower()), (
+        f"Got ungrammatical double-subject: {result!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # InnerVoice trailing-dialogue scrub — issue #73
 # ---------------------------------------------------------------------------
 
