@@ -114,6 +114,10 @@ python scripts/experiment.py replay-analysis experiments/<name>/<UTC-ts>/
 
 # Side-by-side comparison of two recorded runs (works against golden refs too)
 python scripts/experiment.py compare experiments/golden/Rafael experiments/golden/Echo
+
+# Garbage-collect old run dirs (dry-run by default; pass --yes to actually delete)
+python scripts/experiment.py prune --keep-last 5
+python scripts/experiment.py prune --older-than 30 --yes
 ```
 
 **Claude skills** for narrative analysis (Phase 2 of #57): two slash-command skills live at `.claude/skills/run-experiment/` and `.claude/skills/compare-experiments/`. The CLI produces structured artifacts; the skills add the qualitative-interpretation layer on top — reading sampled thoughts and comparing against the four golden baselines.
