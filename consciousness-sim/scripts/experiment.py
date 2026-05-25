@@ -1,8 +1,9 @@
-"""Experiment harness CLI — `experiment.py {run|status|list|replay-analysis}`.
+"""Experiment harness CLI — `experiment.py {run|status|list|replay-analysis|compare}`.
 
 See `experiments/__init__.py` for the architecture and issue #57 for the
-motivating design. Phase 1 of #57 ships `run` (with `--detach`), `status`,
-`list`, and `replay-analysis`. `compare` and the Claude skill are Phase 2.
+motivating design. Phase 1+2 of #57 ship `run` (with `--detach`), `status`,
+`list`, `replay-analysis`, and `compare`. The Claude skills under
+`.claude/skills/` provide the narrative layer on top.
 
 Examples:
 
@@ -11,6 +12,7 @@ Examples:
     python scripts/experiment.py status experiments/<name>/<UTC-ts>/
     python scripts/experiment.py list
     python scripts/experiment.py replay-analysis experiments/<name>/<UTC-ts>/
+    python scripts/experiment.py compare experiments/golden/Rafael/ experiments/golden/Echo/
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ if str(ROOT_DIR) not in sys.path:
 import click
 import yaml
 
+from experiments.compare import compare_runs
 from experiments.manifest import ExperimentManifest
 from experiments.metrics import compute_all
 from experiments.report import render_report
@@ -157,6 +160,31 @@ def cmd_replay(run_dir: Path) -> None:
     (run_dir / "report.md").write_text(render_report(manifest, meta, metrics), encoding="utf-8")
     click.echo(f"Re-analyzed {run_dir}")
     click.echo(f"  report:  {run_dir / 'report.md'}")
+
+
+@main.command("compare")
+@click.argument("run_a", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("run_b", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option(
+    "--output", "output_path", type=click.Path(path_type=Path), default=None,
+    help="Write the comparison markdown to this path instead of stdout.",
+)
+@click.option(
+    "--samples", "k_samples", type=int, default=3, show_default=True,
+    help="Number of thoughts to sample from each run (evenly spaced).",
+)
+def cmd_compare(run_a: Path, run_b: Path, output_path: Path | None, k_samples: int) -> None:
+    """Render a side-by-side markdown comparison of two recorded runs.
+
+    The pure-data layer. For interpretive narrative on top, use the
+    `/compare-experiments` Claude skill, which calls this and adds prose.
+    """
+    md = compare_runs(run_a, run_b, k_samples=k_samples)
+    if output_path is None:
+        click.echo(md)
+    else:
+        output_path.write_text(md, encoding="utf-8")
+        click.echo(f"Wrote comparison to {output_path}")
 
 
 if __name__ == "__main__":
