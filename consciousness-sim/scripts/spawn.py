@@ -102,6 +102,9 @@ def _check_duplicate_pid(name: str, force: bool) -> None:
     try:
         pid_path.unlink()
     except OSError:
+        # Best-effort cleanup of a stale pid file. If unlink races with
+        # another spawn or the file is already gone, ignore — the next
+        # caller will succeed.
         pass
 
 
@@ -223,6 +226,9 @@ def main(
             try:
                 pid_path.unlink()
             except OSError:
+                # Best-effort cleanup at process exit. atexit handlers must
+                # never raise; the next spawn will see a stale pid file and
+                # remove it itself.
                 pass
 
     atexit.register(_cleanup_pid_file)
