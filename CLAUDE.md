@@ -84,7 +84,7 @@ A mental state is conscious when it is the object of a **higher-order representa
 - Higher-order states must be causally efficacious: they influence downstream processing, not just epiphenomenal tags.
 - Distinction between first-order (content) representation and second-order (state confidence/reliability) representation.
 
-**Implementation mapping:** `core/reflection.py` is the closest analog — it generates representations *about* recent thoughts. Currently the reflection loop is probabilistically triggered rather than continuous metacognitive monitoring. `ReflectionEngine.shallow_reflection()` approximates HOT; `deep_reflection()` approximates higher-order integration over time.
+**Implementation mapping:** `core/metacognition.py` (`MetacognitiveMonitor`) runs after every thought generation — labels each thought `high`/`uncertain`/`noise` based on lexical overlap with recent workspace items (HOT-2 continuous monitoring, PR #81). Label adjusts `ShortTermMemory` importance (noisy thoughts evict sooner) and boosts reflection probability (+0.15 uncertain, +0.30 noise) — causally efficacious. `core/reflection.py` supplements with LLM-based meta-reasoning over recent thoughts (`shallow_reflection` → HOT-2 approximation; `deep_reflection` → higher-order integration).
 
 ---
 
@@ -119,7 +119,7 @@ The brain is a **prediction machine**: it continuously generates top-down predic
 - Action selected to minimize expected free energy (expected surprise), not just reward.
 - Precision weighting: attention as the gain on prediction error signals.
 
-**Implementation mapping:** `core/thought_loop.py` retrieves long-term memories as a form of prior; the LLM generates text conditioned on context, loosely analogous to sampling from a generative model. True predictive processing would require explicit prediction → error → update cycles, not single-pass generation.
+**Implementation mapping:** `core/thought_loop.py` implements a continuity-prior prediction cycle (PR #83): at end of each cycle `_predicted_theme` is set to the extracted theme of the current thought; at the start of the next cycle, after the thought is generated, `prediction_error` (0.0 or 1.0) is computed from whether the predicted theme appears in the actual thought. High prediction error boosts reflection probability (+0.20). Long-term memory retrieval acts as a prior. Gap: the generative model is a trivial continuity prior with no learning from errors; no hierarchical prediction structure; no action selected to minimise expected free energy.
 
 ---
 
@@ -136,7 +136,7 @@ The brain constructs an internal **model of its own attention** (the attention s
 - A mechanism that uses this schema to generate self-reports about awareness.
 - Social attribution module: attribute attention/consciousness to other agents.
 
-**Implementation mapping:** `core/identity.py` (`IdentityDocument`) is the closest analog — it holds a self-model, including mood and self-concept. It does not currently model *attention* specifically. An explicit attention state representation fed back into prompts would better approximate AST.
+**Implementation mapping:** `core/identity.py` (`AttentionSchema`) tracks `focus` (dominant cycle kind), `theme` (first content word), `salience` (0–1, decays each cycle), and `history` (last 10 foci). Updated after every thought cycle; rendered into the identity anchor prompt via `anchor_payload()["attention_state"]` so each thought is conditioned on the prior cycle's attention state (PR #61). Gap: focus is derived from discrete event type rather than a learned or competitive allocation model; no social attribution of attention to other agents.
 
 ---
 
@@ -289,7 +289,10 @@ consciousness-sim/
 │   ├── consciousness.py     # Orchestrator: lifecycle, config, event emission,
 │   │                        #   ${VAR} substitution, perception/discord wiring
 │   ├── thought_loop.py      # Per-cycle generation, memory retrieval, perception
-│   │                        #   fetch, reflection triggers
+│   │                        #   fetch, HOT-2 metacognitive scoring, PP-1 prediction
+│   │                        #   error, per-component timing, reflection triggers
+│   ├── metacognition.py     # MetacognitiveMonitor — HOT-2 heuristic reliability
+│   │                        #   scorer (high/uncertain/noise) run every cycle
 │   ├── reflection.py        # Shallow / deep / existential reflection engine
 │   ├── identity.py          # Self-model (IdentityDocument), mood drift,
 │   │                        #   amendments, AttentionSchema (AST-1, #22 / #61)
@@ -337,9 +340,9 @@ consciousness-sim/
 2. `provider.embed(context)` → query vector → `long_term.similarity_search()` → related memories
 3. Every `perception.every_n_cycles` cycles (default 3): `perception_provider.fetch()` → optional `Perception`; lingers in short-term + episodic so subsequent cycles can reference it (PR #54)
 4. Identity anchor (includes `AttentionSchema` state per AST-1) + mood + memories + context + perception block → prompt → `provider.generate()` → raw thought
-5. `inner_voice.render()` → styled thought → `short_term.add()` + `episodic.append()` + `journal.append()` → `AttentionSchema.update()` for the next cycle
-6. Probabilistic reflection trigger → `reflection_engine.shallow/deep_reflection()`
-7. Events emitted via `Consciousness._emit()` to registered handlers (CLI, observer, web SSE, Discord sink if configured)
+5. `inner_voice.render()` → styled thought → `MetacognitiveMonitor.score()` → importance-adjusted `short_term.add()` + `episodic.append()`; prediction error computed against prior cycle's `_predicted_theme`; `_predicted_theme` updated for next cycle; `AttentionSchema.update()`
+6. Reflection trigger: `effective_prob = min(1.0, base + HOT-2 boost + PP-1 boost)` — fires only if `reflection_probability > 0.0`; → `reflection_engine.shallow/deep_reflection()`
+7. `consciousness.py` outer loop: `journal.append()` + events emitted via `Consciousness._emit()` to registered handlers (CLI, observer, web SSE, Discord sink if configured)
 8. Background: `MemoryConsolidator.consolidate_once()` every N minutes — episodic → LLM summary → long-term embeddings
 
 **Key invariants:**
@@ -350,6 +353,8 @@ consciousness-sim/
 - Memory consolidation logs a warning when 0 memories are stored from non-empty episodic events — always investigate.
 - `OllamaProvider` serializes all requests via a process-wide `asyncio.Semaphore(1)` — concurrent calls queue rather than compete; see `llm/provider.py`.
 - All LLM failures log a `WARNING` before falling back; silent fallback is a bug.
+- `reflection_probability=0.0` disables reflection entirely — HOT-2 and PP-1 boosts do not override an explicit zero.
+- `LongTermMemory` has a compound index on `(embedding_dim, importance_score, timestamp)`; `similarity_search` candidate selection is O(log N), not O(table size).
 
 ---
 
