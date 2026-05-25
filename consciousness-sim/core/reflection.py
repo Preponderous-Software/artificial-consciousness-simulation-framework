@@ -6,7 +6,7 @@ requirement of HOT theories. shallow_reflection → HOT-2 (metacognitive
 monitoring); deep_reflection → HOT-3 (agentive consumer updating
 self-model); existential_inquiry → recursive HOT-3 over a long horizon
 (higher-order self-evaluation of identity coherence). Note: HOT-4
-(\"smooth, graded representation spaces\") is a substrate property
+('smooth, graded representation spaces') is a substrate property
 implemented by the embedding space in memory/long_term.py, not by this
 module.
 Gap: reflection is probabilistically triggered rather than continuous
