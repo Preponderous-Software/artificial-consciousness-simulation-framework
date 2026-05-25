@@ -122,8 +122,9 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 - `llm.temperature`: creativity level for generation
 - `llm.max_tokens`: max generation length
 - `thought_loop.min_interval_seconds / max_interval_seconds`: per-cycle cadence jitter
-- `thought_loop.reflection_probability`: chance of reflection per cycle
+- `thought_loop.reflection_probability`: base chance of reflection per cycle (0.0 disables all reflection including HOT-2/PP-1 boosts)
 - `thought_loop.existential_inquiry_every_n_thoughts`: deterministic existential cadence
+- `thought_loop.perf_log_every_n`: log per-component cycle timing (embed/search/generate/perception ms + prompt_chars + pred_error) every N thoughts at INFO level; 0 = off (default 10)
 - `memory.short_term_capacity`: working-memory buffer size
 - `memory.consolidation_interval_minutes`: consolidator loop interval
 - `memory.forgetting_curve_enabled`: toggle long-term decay
@@ -144,14 +145,16 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 ## How a Thought Cycle Works
 
 1. Build current context from short-term memory
-2. Embed context and retrieve similar long-term memories
+2. Embed context and retrieve similar long-term memories (O(log N) via compound index)
 3. Every Nth cycle (per `perception.every_n_cycles`): fetch a perception and add it to short-term + episodic
 4. Inject identity anchor + mood + recent stream + perception block into prompt
 5. Generate next thought through provider abstraction
-6. Save to episodic log + short-term buffer + journal
-7. Probabilistically trigger reflection
-8. Periodically trigger existential inquiry
-9. Background consolidator compresses episodic traces into durable long-term memories
+6. **HOT-2:** `MetacognitiveMonitor` scores the thought as `high`/`uncertain`/`noise` based on lexical overlap with recent *thought-kind* items in the workspace buffer; saves thought to short-term buffer (importance 1.0/0.75/0.5 by label) and episodic log
+7. **PP-1:** compute `prediction_error` against prior cycle's predicted theme (continuity prior); update `_predicted_theme` for next cycle; every `perf_log_every_n` cycles log per-component timing at INFO level
+8. Reflection trigger: `effective_prob = base + HOT-2 boost + PP-1 boost` (capped at 1.0; base=0.0 disables entirely)
+9. Periodically trigger existential inquiry (deterministic, every N thoughts)
+10. Update `AttentionSchema` (informed by cycle outcome); outer loop appends to journal and emits events to handlers
+11. Background consolidator compresses episodic traces into durable long-term memories
 
 ## Extending the System
 
