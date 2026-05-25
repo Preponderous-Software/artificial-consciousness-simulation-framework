@@ -241,6 +241,47 @@ def test_mood_collapse_score_reads_initial_from_state_when_present() -> None:
     assert mood_collapse_score(state) == pytest.approx(0.0)
 
 
+# ---------------------------------------------------------------------------
+# sample_traces dedup — issue #106
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("n_perceptions,expected_sample_titles", [
+    (0, []),
+    (1, ["Topic 1"]),
+    (2, ["Topic 1", "Topic 2"]),
+    (3, ["Topic 1", "Topic 2", "Topic 3"]),
+    (5, ["Topic 1", "Topic 3", "Topic 5"]),
+])
+def test_sample_traces_dedups_when_fewer_than_three(n_perceptions: int, expected_sample_titles: list[str]) -> None:
+    """compute_all.sample_traces must not repeat the same trace when n_traces < 3."""
+    import tempfile, json as _json
+    from pathlib import Path as _Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        d = _Path(tmp)
+        journal_lines = []
+        for i in range(1, n_perceptions + 1):
+            journal_lines.append(_json.dumps({
+                "timestamp": f"2026-01-01T00:00:{i:02d}+00:00",
+                "type": "perception",
+                "content": f"[mock: Topic {i}] some unique words here {i}",
+            }))
+            journal_lines.append(_json.dumps({
+                "timestamp": f"2026-01-01T00:00:{i:02d}+00:00",
+                "type": "thought",
+                "content": f"I think about thing {i}.",
+            }))
+        (d / "journal.jsonl").write_text("\n".join(journal_lines) + ("\n" if journal_lines else ""))
+        (d / "state.json").write_text(_json.dumps({"identity": {}, "thought_count": n_perceptions}))
+
+        metrics = compute_all(d / "journal.jsonl", d / "state.json")
+        sample_titles = [s["title"] for s in metrics["perception"]["sample_traces"]]
+
+    assert sample_titles == expected_sample_titles, (
+        f"For n={n_perceptions}: got {sample_titles}, expected {expected_sample_titles}"
+    )
+
+
 def test_compute_all_includes_mood_initial_section() -> None:
     """metrics dict should expose `mood.initial` so report.py + compare.py can
     render deltas without re-reading state.json."""

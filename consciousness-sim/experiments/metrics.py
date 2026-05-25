@@ -398,12 +398,12 @@ def compute_all(
             "influence_rate": perception_influence_rate(traces),
             "sample_traces": [
                 {
-                    "title": t.perception_title,
-                    "new_words_in_next_thoughts": list(t.new_words_in_next_thoughts),
+                    "title": traces[i].perception_title,
+                    "new_words_in_next_thoughts": list(traces[i].new_words_in_next_thoughts),
                 }
-                # Sample first, middle, last for the report; full list available via replay
-                for t in (traces[:1] + traces[len(traces) // 2: len(traces) // 2 + 1] + traces[-1:])
-                if traces
+                # First / middle / last, dedup'd so n_traces < 3 doesn't produce
+                # the same trace 2-3 times (#106).
+                for i in (sorted({0, len(traces) // 2, len(traces) - 1}) if traces else [])
             ],
         },
         "reflections": {
