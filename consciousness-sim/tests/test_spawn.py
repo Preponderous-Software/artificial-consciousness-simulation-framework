@@ -11,7 +11,6 @@ import glob
 import sys
 from pathlib import Path
 
-import pytest
 import yaml
 
 # Make scripts/ importable the same way spawn.py does at runtime.
