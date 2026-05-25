@@ -84,7 +84,7 @@ A mental state is conscious when it is the object of a **higher-order representa
 - Higher-order states must be causally efficacious: they influence downstream processing, not just epiphenomenal tags.
 - Distinction between first-order (content) representation and second-order (state confidence/reliability) representation.
 
-**Implementation mapping:** `core/metacognition.py` (`MetacognitiveMonitor`) runs after every thought generation — labels each thought `high`/`uncertain`/`noise` based on lexical overlap with recent workspace items (HOT-2 continuous monitoring, PR #81). Label adjusts `ShortTermMemory` importance (noisy thoughts evict sooner) and boosts reflection probability (+0.15 uncertain, +0.30 noise) — causally efficacious. `core/reflection.py` supplements with LLM-based meta-reasoning over recent thoughts (`shallow_reflection` → HOT-2 approximation; `deep_reflection` → higher-order integration).
+**Implementation mapping:** `core/metacognition.py` (`MetacognitiveMonitor`) runs after every thought generation — labels each thought `high`/`uncertain`/`noise` based on lexical overlap with recent *thought-kind* items in the workspace buffer (HOT-2 continuous monitoring, PR #81). Label adjusts `ShortTermMemory` importance (noisy thoughts evict sooner) and boosts reflection probability (+0.15 uncertain, +0.30 noise) — causally efficacious. `core/reflection.py` supplements with LLM-based meta-reasoning over recent thoughts (`shallow_reflection` → HOT-2 approximation; `deep_reflection` → higher-order integration).
 
 ---
 
@@ -340,8 +340,8 @@ consciousness-sim/
 2. `provider.embed(context)` → query vector → `long_term.similarity_search()` → related memories
 3. Every `perception.every_n_cycles` cycles (default 3): `perception_provider.fetch()` → optional `Perception`; lingers in short-term + episodic so subsequent cycles can reference it (PR #54)
 4. Identity anchor (includes `AttentionSchema` state per AST-1) + mood + memories + context + perception block → prompt → `provider.generate()` → raw thought
-5. `inner_voice.render()` → styled thought → `MetacognitiveMonitor.score()` → importance-adjusted `short_term.add()` + `episodic.append()`; prediction error computed against prior cycle's `_predicted_theme`; `_predicted_theme` updated for next cycle; `AttentionSchema.update()`
-6. Reflection trigger: `effective_prob = min(1.0, base + HOT-2 boost + PP-1 boost)` — fires only if `reflection_probability > 0.0`; → `reflection_engine.shallow/deep_reflection()`
+5. `inner_voice.render()` → styled thought → `MetacognitiveMonitor.score()` → importance-adjusted `short_term.add()` + `episodic.append()`; prediction error computed against prior cycle's `_predicted_theme`; `_predicted_theme` updated for next cycle
+6. Reflection trigger: `effective_prob = min(1.0, base + HOT-2 boost + PP-1 boost)` — fires only if `reflection_probability > 0.0`; → `reflection_engine.shallow/deep_reflection()`; existential inquiry every N cycles; `AttentionSchema.update()` (informed by cycle outcome: perception/existential/reflection/memory/introspection)
 7. `consciousness.py` outer loop: `journal.append()` + events emitted via `Consciousness._emit()` to registered handlers (CLI, observer, web SSE, Discord sink if configured)
 8. Background: `MemoryConsolidator.consolidate_once()` every N minutes — episodic → LLM summary → long-term embeddings
 

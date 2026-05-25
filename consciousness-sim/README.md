@@ -149,10 +149,10 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 3. Every Nth cycle (per `perception.every_n_cycles`): fetch a perception and add it to short-term + episodic
 4. Inject identity anchor + mood + recent stream + perception block into prompt
 5. Generate next thought through provider abstraction
-6. **HOT-2:** `MetacognitiveMonitor` scores the thought as `high`/`uncertain`/`noise` based on lexical overlap with recent workspace items — adjusts short-term importance (noisy thoughts evict sooner)
+6. **HOT-2:** `MetacognitiveMonitor` scores the thought as `high`/`uncertain`/`noise` based on lexical overlap with recent *thought-kind* items in the workspace buffer; saves thought to short-term buffer (importance 1.0/0.75/0.5 by label) and episodic log
 7. **PP-1:** compute `prediction_error` against prior cycle's predicted theme (continuity prior); update `_predicted_theme` for next cycle
 8. Reflection trigger: `effective_prob = base + HOT-2 boost + PP-1 boost` (capped at 1.0; base=0.0 disables entirely)
-9. Save to episodic log + short-term buffer + journal; update `AttentionSchema`
+9. Update `AttentionSchema`; outer loop appends to journal and emits events to handlers
 10. Periodically trigger existential inquiry
 11. Every `perf_log_every_n` cycles: log per-component timing at INFO level
 12. Background consolidator compresses episodic traces into durable long-term memories
