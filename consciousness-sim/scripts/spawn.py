@@ -34,12 +34,11 @@ from persistence.paths import consciousness_dir
 from scripts._logging import configure_logging
 
 
-def _build_config_path(provider: str | None, model: str | None) -> Path:
+def _build_config_path(name: str, provider: str | None, model: str | None) -> Path:
     config_path = Path(__file__).resolve().parents[1] / "config" / "default_consciousness.yaml"
     if not (provider or model):
         return config_path
 
-    import tempfile
     import yaml
 
     base = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -47,15 +46,15 @@ def _build_config_path(provider: str | None, model: str | None) -> Path:
         base["llm"]["provider"] = provider
     if model:
         base["llm"]["model"] = model
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        suffix=".yaml",
-        prefix="consciousness_override_",
-        delete=False,
-    ) as tmp:
-        yaml.safe_dump(base, tmp)
-        return Path(tmp.name)
+    # Persist the override into the consciousness dir rather than /tmp — the
+    # previous tempfile-with-delete=False approach (#105) leaked a file on
+    # every spawn. Writing into the instance dir is overwritten on each spawn
+    # and makes the resolved config inspectable post-hoc.
+    agent_dir = consciousness_dir(name)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    out_path = agent_dir / "_spawn_config.yaml"
+    out_path.write_text(yaml.safe_dump(base, sort_keys=False), encoding="utf-8")
+    return out_path
 
 
 async def _run(mind: Consciousness, headless: bool) -> None:
@@ -128,7 +127,7 @@ def main(
 
     log_path = configure_logging(name, log_level)
     logging.info("Spawn started — logs: %s", log_path)
-    config_path = _build_config_path(provider, model)
+    config_path = _build_config_path(name, provider, model)
     mind = Consciousness(name=name, config_path=str(config_path))
     asyncio.run(_run(mind, headless))
 
