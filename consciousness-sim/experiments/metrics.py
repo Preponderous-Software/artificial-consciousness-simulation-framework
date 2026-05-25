@@ -17,7 +17,6 @@ Read `~/.consciousness/<name>/journal.jsonl` to see the format, or
 from __future__ import annotations
 
 import json
-import math
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -301,17 +300,24 @@ def cycle_rate_trajectory(
     """Rolling mean seconds/thought over consecutive non-overlapping windows.
 
     Echo showed 64s → 99s linearly over 200 thoughts; mean alone (~83s) hid this.
-    Returns one number per window; len = floor(N_thoughts / window).
+    Returns one number per window; `len(out) == n_thoughts // window`.
+
+    A window of size `W` covers `W` thoughts whose interval span is computed
+    between the first and last timestamp of those `W` thoughts. The first
+    window covers thoughts `[0..W]` (inclusive), the second `[W..2W]`, etc.
     """
     thought_ts = [
         datetime.fromisoformat(e["timestamp"])
         for e in events if e.get("type") == "thought"
     ]
-    if len(thought_ts) < window + 1:
+    n = len(thought_ts)
+    if n < window + 1:
         return []
+    n_windows = n // window
     out: list[float] = []
-    for start in range(0, len(thought_ts) - window, window):
-        end = start + window
+    for w in range(n_windows):
+        start = w * window
+        end = min(start + window, n - 1)
         span = (thought_ts[end] - thought_ts[start]).total_seconds()
         out.append(span / window)
     return out

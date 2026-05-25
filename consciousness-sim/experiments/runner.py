@@ -38,7 +38,6 @@ from experiments.report import render_report
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = REPO_ROOT / "consciousness-sim"
 DEFAULT_CONFIG = PROJECT_ROOT / "config" / "default_consciousness.yaml"
-SPAWN_SCRIPT = PROJECT_ROOT / "scripts" / "spawn.py"
 EXPERIMENTS_ROOT = PROJECT_ROOT / "experiments"
 
 
@@ -108,9 +107,14 @@ def run_experiment(
             report.md
     """
     experiments_root = experiments_root or EXPERIMENTS_ROOT
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+    # Microsecond-precision timestamp to make collisions effectively impossible
+    # even if `run_experiment` is invoked back-to-back in the same second.
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
     run_dir = experiments_root / manifest.name / timestamp
-    run_dir.mkdir(parents=True, exist_ok=True)
+    # `exist_ok=False` is the default — fail loudly if somehow the dir already
+    # exists rather than silently mixing artifacts from two runs.
+    run_dir.parent.mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir()
 
     # 1. Materialise merged config to a tempfile next to the run
     base_cfg = yaml.safe_load(DEFAULT_CONFIG.read_text(encoding="utf-8"))
@@ -137,9 +141,13 @@ def run_experiment(
         "asyncio.run(mind.run())\n"
     )
     log_path = run_dir / "spawn.log"
+    # Manage the log file handle explicitly so it's closed once the subprocess
+    # exits — leaving it implicit risks ResourceWarning and unflushed buffers
+    # on some interpreters.
+    log_fh = open(log_path, "w", encoding="utf-8")
     process = subprocess.Popen(
         [sys.executable, "-c", launcher_code],
-        stdout=open(log_path, "w"),
+        stdout=log_fh,
         stderr=subprocess.STDOUT,
         cwd=str(PROJECT_ROOT),
         env={**os.environ},
@@ -190,6 +198,8 @@ def run_experiment(
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+        # Now that the subprocess has stopped, close our copy of its stdout fd
+        log_fh.close()
 
     ended_at = datetime.now(timezone.utc)
 

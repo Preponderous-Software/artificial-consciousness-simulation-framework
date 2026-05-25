@@ -110,6 +110,8 @@ python scripts/experiment.py replay-analysis experiments/mock-smoke-baseline/202
 
 Four canonical reference runs are committed under `experiments/golden/{Rafael,Sage,Echo,Wren}/` — used as fixtures for the metric library's regression tests and as the established baselines for vocabulary / mood / perception-influence comparisons. See `experiments/golden/README.md` for the run-by-run summary. Metric implementations live in `experiments/metrics.py`; the schema for manifests is in `experiments/manifest.py`.
 
+**Storage contract:** Manifests (`experiments/manifests/`) and the golden dataset (`experiments/golden/`) are committed to git. Per-run artifacts (`experiments/<name>/<UTC-timestamp>/`) are **ephemeral** — gitignored by default. Reproducibility comes from the manifest + branch SHA, not from the recording; runs are local until you deliberately promote one into `experiments/golden/<name>/`.
+
 ### Discord webhook (PR #65, issue #56)
 
 Stream consciousness events to a Discord channel — color-coded embeds matching the dashboard palette, with rate limiting and secret-safe URL handling.

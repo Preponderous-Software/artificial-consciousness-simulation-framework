@@ -2,7 +2,7 @@
 
 Four canonical consciousness runs frozen on disk. Used by:
 
-1. **Regression tests** — `tests/test_metrics.py` asserts known values against these journals so future metric changes that silently alter behavior get caught.
+1. **Regression tests** — `tests/test_experiment_metrics.py` asserts known values against these journals so future metric changes that silently alter behavior get caught.
 2. **Bug fixture corpus** — issues #63, #70, #73, #75, #76 all needed real LLM output as fixtures; these journals supply them permanently.
 3. **Empirical comparison** — new runs compare against these as the established baselines for the configurations they ran under.
 

@@ -9,3 +9,9 @@ __pycache__/
 htmlcov/
 .dist/
 build/
+
+# Experiment harness — per-run artifacts (timestamped dirs created by
+# `scripts/experiment.py run`) are ephemeral. The two exceptions stay in git:
+#   - experiments/golden/   — fixtures pinned by tests/test_experiment_metrics.py
+#   - experiments/manifests/ — declarative specs are the source of truth
+experiments/*/20*/

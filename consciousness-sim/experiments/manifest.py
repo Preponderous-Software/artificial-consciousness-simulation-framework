@@ -20,7 +20,9 @@ YAML format example (see `experiments/manifests/` for shippable specs):
     duration:
       thoughts: 30
     success_criteria:
-      - kind: mood_dimensions_non_degenerate
+      # `kind` is a dotted path into the metrics dict produced by
+      # experiments.metrics.compute_all (see metrics.json artifact)
+      - kind: mood.dimensions_non_degenerate
         op: ">="
         value: 2
     tags: [perception-on, mood-fix-on]

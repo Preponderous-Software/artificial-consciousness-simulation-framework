@@ -175,9 +175,29 @@ def test_cycle_rate_trajectory_returns_one_per_window() -> None:
         for i in range(60)
     ]
     traj = cycle_rate_trajectory(events, window=30)
-    # 60 thoughts, window=30 → at least one full window
-    assert len(traj) >= 1
+    # 60 thoughts, window=30 → contract says floor(60/30) = 2 windows
+    assert len(traj) == 2
     assert all(t > 0 for t in traj)
+
+
+def test_cycle_rate_trajectory_matches_floor_contract_exactly() -> None:
+    """Regression for the off-by-one fix on Copilot review of PR #85.
+
+    Contract: `len(out) == n_thoughts // window`. With 90 thoughts at
+    window=30 we expect 3 windows, not 2.
+    """
+    events = [
+        _thought(f"t{i}", ts=f"2026-01-01T00:{i // 60:02d}:{i % 60:02d}+00:00")
+        for i in range(90)
+    ]
+    traj = cycle_rate_trajectory(events, window=30)
+    assert len(traj) == 3, f"expected floor(90/30)=3 windows, got {len(traj)}"
+
+
+def test_cycle_rate_trajectory_empty_when_below_window() -> None:
+    """Fewer thoughts than `window + 1` should yield an empty list."""
+    events = [_thought(f"t{i}", ts=f"2026-01-01T00:00:{i:02d}+00:00") for i in range(10)]
+    assert cycle_rate_trajectory(events, window=30) == []
 
 
 # ---------------------------------------------------------------------------
