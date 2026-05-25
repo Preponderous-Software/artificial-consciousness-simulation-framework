@@ -7,7 +7,9 @@ retrieval before generation partially implements GWT-3 (globally broadcast
 priors available to the generator).
 Gap: no parallel specialist competition for workspace access (GWT-2/CTM);
 all modules are called sequentially by the loop rather than competing. No
-ignition threshold (GNWT). No prediction-error cycle (PP-1).
+ignition threshold (GNWT). PP-1 partially implemented via continuity-prior
+prediction error (see _PREDICTION_ERROR_BOOST); no model-parameter update
+from errors (full PP would revise the prior over time).
 """
 
 from __future__ import annotations
@@ -49,6 +51,11 @@ def _extract_theme(text: str) -> str:
     return ""
 
 
+# PP-1: additive boost to reflection probability when the predicted theme is absent
+# from the actual thought — high surprise warrants self-examination.
+_PREDICTION_ERROR_BOOST: float = 0.20
+
+
 def _select_register(raw: str, has_retrieved_memories: bool) -> str:
     """Choose an InnerVoice register based on the content of the generated thought."""
     if "?" in raw:
@@ -65,6 +72,7 @@ class ThoughtCycleResult:
     existential: str | None
     perception: Perception | None = None
     metacognitive_label: str = "high"
+    prediction_error: float = 0.0
 
 
 class ThoughtLoop:
@@ -105,8 +113,11 @@ class ThoughtLoop:
         self.perf_log_every_n = max(0, int(perf_log_every_n))
         self.inner_voice = InnerVoice(identity.name)
         self.monitor = MetacognitiveMonitor()
+        self._predicted_theme: str = ""  # PP-1: continuity prior set at end of each cycle
 
     async def run_cycle(self, thought_count: int) -> ThoughtCycleResult:
+        # PP-1: record prediction from previous cycle before generating new thought.
+        prior_prediction = self._predicted_theme
         self.identity.attention_schema.decay()
         context = self.short_term.render_for_prompt()
 
@@ -155,24 +166,41 @@ class ThoughtLoop:
         )
         _generate_ms = (time.monotonic() - _t) * 1000
 
-        if self.perf_log_every_n > 0 and thought_count % self.perf_log_every_n == 0:
-            logging.info(
-                "Cycle %d perf — embed: %.0fms  search: %.0fms  generate: %.0fms"
-                "  perception: %.0fms  prompt_chars: %d",
-                thought_count,
-                _embed_ms, _search_ms, _generate_ms, _perception_ms, len(prompt_text),
-            )
         thought = self.inner_voice.render(raw, register=_select_register(raw, bool(related)))
+
+        # PP-1: compare actual thought against prior cycle's predicted theme.
+        # Continuity prior: predict the same theme will persist into the next cycle.
+        # Surprise = predicted theme word absent from the actual thought.
+        _thought_words = set(re.findall(r"[a-z]+", thought.lower()))
+        prediction_error = (
+            0.0
+            if not prior_prediction or prior_prediction in _thought_words
+            else 1.0
+        )
+        self._predicted_theme = _extract_theme(thought)  # prediction for next cycle
+
         label = self.monitor.score(thought, self.short_term.list())
         self.short_term.add("thought", thought, importance=self.monitor.importance(label))
         await self.episodic.append("thought", thought)
 
+        if self.perf_log_every_n > 0 and thought_count % self.perf_log_every_n == 0:
+            logging.info(
+                "Cycle %d perf — embed: %.0fms  search: %.0fms  generate: %.0fms"
+                "  perception: %.0fms  prompt_chars: %d  pred_error: %.1f",
+                thought_count,
+                _embed_ms, _search_ms, _generate_ms, _perception_ms,
+                len(prompt_text), prediction_error,
+            )
+
         reflection_text: str | None = None
         existential_text: str | None = None
-        # reflection_probability=0.0 means "disabled"; boost only applies when a
+        # reflection_probability=0.0 means "disabled"; boosts only apply when a
         # baseline is set, preserving the existing semantics of explicit zero.
         effective_reflection_prob = (
-            min(1.0, self.reflection_probability + self.monitor.reflection_boost(label))
+            min(1.0,
+                self.reflection_probability
+                + self.monitor.reflection_boost(label)
+                + (prediction_error * _PREDICTION_ERROR_BOOST))
             if self.reflection_probability > 0.0
             else 0.0
         )
@@ -210,6 +238,7 @@ class ThoughtLoop:
             existential=existential_text,
             perception=perception,
             metacognitive_label=label,
+            prediction_error=prediction_error,
         )
 
     async def _maybe_fetch_perception(self, thought_count: int) -> Perception | None:

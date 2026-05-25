@@ -343,3 +343,120 @@ def test_perf_log_emitted_at_correct_interval() -> None:
             )
 
     asyncio.run(_run())
+
+
+def test_first_cycle_has_zero_prediction_error() -> None:
+    """No prior prediction on cycle 1 — prediction_error must be 0.0."""
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            provider = MockProvider()
+            from unittest.mock import MagicMock
+            ltm = MagicMock()
+            ltm.similarity_search = AsyncMock(return_value=[])
+
+            loop = _make_loop(base, provider, reflection_probability=0.0)
+            loop.long_term = ltm
+            # No prior prediction set — _predicted_theme is "".
+            result = await loop.run_cycle(thought_count=1)
+            assert result.prediction_error == 0.0, (
+                "first cycle has no prior prediction; error must be 0.0"
+            )
+
+    asyncio.run(_run())
+
+
+def test_matching_theme_gives_zero_prediction_error() -> None:
+    """When predicted theme word appears in the next thought, error is 0.0."""
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            provider = MockProvider()
+            from unittest.mock import MagicMock
+            ltm = MagicMock()
+            ltm.similarity_search = AsyncMock(return_value=[])
+
+            loop = _make_loop(base, provider, reflection_probability=0.0)
+            loop.long_term = ltm
+            # Plant a specific predicted theme that is guaranteed to appear in
+            # MockProvider's deterministic output ("think", "Test", "curiosity" etc.).
+            loop._predicted_theme = "think"
+            # MockProvider always returns text containing "think" / "thinking"
+            result = await loop.run_cycle(thought_count=1)
+            assert result.prediction_error == 0.0, (
+                "predicted theme 'think' should appear in MockProvider output"
+            )
+
+    asyncio.run(_run())
+
+
+def test_absent_predicted_theme_gives_nonzero_prediction_error() -> None:
+    """When predicted theme word is absent from the next thought, error is 1.0."""
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            provider = MockProvider()
+            from unittest.mock import MagicMock
+            ltm = MagicMock()
+            ltm.similarity_search = AsyncMock(return_value=[])
+
+            loop = _make_loop(base, provider, reflection_probability=0.0)
+            loop.long_term = ltm
+            # Plant a theme that will never appear in any generated output.
+            loop._predicted_theme = "xylophone"
+            result = await loop.run_cycle(thought_count=1)
+            assert result.prediction_error == 1.0, (
+                "predicted theme 'xylophone' should be absent from any generated thought"
+            )
+
+    asyncio.run(_run())
+
+
+def test_prediction_error_boosts_reflection_probability() -> None:
+    """High prediction error (1.0) adds _PREDICTION_ERROR_BOOST to effective reflection prob."""
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            provider = MockProvider()
+            from unittest.mock import MagicMock
+            ltm = MagicMock()
+            ltm.similarity_search = AsyncMock(return_value=[])
+
+            loop = _make_loop(base, provider, reflection_probability=0.15)
+            loop.long_term = ltm
+            loop._predicted_theme = "xylophone"  # guaranteed absent → error = 1.0
+
+            # random=0.34 is above base+meta(0.15) and above base+meta+pred(0.35=0.15+0.20).
+            # But with label='high' (no meta boost) and pred_error boost 0.20:
+            # effective = 0.35 > 0.34 → reflection fires.
+            with patch.object(MetacognitiveMonitor, "score", return_value="high"), \
+                 patch("core.thought_loop.random.random", return_value=0.34):
+                result = await loop.run_cycle(thought_count=1)
+
+            assert result.reflection is not None, (
+                "reflection should fire: base(0.15) + pred_error_boost(0.20) = 0.35 > 0.34"
+            )
+
+    asyncio.run(_run())
+
+
+def test_prediction_error_not_boosted_when_base_is_zero() -> None:
+    """reflection_probability=0.0 disables reflection even when prediction_error=1.0."""
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            provider = MockProvider()
+            from unittest.mock import MagicMock
+            ltm = MagicMock()
+            ltm.similarity_search = AsyncMock(return_value=[])
+
+            loop = _make_loop(base, provider, reflection_probability=0.0)
+            loop.long_term = ltm
+            loop._predicted_theme = "xylophone"
+            with patch("core.thought_loop.random.random", return_value=0.0):
+                result = await loop.run_cycle(thought_count=1)
+            assert result.reflection is None, (
+                "reflection_probability=0.0 must disable reflection regardless of prediction error"
+            )
+
+    asyncio.run(_run())

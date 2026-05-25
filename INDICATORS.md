@@ -43,7 +43,7 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 
 | Code | Indicator | Status | Implementation | Gap |
 |------|-----------|--------|----------------|-----|
-| PP-1 | Prediction error signals — system generates predictions and updates on surprises | ✗ | None | No prediction mechanism; each cycle generates a thought without predicting the next and measuring divergence. (Perception now provides input that *could* be predicted — issue #53 Phase 3 opens this door — but the current cycle does not generate a prior expectation to compare against.) See issue #20 |
+| PP-1 | Prediction error signals — system generates predictions and updates on surprises | ◑ | `core/thought_loop.py` — at end of each cycle, `_predicted_theme` is set to the extracted theme of the current thought (continuity prior: predict the same topic persists). At the start of the next cycle, after the thought is generated, `prediction_error` is computed: `1.0` if the predicted theme word is absent from the actual thought, `0.0` if present. High prediction error boosts reflection probability (`+0.20`), making the agent self-examine unexpected divergences. `prediction_error` is returned in `ThoughtCycleResult` and included in the per-cycle perf log. | Generative model is a trivial continuity prior — no learning from errors over time (full PP would revise the prior based on accumulated prediction history); no hierarchical prediction structure; prediction operates only on theme-level vocabulary, not semantic content. |
 
 ---
 
@@ -69,7 +69,7 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 | Status | Count | Indicators |
 |--------|-------|-----------|
 | ✓ Full | 0 | — |
-| ◑ Partial | 10 | RPT-1, GWT-1, GWT-2, GWT-3, HOT-1, HOT-2, HOT-3, HOT-4, AE-1, AST-1 |
-| ✗ None | 4 | RPT-2, GWT-4, PP-1, AE-2 |
+| ◑ Partial | 11 | RPT-1, GWT-1, GWT-2, GWT-3, HOT-1, HOT-2, HOT-3, HOT-4, PP-1, AE-1, AST-1 |
+| ✗ None | 3 | RPT-2, GWT-4, AE-2 |
 
 **Update this file whenever a capability is added, changed, or removed.**
