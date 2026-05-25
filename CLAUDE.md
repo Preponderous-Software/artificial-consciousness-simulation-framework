@@ -262,11 +262,10 @@ python scripts/stop.py --name "Aria"
 # Attach a live TUI to a --bg instance via Unix socket relay (#59)
 python scripts/attach.py --name "Aria"
 
-# Spawn with the web dashboard (PR #52) on a port — composes with all modes
-python scripts/spawn.py --name "Aria" --web-port 8080              # TUI + web
-python scripts/spawn.py --name "Aria" --bg --web-port 8080         # bg + web
-python scripts/spawn.py --name "Aria" --headless --web-port 8080   # foreground log-only + web
-# Default web bind host is 127.0.0.1; pass --web-host 0.0.0.0 to opt into LAN exposure
+# Standalone web dashboard (issue #55) — separate process, manages many instances
+python scripts/web.py --port 8080
+# Default bind host is 127.0.0.1; pass --host 0.0.0.0 to opt into LAN exposure
+# Pass --allow-remote-spawn to permit non-localhost POST /instances (no auth — opt-in)
 
 # Experiment harness (issue #57) — reproducible run from a YAML manifest
 python scripts/experiment.py run experiments/manifests/mock-smoke-baseline.yaml
@@ -322,15 +321,16 @@ consciousness-sim/
 │   ├── cli.py               # Rich live dashboard (ConsciousnessCLI)
 │   ├── observer.py          # Observer utilities
 │   ├── event_relay.py       # Unix-socket event relay for detach/attach (#59)
-│   ├── web/                 # FastAPI + SSE dashboard + vanilla-JS SPA (PR #52)
-│   │   ├── server.py
+│   ├── web/                 # Standalone FastAPI + SSE dashboard (PR #52, #55)
+│   │   ├── server.py        #   process manager (spawn/stop/archive), SSE stream
+│   │   ├── journal_tail.py  #   polling journal tailer feeding live events
 │   │   └── static/index.html
 │   └── discord/             # DiscordWebhookSink — embed posts per event (PR #65)
 │       └── webhook.py
 ├── scripts/
-│   ├── spawn.py             # Entry point: build mind + optional web dashboard
-│   │                        #   + optional perception + sinks; foreground / --bg
-│   │                        #   / --headless / --web-port / --web-host
+│   ├── spawn.py             # Entry point: build mind + optional perception
+│   │                        #   + sinks; foreground / --bg / --headless
+│   ├── web.py               # Standalone dashboard launcher (issue #55)
 │   ├── stop.py              # Send SIGTERM to a --bg instance (5s grace)
 │   ├── attach.py            # Connect a TUI to a --bg instance via Unix socket (#59)
 │   ├── resume.py            # Restore from saved state

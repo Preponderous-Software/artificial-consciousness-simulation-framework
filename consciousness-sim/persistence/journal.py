@@ -17,6 +17,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 class Journal:
@@ -26,11 +27,16 @@ class Journal:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    async def append(self, event_type: str, content: str) -> None:
-        payload = {
+    async def append(self, event_type: str, content: str, **extras: Any) -> None:
+        """Append an event. ``extras`` are merged into the payload alongside
+        the canonical ``timestamp``/``type``/``content`` fields so consumers
+        like the standalone dashboard's journal tailer can deliver structured
+        data (e.g. ``long_term_count``) without parsing the content string."""
+        payload: dict[str, Any] = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "type": event_type,
             "content": content,
+            **extras,
         }
 
         def _write() -> None:

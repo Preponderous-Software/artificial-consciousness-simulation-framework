@@ -11,11 +11,18 @@ import os
 import re
 from pathlib import Path
 
-_SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_]+")
+_SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_-]+")
 
 
 def sanitize_consciousness_name(name: str) -> str:
-    """Return a filesystem-safe consciousness identifier."""
+    """Return a filesystem-safe consciousness identifier.
+
+    Allows letters, digits, underscores, and hyphens; collapses any other
+    character into an underscore and strips leading/trailing separators.
+    Hyphens are filesystem-safe everywhere we target and produce natural
+    names like ``Aria-1`` — the web UI advertises hyphen support, so we
+    preserve it here for consistency.
+    """
     cleaned = _SAFE_NAME_PATTERN.sub("_", name.strip()).strip("._-")
     if not cleaned:
         raise ValueError("Consciousness name must include at least one alphanumeric character.")

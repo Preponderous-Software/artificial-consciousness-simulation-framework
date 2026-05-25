@@ -74,9 +74,9 @@ python scripts/spawn.py --name Aria --headless
 # Background daemon — detaches, logs to ~/.consciousness/Aria/run.log
 python scripts/spawn.py --name Aria --bg
 
-# Web dashboard on a port — composable with all above modes
-python scripts/spawn.py --name Aria --bg --web-port 8080
-# Default bind is 127.0.0.1; opt into LAN with --web-host 0.0.0.0
+# Standalone web dashboard — separate process, manages many instances
+python scripts/web.py --port 8080
+# Default bind is 127.0.0.1; opt into LAN with --host 0.0.0.0
 
 # Stop a --bg instance (SIGTERM, 5s grace window)
 python scripts/stop.py --name Aria
@@ -85,9 +85,17 @@ python scripts/stop.py --name Aria
 python scripts/attach.py --name Aria
 ```
 
-### Web dashboard (PR #52)
+### Web dashboard (PR #52, decoupled in issue #55)
 
-Adding `--web-port N` to any `spawn.py` invocation starts a FastAPI + SSE dashboard on that port — a vanilla-JS SPA renders the thought stream, mood vector, identity, perception bubbles, and instance picker live. Open `http://localhost:N/#/Aria` (or any other instance name) to view a specific agent; the URL hash is bookmarkable. The dashboard is **read-only**.
+`scripts/web.py` runs a standalone FastAPI + SSE dashboard that owns no consciousness — it discovers running instances by scanning `CONSCIOUSNESS_HOME` and tails their append-only journals for live events. One dashboard serves any number of agents, and the agents can come and go without the dashboard restarting.
+
+```bash
+python scripts/web.py --port 8080
+```
+
+A vanilla-JS SPA renders the thought stream, mood vector, identity, perception bubbles, and instance picker live. Open `http://localhost:8080/#/Aria` (or any other instance name) to view a specific agent; the URL hash is bookmarkable.
+
+The dashboard also acts as a **process manager**: the `+ New` tab spawns a fresh agent (`POST /instances`), and each running tab has a `Stop instance` button (`POST /instances/<id>/stop`). Spawn/stop/archive endpoints are localhost-only by default — pass `--allow-remote-spawn` to opt into remote process control (no auth — only behind a trusted proxy). Provider/model fields are restricted to a configurable allowlist surfaced via `GET /providers`.
 
 ### Perception specialist (PR #54, issue #53)
 

@@ -29,10 +29,35 @@
     .shell { display: flex; flex-direction: column; height: 100vh; }
 
     header {
-      display: flex; align-items: center; gap: 0;
+      display: flex; align-items: stretch; gap: 0;
       padding: 0; border-bottom: 1px solid var(--border);
       background: var(--surface); flex-shrink: 0; overflow: hidden;
+      min-height: 42px;
     }
+
+    /* Brand — left-anchored identity, doubles as a link to the repo */
+    #brand {
+      font-family: monospace; font-size: 12px; color: var(--muted);
+      padding: 0 14px; text-decoration: none;
+      border-right: 1px solid var(--border);
+      display: flex; align-items: center; gap: 4px;
+      letter-spacing: .05em; flex-shrink: 0;
+      transition: color .15s;
+    }
+    #brand:hover, #brand:focus-visible { color: var(--text); outline: none; }
+    #brand span { color: var(--accent); }
+
+    /* "+ New" — a button, not a tab — sits between the strip and header-right */
+    #new-btn {
+      background: transparent; border: none;
+      border-left: 1px solid var(--border);
+      padding: 0 16px; color: var(--accent);
+      font-family: monospace; font-size: 13px; font-weight: bold;
+      cursor: pointer; flex-shrink: 0;
+      transition: background .15s, color .15s;
+    }
+    #new-btn:hover { background: var(--thought-bg); color: var(--text); }
+    #new-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
     /* Scrollable tab strip — no wrapping */
     #tab-strip-wrap { position: relative; flex: 1; min-width: 0; display: flex; }
@@ -62,6 +87,72 @@
     .tab.active { background: var(--bg); color: var(--text); border-bottom: 2px solid var(--accent); }
     .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--offline); flex-shrink: 0; }
     .tab.online .dot { background: var(--online); }
+
+    /* Modal */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); z-index: 50;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .modal {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 22px 24px; min-width: 340px; max-width: 90vw;
+      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.6);
+    }
+    .modal h3 { font-size: 14px; margin-bottom: 14px; font-family: monospace; }
+    .modal label {
+      display: block; font-size: 11px; font-family: monospace;
+      color: var(--muted); margin-bottom: 4px; margin-top: 12px;
+      text-transform: uppercase; letter-spacing: .08em;
+    }
+    .modal input, .modal select {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); padding: 8px 10px; border-radius: 4px;
+      font-family: monospace; font-size: 13px;
+    }
+    .modal input:focus, .modal select:focus {
+      border-color: var(--accent); outline: none;
+    }
+    .modal-actions {
+      display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px;
+    }
+    .modal-actions button {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: 7px 14px; border-radius: 4px; cursor: pointer;
+      font-family: monospace; font-size: 12px;
+    }
+    .modal-actions button.primary {
+      background: var(--accent); border-color: var(--accent); color: #fff;
+    }
+    .modal-actions button.danger {
+      background: var(--offline); border-color: var(--offline); color: #fff;
+    }
+    .modal-actions button:hover { border-color: var(--accent); }
+    .modal-actions button.danger:hover { border-color: var(--offline); filter: brightness(1.1); }
+    .modal-actions button:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px;
+    }
+    .modal-error {
+      color: var(--offline); font-size: 12px; font-family: monospace;
+      margin-top: 10px; min-height: 14px; white-space: pre-wrap;
+    }
+    .confirm-message {
+      font-size: 13px; color: var(--text); line-height: 1.55; margin: 4px 0 6px;
+    }
+
+    /* Lifecycle buttons in the status panel */
+    #stop-btn, #start-btn {
+      background: transparent; padding: 6px 12px; border-radius: 4px;
+      cursor: pointer; font-family: monospace; font-size: 12px;
+      margin-top: 12px; display: none;
+    }
+    #stop-btn  { border: 1px solid var(--offline); color: var(--offline); }
+    #start-btn { border: 1px solid var(--online);  color: var(--online); }
+    #stop-btn:hover  { background: var(--offline); color: #fff; }
+    #start-btn:hover { background: var(--online);  color: #fff; }
+    #stop-btn:disabled, #start-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #stop-btn:focus-visible, #start-btn:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px;
+    }
 
     #header-right {
       display: flex; align-items: center; gap: 12px;
@@ -98,26 +189,38 @@
     .chip:hover { color: var(--text); border-color: var(--accent); }
     .chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-    /* Legend swatches in tooltip — color-coded to bubble border */
+    /* Legend trigger — labeled rather than a bare "?" so its purpose is obvious */
     .legend {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 18px; height: 18px; margin-left: 8px;
-      border: 1px solid var(--border); border-radius: 50%;
+      display: inline-flex; align-items: center; gap: 5px;
+      margin-left: 8px; padding: 2px 9px;
+      border: 1px solid var(--border); border-radius: 12px;
       color: var(--muted); font-size: 11px; font-family: monospace;
       cursor: help; flex-shrink: 0; user-select: none;
+      background: transparent;
     }
     .legend:hover, .legend:focus-visible { color: var(--text); border-color: var(--accent); outline: none; }
     /* Detached popover positioned below the trigger */
     .legend-pop {
       position: absolute; z-index: 10; background: var(--surface);
       border: 1px solid var(--border); border-radius: 6px;
-      padding: 10px 12px; font-size: 12px; color: var(--text);
+      padding: 12px 14px; font-size: 12px; color: var(--text);
       box-shadow: 0 4px 16px rgba(0,0,0,.5);
-      display: none; min-width: 200px;
+      display: none; max-width: 320px; line-height: 1.5;
     }
     .legend-pop.open { display: block; }
-    .legend-pop .row { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
-    .legend-pop .swatch { width: 3px; height: 14px; border-radius: 2px; flex-shrink: 0; }
+    .legend-pop .row {
+      display: grid; grid-template-columns: 6px 1fr; gap: 10px; padding: 4px 0;
+      align-items: start;
+    }
+    .legend-pop .swatch { width: 4px; height: 100%; min-height: 14px; border-radius: 2px; }
+    .legend-pop b { color: var(--text); font-weight: 600; }
+    .legend-pop .desc { color: var(--muted); font-size: 11px; }
+    .legend-pop .footnote { margin-top: 8px; color: var(--muted); font-size: 11px; font-style: italic; }
+    .legend-pop .shortcut { color: var(--muted); font-size: 11px; margin-top: 8px; }
+    .legend-pop .shortcut kbd {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
+      padding: 1px 5px; font-family: monospace; font-size: 10px;
+    }
 
     /* Toast for soft notifications (e.g. deep-link not found) */
     #toast {
@@ -130,11 +233,12 @@
     }
     #toast.show { opacity: 1; }
     #thought-stream { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-    /* Type filters: when stream has .filter-foo, hide bubbles that are NOT .foo */
-    #thought-stream.filter-thought       .bubble:not(.thought)       { display: none; }
-    #thought-stream.filter-reflection    .bubble:not(.reflection)    { display: none; }
-    #thought-stream.filter-identity_shift .bubble:not(.identity_shift) { display: none; }
-    #thought-stream.filter-perception    .bubble:not(.perception)    { display: none; }
+    /* Multi-select type filters: when stream has .hide-foo, hide .foo bubbles.
+       The "all" chip clears every hide-* class; individual chips toggle one. */
+    #thought-stream.hide-thought        .bubble.thought        { display: none; }
+    #thought-stream.hide-reflection     .bubble.reflection     { display: none; }
+    #thought-stream.hide-identity_shift .bubble.identity_shift { display: none; }
+    #thought-stream.hide-perception     .bubble.perception     { display: none; }
 
     /* History separator */
     .history-sep {
@@ -209,7 +313,10 @@
 
     .sidebar-section h3 { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-family: monospace; margin-bottom: 10px; }
 
-    #identity-name { font-size: 18px; font-weight: normal; margin-bottom: 4px; }
+    #identity-name {
+      font-size: 22px; font-weight: 500; margin-bottom: 4px; color: var(--text);
+      letter-spacing: .02em;
+    }
     #self-concept { font-size: 13px; color: var(--muted); font-style: italic; }
 
     #values-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
@@ -236,6 +343,12 @@
       padding: 6px 10px; font-family: monospace; font-size: 13px; color: var(--text);
       user-select: all;
     }
+    /* Inline keyboard hints */
+    kbd {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+      padding: 1px 6px; font-family: monospace; font-size: 11px;
+      color: var(--text); display: inline-block; min-width: 18px; text-align: center;
+    }
 
     @media (max-width: 700px) {
       main { flex-direction: column; }
@@ -244,15 +357,28 @@
       #sidebar { max-width: none; max-height: 40vh; border-top: 1px solid var(--border); }
       /* Larger touch targets on phones */
       .tab { padding: 14px 18px; }
+      /* Free up header width on narrow screens — brand label hides; the
+         "+ New" button stays since it's the primary entry point. */
+      #brand { display: none; }
+      #header-right { min-width: 100px; padding: 0 10px; gap: 8px; }
+      #current-name { font-size: 12px; }
+      #status-indicator { font-size: 11px; }
     }
   </style>
 </head>
 <body>
 <div class="shell">
   <header>
+    <a id="brand" href="https://github.com/dmccoystephenson/artificial-consciousness-simulation-framework"
+       target="_blank" rel="noopener" title="View project on GitHub">
+      <span aria-hidden="true">◦</span> consciousness
+    </a>
     <div id="tab-strip-wrap">
       <div id="instance-tabs"></div>
     </div>
+    <button id="new-btn" type="button"
+            title="Spawn a new consciousness (press N)"
+            aria-label="Spawn a new consciousness">+ New</button>
     <div id="header-right">
       <span id="current-name"></span>
       <span id="status-indicator" title="Stream connection status">—</span>
@@ -263,6 +389,7 @@
   </main>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
+<div id="confirm-host"></div>
 
 <script>
 "use strict";
@@ -317,6 +444,8 @@ async function loadInstances() {
       } else if (cur.streamable !== currentStreamable || cur.running !== currentOnline) {
         currentOnline = cur.running;
         currentStreamable = cur.streamable;
+        // Refresh sidebar buttons (Start vs Stop) and reconnect SSE.
+        renderStatus(cur);
         connectSSE(currentId);
       }
     }
@@ -329,8 +458,8 @@ function showEmptyState() {
   $("main-area").innerHTML = `
     <div id="no-instance">
       <div>No consciousness instances yet.</div>
-      <div class="hint">Spawn one with:</div>
-      <code>python scripts/spawn.py --name Aria --bg --web-port 8080</code>
+      <div class="hint">Click <strong>+ New</strong> in the header (or press <kbd>N</kbd>) to spawn one, or from the CLI:</div>
+      <code>python scripts/spawn.py --name Aria --bg</code>
     </div>`;
   $("current-name").textContent = "";
   $("status-indicator").textContent = "—";
@@ -361,14 +490,11 @@ function renderTabs(instances) {
   for (const inst of instances) {
     const tab = document.createElement("button");
     const isActive = inst.id === currentId;
-    const live = inst.streamable;
     tab.className = "tab" + (inst.running ? " online" : "") + (isActive ? " active" : "");
-    tab.title = inst.running
-      ? (live ? "Online (live stream)" : "Online (history only — not registered here)")
-      : "Offline — showing last known state";
+    tab.title = inst.running ? "Running — live stream" : "Stopped — showing last known state";
     tab.setAttribute("role", "tab");
     tab.setAttribute("aria-selected", String(isActive));
-    tab.setAttribute("aria-label", `${inst.name}, ${inst.running ? (live ? "online, live" : "online, history only") : "offline"}`);
+    tab.setAttribute("aria-label", `${inst.name}, ${inst.running ? "running" : "stopped"}`);
     tab.innerHTML = `<span class="dot" aria-hidden="true"></span>${esc(inst.name)}`;
     tab.onclick = () => selectInstance(inst.id, instances);
     container.appendChild(tab);
@@ -417,13 +543,16 @@ function buildLayout() {
     <div id="stream-panel">
       <div id="stream-header">
         <h2>Stream of Thought</h2>
-        <div id="filter-chips" role="tablist" aria-label="Filter by type">
-          <button class="chip active" data-filter="all"             role="tab" aria-selected="true">all</button>
-          <button class="chip"        data-filter="thought"         role="tab" aria-selected="false">thoughts</button>
-          <button class="chip"        data-filter="reflection"      role="tab" aria-selected="false">reflections</button>
-          <button class="chip"        data-filter="perception"      role="tab" aria-selected="false">perceptions</button>
-          <button class="chip"        data-filter="identity_shift"  role="tab" aria-selected="false">shifts</button>
-          <button type="button" class="legend" id="legend-trigger" aria-label="Bubble color legend" aria-haspopup="true" aria-expanded="false">?</button>
+        <div id="filter-chips" role="group" aria-label="Filter by event type">
+          <button class="chip active" data-filter="all"            aria-pressed="true">all</button>
+          <button class="chip"        data-filter="thought"        aria-pressed="true">thoughts</button>
+          <button class="chip"        data-filter="reflection"     aria-pressed="true">reflections</button>
+          <button class="chip"        data-filter="perception"     aria-pressed="true">perceptions</button>
+          <button class="chip"        data-filter="identity_shift" aria-pressed="true">identity</button>
+          <button type="button" class="legend" id="legend-trigger"
+                  aria-label="Event type legend" aria-haspopup="true" aria-expanded="false">
+            <span aria-hidden="true">?</span> legend
+          </button>
         </div>
       </div>
       <div id="thought-stream"></div>
@@ -454,20 +583,45 @@ function buildLayout() {
 
   attachLegend();
 
-  // Filter chips
-  document.querySelectorAll("#filter-chips .chip").forEach(chip => {
+  // Multi-select filter chips. "all" turns every type on; the others toggle
+  // independently. State is reflected via .hide-{type} classes on the stream
+  // (see CSS) so bubbles already in the DOM are filtered without rebuild.
+  const chips = Array.from(document.querySelectorAll("#filter-chips .chip"));
+  const typeChips = chips.filter(c => c.dataset.filter !== "all");
+  const allChip   = chips.find(c => c.dataset.filter === "all");
+
+  function syncStream() {
+    typeChips.forEach(c => {
+      const on = c.getAttribute("aria-pressed") === "true";
+      stream.classList.toggle(`hide-${c.dataset.filter}`, !on);
+      // Keep .active visual state in lockstep with aria-pressed so the
+      // initial render (all chips pressed=true) shows them all active and
+      // the first click on any chip produces an immediate visual change.
+      c.classList.toggle("active", on);
+    });
+    const allOn = typeChips.every(c => c.getAttribute("aria-pressed") === "true");
+    allChip.classList.toggle("active", allOn);
+    allChip.setAttribute("aria-pressed", String(allOn));
+  }
+
+  allChip.onclick = () => {
+    typeChips.forEach(c => {
+      c.classList.add("active");
+      c.setAttribute("aria-pressed", "true");
+    });
+    syncStream();
+    scrollToBottom();
+  };
+  typeChips.forEach(chip => {
     chip.onclick = () => {
-      const f = chip.getAttribute("data-filter");
-      document.querySelectorAll("#filter-chips .chip").forEach(c => {
-        const active = c === chip;
-        c.classList.toggle("active", active);
-        c.setAttribute("aria-selected", String(active));
-      });
-      stream.className = f === "all" ? "" : `filter-${f}`;
-      // After filtering, snap to bottom so newest visible bubble is in view
-      if (isNearBottom(stream) || f !== "all") scrollToBottom();
+      const next = chip.getAttribute("aria-pressed") !== "true";
+      chip.setAttribute("aria-pressed", String(next));
+      chip.classList.toggle("active", next);
+      syncStream();
+      if (isNearBottom(stream)) scrollToBottom();
     };
   });
+  syncStream();
 
   if (uptimeTimer) clearInterval(uptimeTimer);
   uptimeTimer = setInterval(tickUptime, 1000);
@@ -518,17 +672,44 @@ function renderStatus(data) {
   const grid = $("status-grid");
   if (!grid) return;
   if (data && data.thought_count !== undefined) thoughtCount = data.thought_count;
+  // Only show the "uptime" row when the instance is running — otherwise it's
+  // just dead pixels ("—") for an indefinite value.
+  const uptimeRow = currentOnline
+    ? `<span class="stat-label">uptime</span><span class="stat-value" id="stat-uptime">—</span>`
+    : "";
   grid.innerHTML = `
     <span class="stat-label">thoughts</span>      <span class="stat-value" id="stat-thoughts">${thoughtCount}</span>
     <span class="stat-label">memories</span>       <span class="stat-value" id="stat-lt">${ltMemories}</span>
     <span class="stat-label">last reflection</span><span class="stat-value" id="stat-refl">${lastReflection}</span>
-    <span class="stat-label">uptime</span>         <span class="stat-value" id="stat-uptime">—</span>`;
+    ${uptimeRow}`;
+  const sidebarStatus = grid.parentElement;
+  let stopBtn = $("stop-btn");
+  if (!stopBtn) {
+    stopBtn = document.createElement("button");
+    stopBtn.id = "stop-btn";
+    stopBtn.textContent = "Stop";
+    stopBtn.title = "Send SIGTERM (graceful shutdown, 5s grace)";
+    stopBtn.onclick = stopCurrentInstance;
+    sidebarStatus.appendChild(stopBtn);
+  }
+  let startBtn = $("start-btn");
+  if (!startBtn) {
+    startBtn = document.createElement("button");
+    startBtn.id = "start-btn";
+    startBtn.textContent = "Start";
+    startBtn.title = "Resume with the default provider/model from config. " +
+                     "Use “+ New” with this name to customize.";
+    startBtn.onclick = startCurrentInstance;
+    sidebarStatus.appendChild(startBtn);
+  }
+  stopBtn.style.display  = currentOnline ? "inline-block" : "none";
+  startBtn.style.display = currentOnline ? "none" : "inline-block";
   tickUptime();
 }
 
 function tickUptime() {
   const el = $("stat-uptime");
-  if (!el) return;
+  if (!el) return;  // row hidden when offline — nothing to update
   if (!instanceStartedAt) { el.textContent = "—"; return; }
   const s = Math.max(0, Math.floor((Date.now() - new Date(instanceStartedAt).getTime()) / 1000));
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -555,7 +736,7 @@ function connectSSE(id) {
   };
 
   sse.onerror = () => {
-    indicator.textContent = "○ offline · retry";
+    indicator.textContent = "○ offline · click to retry";
     indicator.className = "error";
     indicator.title = "Connection lost — click to reconnect";
     indicator.onclick = () => connectSSE(currentId);
@@ -579,10 +760,10 @@ function handleEvent(payload) {
     if (payload.live) {
       indicator.textContent = "● live";
       indicator.className = "connected";
-      indicator.title = "Streaming events as they happen";
+      indicator.title = "Live event stream";
       indicator.onclick = null;
     } else {
-      indicator.textContent = "○ offline";
+      indicator.textContent = "○ stopped";
       indicator.className = "error";
       indicator.title = "Process not running — showing the last 50 events from the journal";
       indicator.onclick = null;
@@ -602,11 +783,13 @@ function handleEvent(payload) {
     if (el) el.textContent = thoughtCount;
   }
 
-  if (type === "reflection" && !history) {
-    const now = new Date();
-    lastReflection = relTime(now);
+  // Track the most recent reflection from either history or live events so
+  // the sidebar shows a real timestamp instead of "—" for offline instances.
+  if (type === "reflection") {
+    const ts = payload.timestamp ? new Date(payload.timestamp) : new Date();
+    lastReflection = relTime(ts);
     const el = $("stat-refl");
-    if (el) { el.textContent = lastReflection; el.dataset.ts = now.toISOString(); }
+    if (el) { el.textContent = lastReflection; el.dataset.ts = ts.toISOString(); }
   }
 
   if (type === "memory") {
@@ -751,11 +934,24 @@ function attachLegend() {
     pop.className = "legend-pop open";
     pop.setAttribute("role", "tooltip");
     pop.innerHTML = `
-      <div class="row"><div class="swatch" style="background:var(--border)"></div><span>thought</span></div>
-      <div class="row"><div class="swatch" style="background:var(--reflect)"></div><span>reflection (italic)</span></div>
-      <div class="row"><div class="swatch" style="background:var(--perceive)"></div><span>perception (external stimulus)</span></div>
-      <div class="row"><div class="swatch" style="background:var(--online)"></div><span>identity shift</span></div>
-      <div class="row" style="margin-top:6px;color:var(--muted);font-size:11px">Faded = replayed from journal</div>`;
+      <div class="row">
+        <div class="swatch" style="background:var(--border)"></div>
+        <div><b>thought</b><div class="desc">A single LLM-generated thought cycle.</div></div>
+      </div>
+      <div class="row">
+        <div class="swatch" style="background:var(--reflect)"></div>
+        <div><b>reflection</b><div class="desc">Meta-cognitive pass over recent thoughts (italic).</div></div>
+      </div>
+      <div class="row">
+        <div class="swatch" style="background:var(--perceive)"></div>
+        <div><b>perception</b><div class="desc">External stimulus injected into the prompt (e.g. a Wikipedia snippet).</div></div>
+      </div>
+      <div class="row">
+        <div class="swatch" style="background:var(--online)"></div>
+        <div><b>identity shift</b><div class="desc">A reflection that revised the self-concept.</div></div>
+      </div>
+      <div class="footnote">Faded bubbles are replayed from the journal (history). Solid = live.</div>
+      <div class="shortcut">Shortcuts: <kbd>N</kbd> new · <kbd>1</kbd>–<kbd>9</kbd> switch tab</div>`;
     document.body.appendChild(pop);
     const r = trigger.getBoundingClientRect();
     pop.style.top  = (r.bottom + 6) + "px";
@@ -793,6 +989,279 @@ setInterval(() => {
   if (refl && refl.dataset.ts) refl.textContent = relTime(refl.dataset.ts);
 }, 30_000);
 
+// ── spawn / stop ──────────────────────────────────────────────────────────
+
+let providerCache = null;
+async function loadProviders() {
+  if (providerCache) return providerCache;
+  try {
+    const res = await fetch("/providers");
+    if (res.ok) providerCache = await res.json();
+  } catch (_) {}
+  return providerCache || {};
+}
+
+// Persist last-used provider/model so a second + New doesn't make the user
+// reselect. Cleared if the cached value falls out of the allowlist.
+const SPAWN_PREFS_KEY = "acsf.spawn_prefs.v1";
+function loadSpawnPrefs() {
+  try { return JSON.parse(localStorage.getItem(SPAWN_PREFS_KEY)) || {}; }
+  catch (_) { return {}; }
+}
+function saveSpawnPrefs(prefs) {
+  try { localStorage.setItem(SPAWN_PREFS_KEY, JSON.stringify(prefs)); } catch (_) {}
+}
+
+async function openSpawnModal(initialName = "") {
+  const providers = await loadProviders();
+  const providerKeys = Object.keys(providers);
+  if (providerKeys.length === 0) {
+    toast("No providers available. Check that scripts/web.py launched successfully.");
+    return;
+  }
+
+  const prefs = loadSpawnPrefs();
+  const initialProvider = providerKeys.includes(prefs.provider) ? prefs.provider : providerKeys[0];
+  const initialModels = providers[initialProvider] || [];
+  const initialModel  = initialModels.includes(prefs.model) ? prefs.model : (initialModels[0] || "");
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop";
+  backdrop.setAttribute("role", "dialog");
+  backdrop.setAttribute("aria-modal", "true");
+  backdrop.setAttribute("aria-label", "Spawn a new consciousness");
+
+  backdrop.innerHTML = `
+    <form class="modal" id="spawn-form">
+      <h3>Spawn a consciousness</h3>
+      <label for="spawn-name">Name</label>
+      <input type="text" id="spawn-name" required pattern="[A-Za-z0-9_\\-]+"
+             maxlength="64" autocomplete="off" placeholder="Aria"
+             title="Letters, digits, underscore, or hyphen" />
+      <label for="spawn-provider">Provider</label>
+      <select id="spawn-provider">
+        ${providerKeys.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("")}
+      </select>
+      <label for="spawn-model">Model</label>
+      <select id="spawn-model"></select>
+      <div class="modal-error" id="spawn-error" role="alert"></div>
+      <div class="modal-actions">
+        <button type="button" id="spawn-cancel">Cancel</button>
+        <button type="submit" class="primary" id="spawn-submit">Spawn</button>
+      </div>
+    </form>`;
+  document.body.appendChild(backdrop);
+
+  const nameInput      = $("spawn-name");
+  const providerSelect = $("spawn-provider");
+  const modelSelect    = $("spawn-model");
+  const errBox         = $("spawn-error");
+
+  const refreshModels = (preferred = "") => {
+    const models = providers[providerSelect.value] || [];
+    if (models.length === 0) {
+      modelSelect.innerHTML = `<option value="">(no models for this provider)</option>`;
+      modelSelect.disabled = true;
+    } else {
+      modelSelect.innerHTML = models.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
+      modelSelect.disabled = false;
+      if (preferred && models.includes(preferred)) modelSelect.value = preferred;
+    }
+  };
+  providerSelect.onchange = () => refreshModels();
+  providerSelect.value = initialProvider;
+  refreshModels(initialModel);
+  if (initialName) nameInput.value = initialName;
+
+  // Client-side conflict check: a running instance with this name cannot be
+  // spawned (409 would come back). Surface that without a roundtrip.
+  const conflicts = new Set();
+  try {
+    const list = await (await fetch("/instances")).json();
+    list.forEach(i => { if (i.running) conflicts.add(i.id); });
+  } catch (_) {}
+  const checkConflict = () => {
+    if (conflicts.has(nameInput.value.trim())) {
+      errBox.textContent = `“${nameInput.value.trim()}” is already running. Stop it first or choose a different name.`;
+    } else if (errBox.textContent.includes("already running")) {
+      errBox.textContent = "";
+    }
+  };
+  nameInput.addEventListener("input", checkConflict);
+
+  const close = () => {
+    backdrop.remove();
+    document.removeEventListener("keydown", onEsc);
+  };
+  const onEsc = e => { if (e.key === "Escape") { e.preventDefault(); close(); } };
+  document.addEventListener("keydown", onEsc);
+  backdrop.addEventListener("click", e => { if (e.target === backdrop) close(); });
+  $("spawn-cancel").onclick = close;
+
+  requestAnimationFrame(() => nameInput.focus());
+
+  $("spawn-form").onsubmit = async e => {
+    e.preventDefault();
+    const submit = $("spawn-submit");
+    errBox.textContent = "";
+    const payload = {
+      name: nameInput.value.trim(),
+      provider: providerSelect.value || null,
+      model: modelSelect.value || null,
+    };
+    if (!payload.name) { errBox.textContent = "Name is required."; return; }
+    if (conflicts.has(payload.name)) { checkConflict(); return; }
+
+    submit.disabled = true;
+    submit.textContent = "Spawning…";
+    try {
+      const res = await fetch("/instances", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        let detail = typeof data.detail === "string"
+          ? data.detail
+          : `Spawn failed (${res.status})`;
+        // Provider-specific hint: an Ollama 500 most often means the daemon
+        // isn't running locally.
+        if (res.status >= 500 && payload.provider === "ollama") {
+          detail += " (is `ollama serve` running?)";
+        }
+        errBox.textContent = detail;
+        submit.disabled = false;
+        submit.textContent = "Spawn";
+        return;
+      }
+      const created = await res.json();
+      saveSpawnPrefs({ provider: payload.provider, model: payload.model });
+      close();
+      toast(`Spawned “${created.id}” — booting`);
+      // Eagerly switch to the new instance; the live stream will fill in.
+      await loadInstances();
+      const instances = await (await fetch("/instances")).json();
+      selectInstance(created.id, instances);
+      showBootingState(`Booting “${created.id}” — first thought in 10–30s`);
+    } catch (e) {
+      errBox.textContent = "Network error.";
+      submit.disabled = false;
+      submit.textContent = "Spawn";
+    }
+  };
+}
+
+// In-app confirmation modal — replaces native `confirm()` for theme-consistent
+// destructive-action confirmation. Returns a Promise<boolean>.
+function confirmModal({ title, message, confirmText = "OK", cancelText = "Cancel", destructive = false }) {
+  return new Promise(resolve => {
+    const host = $("confirm-host") || document.body;
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    backdrop.setAttribute("role", "alertdialog");
+    backdrop.setAttribute("aria-modal", "true");
+    backdrop.setAttribute("aria-label", title || "Confirm action");
+    backdrop.innerHTML = `
+      <div class="modal" style="max-width:380px">
+        <h3>${esc(title || "Confirm")}</h3>
+        <div class="confirm-message">${esc(message || "")}</div>
+        <div class="modal-actions">
+          <button type="button" id="cm-cancel">${esc(cancelText)}</button>
+          <button type="button" class="${destructive ? "danger" : "primary"}" id="cm-ok">${esc(confirmText)}</button>
+        </div>
+      </div>`;
+    host.appendChild(backdrop);
+
+    const done = (val) => {
+      backdrop.remove();
+      document.removeEventListener("keydown", onKey);
+      resolve(val);
+    };
+    const onKey = e => {
+      if (e.key === "Escape")  { e.preventDefault(); done(false); }
+      if (e.key === "Enter")   { e.preventDefault(); done(true);  }
+    };
+    document.addEventListener("keydown", onKey);
+    backdrop.addEventListener("click", e => { if (e.target === backdrop) done(false); });
+    $("cm-cancel").onclick = () => done(false);
+    $("cm-ok").onclick     = () => done(true);
+    requestAnimationFrame(() => $("cm-ok").focus());
+  });
+}
+
+function showBootingState(message) {
+  const stream = $("thought-stream");
+  if (!stream) return;
+  removeWaitingState();
+  const w = document.createElement("div");
+  w.className = "stream-waiting";
+  w.innerHTML = `
+    <span class="pulse" aria-hidden="true"></span>
+    <span>${esc(message)}</span>`;
+  stream.appendChild(w);
+  stream.scrollTop = stream.scrollHeight;
+}
+
+async function startCurrentInstance() {
+  if (!currentId) return;
+  const btn = $("start-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Starting…"; }
+  try {
+    const res = await fetch("/instances", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: currentId }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      let detail = typeof data.detail === "string" ? data.detail : `${res.status}`;
+      toast(`Start failed: ${detail}`);
+    } else {
+      toast(`Started “${currentName}” — booting`);
+      showBootingState(`Resuming “${currentName}” — first thought in 10–30s`);
+    }
+  } catch (_) {
+    toast("Network error starting instance.");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Start"; }
+    // Refresh — tab dot turns online once the agent's first cycle saves state.
+    await loadInstances();
+    // Reconnect the SSE stream so live events flow without a tab re-click.
+    connectSSE(currentId);
+  }
+}
+
+async function stopCurrentInstance() {
+  if (!currentId) return;
+  const ok = await confirmModal({
+    title: "Stop instance?",
+    message: `“${currentName}” will receive SIGTERM and shut down after the current thought cycle (up to 5s grace).`,
+    confirmText: "Stop",
+    destructive: true,
+  });
+  if (!ok) return;
+  const btn = $("stop-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Stopping…"; }
+  try {
+    const res = await fetch(`/instances/${encodeURIComponent(currentId)}/stop`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      toast(`Stop failed: ${data.detail || res.status}`);
+    } else {
+      toast(`Stopping “${currentName}”…`);
+    }
+  } catch (_) {
+    toast("Network error stopping instance.");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Stop"; }
+    // Refresh state — tab dot will turn offline once the agent exits.
+    await loadInstances();
+  }
+}
+
 // ── boot ──────────────────────────────────────────────────────────────────
 
 // React to deep-link hash changes (back button / pasted URL)
@@ -805,6 +1274,32 @@ window.addEventListener("hashchange", async () => {
     if (instances.find(i => i.id === hashed)) selectInstance(hashed, instances);
   } catch (_) {}
 });
+
+// Wire the header "+ New" button (replaces the inline tab variant)
+const newBtn = $("new-btn");
+if (newBtn) newBtn.onclick = () => openSpawnModal();
+
+// Keyboard shortcuts — ignore when a modal is open or the user is typing.
+function keyboardShortcuts(e) {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (document.querySelector(".modal-backdrop")) return;
+  const tag = (document.activeElement && document.activeElement.tagName) || "";
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+
+  // N → open spawn modal
+  if (e.key === "n" || e.key === "N") {
+    e.preventDefault();
+    openSpawnModal();
+    return;
+  }
+  // 1–9 → switch tab by position
+  if (/^[1-9]$/.test(e.key)) {
+    const idx = parseInt(e.key, 10) - 1;
+    const tabs = document.querySelectorAll("#instance-tabs .tab");
+    if (tabs[idx]) tabs[idx].click();
+  }
+}
+document.addEventListener("keydown", keyboardShortcuts);
 
 loadInstances();
 setInterval(loadInstances, 10000);
