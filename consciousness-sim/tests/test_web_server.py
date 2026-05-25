@@ -571,3 +571,109 @@ def test_journal_tailer_handles_partial_line(consciousness_home):
     asyncio.run(drive())
     assert len(received) == 1
     assert received[0][1]["content"] == "half"
+
+
+# ---------------------------------------------------------------------------
+# Regression tests — Copilot review of PR #99
+# ---------------------------------------------------------------------------
+
+def test_stream_queue_key_matches_sanitized_id(server, consciousness_home):
+    """Regression: /stream/{name} must subscribe under the SAME key the tailer
+    dispatches to. The tailer keys by on-disk dir name (always sanitized), so
+    a client requesting an alias (e.g. "alpha 7") would otherwise subscribe
+    to _sse_queues["alpha 7"] while events go to _sse_queues["alpha_7"]."""
+    _seed_instance(consciousness_home, "alpha_7")
+
+    async def driver():
+        # Subscribe via a non-sanitized alias that maps to the on-disk id.
+        response = await server.stream_events("alpha 7")
+        gen = response.body_iterator
+        events: list[dict] = []
+        buffer = b""
+        async for chunk in gen:
+            if isinstance(chunk, str):
+                chunk = chunk.encode()
+            buffer += chunk
+            while b"\n\n" in buffer:
+                frame, buffer = buffer.split(b"\n\n", 1)
+                for line in frame.splitlines():
+                    if line.startswith(b"data: "):
+                        events.append(json.loads(line[6:].decode()))
+                        if events[-1].get("type") == "history_end":
+                            # Simulate the tailer pushing under the sanitized
+                            # key. If the subscription used the raw alias,
+                            # this event would be lost.
+                            server._on_tail_event("alpha_7", {
+                                "type": "thought",
+                                "content": "live-fresh",
+                                "timestamp": "2099-01-01T00:00:00+00:00",
+                            })
+                            try:
+                                more = await asyncio.wait_for(gen.__anext__(), timeout=2.0)
+                                more_b = more if isinstance(more, bytes) else more.encode()
+                                for ln in more_b.splitlines():
+                                    if ln.startswith(b"data: "):
+                                        events.append(json.loads(ln[6:].decode()))
+                            except (asyncio.TimeoutError, StopAsyncIteration):
+                                pass
+                            await gen.aclose()
+                            return events
+        return events
+
+    events = asyncio.run(driver())
+    live = [e for e in events if not e.get("_history") and e.get("type") != "history_end"]
+    assert len(live) == 1
+    assert live[0]["content"] == "live-fresh"
+
+
+def test_memory_journal_event_carries_long_term_count(tmp_path):
+    """Regression: memory events must be journalled with structured
+    long_term_count so the dashboard's tail-fed memory counter updates."""
+    from persistence.journal import Journal
+
+    async def run():
+        j = Journal(tmp_path / "j.jsonl")
+        await j.append("memory", "Long-term store: 42 memories", long_term_count=42)
+        return await j.recent(limit=10)
+
+    rows = asyncio.run(run())
+    assert len(rows) == 1
+    assert rows[0]["type"] == "memory"
+    assert rows[0]["long_term_count"] == 42
+
+
+def test_sanitize_consciousness_name_preserves_hyphens():
+    """Regression: the UI advertises hyphens; sanitizer must preserve them."""
+    from persistence.paths import sanitize_consciousness_name
+    assert sanitize_consciousness_name("Aria-1") == "Aria-1"
+    assert sanitize_consciousness_name("alpha-beta_7") == "alpha-beta_7"
+    # Other characters still collapse to underscore.
+    assert sanitize_consciousness_name("alpha 7") == "alpha_7"
+    assert sanitize_consciousness_name("../escape") == "escape"
+
+
+def test_spawn_does_not_block_event_loop(client, monkeypatch):
+    """Regression: spawn_instance must offload proc.wait so SSE streams
+    don't stall during a slow subprocess start. We assert that asyncio.to_thread
+    is invoked for the wait call."""
+    c, _ = client
+    seen = {"to_thread_calls": 0}
+
+    class FakeProc:
+        pid = 12345
+        def wait(self, timeout=None): return 0
+
+    real_to_thread = asyncio.to_thread
+
+    async def spy(fn, *args, **kwargs):
+        if getattr(fn, "__self__", None) is not None and fn.__name__ == "wait":
+            seen["to_thread_calls"] += 1
+        return await real_to_thread(fn, *args, **kwargs)
+
+    monkeypatch.setattr("interfaces.web.server.subprocess.Popen",
+                        lambda *a, **kw: FakeProc())
+    monkeypatch.setattr("interfaces.web.server.asyncio.to_thread", spy)
+
+    r = c.post("/instances", json={"name": "AsyncSpawn"})
+    assert r.status_code == 200
+    assert seen["to_thread_calls"] == 1, "proc.wait was not offloaded via asyncio.to_thread"

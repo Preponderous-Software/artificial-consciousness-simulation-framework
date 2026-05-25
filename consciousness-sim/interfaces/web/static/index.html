@@ -594,6 +594,10 @@ function buildLayout() {
     typeChips.forEach(c => {
       const on = c.getAttribute("aria-pressed") === "true";
       stream.classList.toggle(`hide-${c.dataset.filter}`, !on);
+      // Keep .active visual state in lockstep with aria-pressed so the
+      // initial render (all chips pressed=true) shows them all active and
+      // the first click on any chip produces an immediate visual change.
+      c.classList.toggle("active", on);
     });
     const allOn = typeChips.every(c => c.getAttribute("aria-pressed") === "true");
     allChip.classList.toggle("active", allOn);

@@ -206,12 +206,21 @@ async def list_providers() -> dict[str, list[str]]:
 @app.get("/stream/{name}")
 async def stream_events(name: str) -> StreamingResponse:
     """SSE stream of live thought/reflection/memory events for a named instance."""
-    instance_dir = consciousness_dir(name)
+    # Sanitize once and use the safe id consistently: the tailer dispatches
+    # events keyed by the on-disk directory name (always sanitized), so a
+    # client requesting an alias like "alpha 7" would otherwise subscribe to
+    # _sse_queues["alpha 7"] while the tailer pushes to _sse_queues["alpha_7"]
+    # and live events would never reach the client (Copilot review on #99).
+    try:
+        safe_id = sanitize_consciousness_name(name)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Unknown instance: {name!r}")
+    instance_dir = consciousness_root() / safe_id
     if not instance_dir.exists():
         raise HTTPException(status_code=404, detail=f"Unknown instance: {name!r}")
 
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=200)
-    queues = _sse_queues.setdefault(name, [])
+    queues = _sse_queues.setdefault(safe_id, [])
     queues.append(queue)
 
     journal_path = instance_dir / "journal.jsonl"
@@ -321,7 +330,9 @@ async def spawn_instance(req: SpawnRequest, request: Request) -> dict[str, Any]:
             stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
-        proc.wait(timeout=10)
+        # Wait for spawn.py --bg to fork its daemon and write the pid file.
+        # Off-thread so the event loop (and other SSE streams) stay responsive.
+        await asyncio.to_thread(proc.wait, 10)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise HTTPException(
             status_code=500,
