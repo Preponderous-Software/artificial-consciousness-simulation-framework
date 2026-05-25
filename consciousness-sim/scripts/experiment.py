@@ -34,6 +34,7 @@ import yaml
 from experiments.compare import compare_runs
 from experiments.manifest import ExperimentManifest
 from experiments.metrics import compute_all
+from experiments.prune import prune_runs
 from experiments.report import render_report
 from experiments.runner import (
     EXPERIMENTS_ROOT,
@@ -185,6 +186,68 @@ def cmd_compare(run_a: Path, run_b: Path, output_path: Path | None, k_samples: i
     else:
         output_path.write_text(md, encoding="utf-8")
         click.echo(f"Wrote comparison to {output_path}")
+
+
+@main.command("prune")
+@click.option(
+    "--older-than", "older_than_days", type=int, default=None,
+    help="Delete runs whose mtime is more than this many days in the past.",
+)
+@click.option(
+    "--keep-last", "keep_last", type=int, default=None,
+    help="Keep only the N most-recent runs per manifest; prune the rest.",
+)
+@click.option(
+    "--manifest", "manifest_filter", type=str, default=None,
+    help="Scope pruning to one manifest's subdir (e.g. 'mock-smoke-baseline').",
+)
+@click.option(
+    "--dry-run/--no-dry-run", default=True,
+    help="Default ON: list what would be deleted without acting. --no-dry-run requires --yes.",
+)
+@click.option(
+    "--yes", "-y", "confirm_delete", is_flag=True, default=False,
+    help="Required to actually delete (overrides --dry-run). Reversibility safety.",
+)
+def cmd_prune(
+    older_than_days: int | None,
+    keep_last: int | None,
+    manifest_filter: str | None,
+    dry_run: bool,
+    confirm_delete: bool,
+) -> None:
+    """Garbage-collect old run dirs under experiments/<manifest>/<UTC-ts>/.
+
+    Default policy when no flags are given: `--keep-last 10` in dry-run mode.
+    Pass `--yes` (or `--no-dry-run --yes`) to actually delete.
+
+    Protected from deletion: `experiments/golden/`, `experiments/manifests/`,
+    any run dir with a `.STARTED` marker, any run dir with a future mtime.
+    """
+    if older_than_days is None and keep_last is None:
+        keep_last = 10
+        click.echo("No retention flags passed — defaulting to --keep-last 10.")
+
+    # Either explicit path drops the safety: --yes (short) or --no-dry-run (verbose).
+    really_delete = confirm_delete or not dry_run
+
+    targets = prune_runs(
+        EXPERIMENTS_ROOT,
+        older_than_days=older_than_days,
+        keep_last=keep_last,
+        manifest=manifest_filter,
+        dry_run=not really_delete,
+    )
+    if not targets:
+        click.echo("Nothing to prune.")
+        return
+
+    verb = "Deleted" if really_delete else "Would delete"
+    click.echo(f"{verb} {len(targets)} run dir(s):")
+    for t in targets:
+        click.echo(f"  {t}")
+    if not really_delete:
+        click.echo("\nPass --yes to actually delete.")
 
 
 if __name__ == "__main__":
