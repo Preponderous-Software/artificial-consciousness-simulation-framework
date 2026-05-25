@@ -93,6 +93,23 @@ Adding `--web-port N` to any `spawn.py` invocation starts a FastAPI + SSE dashbo
 
 When enabled (`perception.enabled: true`, default), every Nth thought cycle fetches an external snippet from `perception.provider` (e.g. a random Wikipedia article summary) and injects it into the LLM prompt. Solves the closed-loop attractor problem where, without external input, the LLM samples only from its prior and collapses into a single semantic basin. See the perception block emitted in journal/episodic with kind `perception`.
 
+### Experiment harness (issue #57)
+
+For reproducible empirical work, the `scripts/experiment.py` CLI runs a declarative YAML *manifest* — spawning a consciousness with config overrides, polling until a target (`thoughts: N` or `minutes: M`), copying the journal/state into a versioned run directory, computing metrics, and rendering a markdown report. Every run is git-trackable.
+
+```bash
+# Run a manifest end-to-end
+python scripts/experiment.py run experiments/manifests/mock-smoke-baseline.yaml
+
+# List recorded runs
+python scripts/experiment.py list
+
+# Re-compute metrics on a stored run with the current code
+python scripts/experiment.py replay-analysis experiments/mock-smoke-baseline/2026-05-25T07-08-23Z/
+```
+
+Four canonical reference runs are committed under `experiments/golden/{Rafael,Sage,Echo,Wren}/` — used as fixtures for the metric library's regression tests and as the established baselines for vocabulary / mood / perception-influence comparisons. See `experiments/golden/README.md` for the run-by-run summary. Metric implementations live in `experiments/metrics.py`; the schema for manifests is in `experiments/manifest.py`.
+
 ### Discord webhook (PR #65, issue #56)
 
 Stream consciousness events to a Discord channel — color-coded embeds matching the dashboard palette, with rate limiting and secret-safe URL handling.

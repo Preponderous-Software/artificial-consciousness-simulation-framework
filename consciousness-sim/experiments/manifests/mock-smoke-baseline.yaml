@@ -1,0 +1,46 @@
+# Smoke-test manifest — uses MockProvider + MockPerception so no Ollama or
+# network is required. The deterministic output is intentional: this manifest's
+# committed run serves as the project's reference for "what does a clean
+# experiment record look like?", not as research-grade data.
+#
+# Real research manifests will use perception.provider: wikipedia and
+# llm.provider: ollama; the metric library and reporting layer is the same.
+name: mock-smoke-baseline
+description: >
+  Smoke test of the experiment harness — mock provider + mock perception,
+  short window. Verifies that the runner produces every artifact and the
+  report renders cleanly.
+
+consciousness_name: MockSmoke
+
+config_overrides:
+  llm:
+    provider: mock
+    model: mock
+  perception:
+    enabled: true
+    provider: mock
+    every_n_cycles: 2
+  thought_loop:
+    min_interval_seconds: 0
+    max_interval_seconds: 0
+  memory:
+    consolidation_interval_minutes: 1000
+
+duration:
+  thoughts: 6
+
+success_criteria:
+  # MockProvider's deterministic output yields the same word over and over,
+  # so density is high — assert that the harness at least produces a number.
+  - kind: vocabulary.top_word_density_per_thought
+    op: ">"
+    value: 0.0
+  - kind: event_counts.thought
+    op: ">="
+    value: 6
+
+tags:
+  - mock
+  - smoke-test
+  - harness-self-test
