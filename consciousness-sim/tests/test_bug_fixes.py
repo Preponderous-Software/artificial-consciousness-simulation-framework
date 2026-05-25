@@ -200,6 +200,62 @@ def test_journal_returns_empty_when_all_lines_corrupted(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Journal.recent() — bounded memory + correct tail semantics (#108)
+# ---------------------------------------------------------------------------
+
+def test_journal_recent_returns_last_n_when_file_exceeds_limit(tmp_path) -> None:
+    path = tmp_path / "journal.jsonl"
+    with path.open("w", encoding="utf-8") as f:
+        for i in range(1000):
+            f.write(json.dumps({
+                "timestamp": f"2026-01-01T00:00:{i:04d}+00:00",
+                "type": "thought",
+                "content": f"thought {i}",
+            }) + "\n")
+
+    journal = Journal(path)
+    entries = asyncio.run(journal.recent(limit=10))
+    assert len(entries) == 10
+    # Last 10 of 1000 are thoughts 990..999, in order
+    assert [e["content"] for e in entries] == [f"thought {i}" for i in range(990, 1000)]
+
+
+def test_journal_recent_returns_n_valid_when_corruption_near_tail(tmp_path) -> None:
+    """Contract preserved from pre-#108 behavior: corruption in the last N raw
+    lines must not reduce the returned dict count below N when more valid
+    events exist earlier in the file."""
+    path = tmp_path / "journal.jsonl"
+    good = lambda i: json.dumps({  # noqa: E731
+        "timestamp": f"2026-01-01T00:00:{i:04d}+00:00",
+        "type": "thought",
+        "content": f"thought {i}",
+    })
+    with path.open("w", encoding="utf-8") as f:
+        # 50 good lines, then 5 corrupted at the tail
+        for i in range(50):
+            f.write(good(i) + "\n")
+        for _ in range(5):
+            f.write("NOT JSON\n")
+
+    journal = Journal(path)
+    entries = asyncio.run(journal.recent(limit=10))
+    # The last 10 RAW lines include 5 corrupted; old contract returned 10 valid
+    # by walking past corruption — new code must too.
+    assert len(entries) == 10
+    assert [e["content"] for e in entries] == [f"thought {i}" for i in range(40, 50)]
+
+
+def test_journal_recent_returns_all_when_limit_exceeds_size(tmp_path) -> None:
+    path = tmp_path / "journal.jsonl"
+    with path.open("w", encoding="utf-8") as f:
+        for i in range(3):
+            f.write(json.dumps({"type": "thought", "content": f"t{i}"}) + "\n")
+    journal = Journal(path)
+    entries = asyncio.run(journal.recent(limit=100))
+    assert len(entries) == 3
+
+
+# ---------------------------------------------------------------------------
 # Bug #3 — consolidation regex silently drops all memories on format mismatch
 # ---------------------------------------------------------------------------
 

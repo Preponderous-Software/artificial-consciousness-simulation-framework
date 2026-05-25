@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -50,15 +51,20 @@ class Journal:
             return []
 
         def _read() -> list[dict[str, str]]:
-            rows: list[dict[str, str]] = []
+            # Stream the file and retain only the last `limit` PARSED dicts.
+            # Memory stays O(limit) regardless of journal size, while still
+            # honouring the contract that `recent(limit=N)` returns N valid
+            # events even when corruption is concentrated near the tail (#108).
+            rows: deque[dict[str, str]] = deque(maxlen=max(0, limit))
             with self.path.open("r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
-                    if line:
-                        try:
-                            rows.append(dict(json.loads(line)))
-                        except json.JSONDecodeError:
-                            logging.warning("Journal: skipping corrupted line: %r", line)
-            return rows[-limit:]
+                    if not line:
+                        continue
+                    try:
+                        rows.append(dict(json.loads(line)))
+                    except json.JSONDecodeError:
+                        logging.warning("Journal: skipping corrupted line: %r", line)
+            return list(rows)
 
         return await asyncio.to_thread(_read)
