@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 from typing import Any
@@ -132,7 +133,10 @@ class DiscordWebhookSink:
         self.include_perception_url = bool(include_perception_url)
         self._bucket = _TokenBucket(rate_limit_per_min)
         self._dropped_since_last_warn = 0
-        self._last_drop_warning_at: float = 0.0
+        # Sentinel: -inf guarantees the first drop's `now - _last >= 60.0` check fires
+        # regardless of `time.monotonic()`'s origin (which is undefined — on Linux
+        # it's seconds-since-boot, so 0.0 fails the comparison on freshly-booted CI runners).
+        self._last_drop_warning_at: float = -math.inf
 
         # Install masking filter on the module logger so the URL is never leaked
         # even if a future code path or third-party traceback formats it raw.
