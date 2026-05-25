@@ -42,7 +42,7 @@ Requires **Python 3.11+** (per `pyproject.toml`).
 
 ```bash
 cd consciousness-sim
-python3.11 -m venv .venv
+python3 -m venv .venv   # your default python3 must be 3.11 or newer
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
@@ -148,13 +148,14 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 2. Embed context and retrieve similar long-term memories (O(log N) via compound index)
 3. Every Nth cycle (per `perception.every_n_cycles`): fetch a perception and add it to short-term + episodic
 4. Inject identity anchor + mood + recent stream + perception block into prompt
-5. Generate next thought through provider abstraction
-6. **HOT-2:** `MetacognitiveMonitor` scores the thought as `high`/`uncertain`/`noise` based on lexical overlap with recent *thought-kind* items in the workspace buffer; saves thought to short-term buffer (importance 1.0/0.75/0.5 by label) and episodic log
-7. **PP-1:** compute `prediction_error` against prior cycle's predicted theme (continuity prior); update `_predicted_theme` for next cycle; every `perf_log_every_n` cycles log per-component timing at INFO level
-8. Reflection trigger: `effective_prob = base + HOT-2 boost + PP-1 boost` (capped at 1.0; base=0.0 disables entirely)
-9. Periodically trigger existential inquiry (deterministic, every N thoughts)
-10. Update `AttentionSchema` (informed by cycle outcome); outer loop appends to journal and emits events to handlers
-11. Background consolidator compresses episodic traces into durable long-term memories
+5. Generate raw next thought through provider abstraction
+6. Apply `InnerVoice.render()` — registers (`questioning` / `remembering` / `wondering`) framing styled from the raw output before it enters the workspace
+7. **HOT-2:** `MetacognitiveMonitor` scores the rendered thought as `high`/`uncertain`/`noise` based on lexical overlap with recent *thought-kind* items in the workspace buffer; saves thought to short-term buffer (importance 1.0/0.75/0.5 by label) and episodic log
+8. **PP-1:** compute `prediction_error` against prior cycle's predicted theme (continuity prior); update `_predicted_theme` for next cycle; every `perf_log_every_n` cycles log per-component timing at INFO level
+9. Reflection trigger: `effective_prob = base + HOT-2 boost + PP-1 boost` (capped at 1.0; base=0.0 disables entirely)
+10. Periodically trigger existential inquiry (deterministic, every N thoughts)
+11. Update `AttentionSchema` (informed by cycle outcome); outer loop appends to journal and emits events to handlers
+12. Background consolidator compresses episodic traces into durable long-term memories
 
 ## Extending the System
 
