@@ -41,16 +41,16 @@ class EventRelay:
         self._mind.on_memory_stored.append(self._on_memory_stored)
         self._mind.on_perception.append(self._on_perception)
 
-    async def _on_thought(self, payload: dict) -> None:
-        content = str(payload.get("content", ""))
-        self._recent_thoughts.append(content)
+    def _append_to_recent_thoughts(self, entry: str) -> None:
+        self._recent_thoughts.append(entry)
         self._recent_thoughts = self._recent_thoughts[-20:]
+
+    async def _on_thought(self, payload: dict) -> None:
+        self._append_to_recent_thoughts(str(payload.get("content", "")))
         await self._broadcast(payload)
 
     async def _on_reflection(self, payload: dict) -> None:
-        content = str(payload.get("content", ""))
-        self._recent_thoughts.append(f"[reflection] {content}")
-        self._recent_thoughts = self._recent_thoughts[-20:]
+        self._append_to_recent_thoughts(f"[reflection] {payload.get('content', '')}")
         await self._broadcast(payload)
 
     async def _on_memory_stored(self, payload: dict) -> None:
