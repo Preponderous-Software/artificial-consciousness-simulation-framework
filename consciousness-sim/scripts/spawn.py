@@ -23,7 +23,9 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import asyncio
+import atexit
 import logging
+import os
 
 import click
 from dotenv import load_dotenv
@@ -32,6 +34,78 @@ from core.consciousness import Consciousness
 from interfaces.cli import ConsciousnessCLI
 from persistence.paths import consciousness_dir
 from scripts._logging import configure_logging
+
+
+# Env var passed from a `--bg` parent to its `--headless` child so the child
+# skips the duplicate-name check (the parent has already claimed the slot and
+# written pid_path with the child's PID — re-checking would self-match).
+_INTERNAL_SPAWN_ENV: str = "_ACSF_SPAWN_INTERNAL"
+
+
+def _is_alive(pid: int) -> bool:
+    """Return True iff a process with this PID is currently alive."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Process exists but is owned by another user — still a conflict.
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _read_pid(pid_path: Path) -> int | None:
+    """Return the PID stored at pid_path or None if missing/malformed."""
+    if not pid_path.exists():
+        return None
+    try:
+        return int(pid_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _check_duplicate_pid(name: str, force: bool) -> None:
+    """Refuse to spawn when an instance with this name is already alive.
+
+    Stale pid files (process gone) are removed silently with an INFO log.
+    Live duplicates abort with exit code 1 unless ``--force`` is passed,
+    in which case a WARNING is printed and the caller proceeds.
+    """
+    agent_dir = consciousness_dir(name)
+    pid_path = agent_dir / "pid"
+    existing_pid = _read_pid(pid_path)
+    if existing_pid is None:
+        return
+    if _is_alive(existing_pid):
+        if force:
+            click.echo(
+                f"WARNING: instance '{name}' is already running (PID {existing_pid}); "
+                "--force given — proceeding despite likely data corruption.",
+                err=True,
+            )
+            return
+        click.echo(
+            f"ERROR: A consciousness named '{name}' is already running "
+            f"(PID {existing_pid}).\n"
+            f"Use `python scripts/stop.py --name {name}` first, "
+            f"or pass --force to spawn anyway.",
+            err=True,
+        )
+        sys.exit(1)
+    logging.info(
+        "Removing stale pid file for '%s' (PID %d not alive)", name, existing_pid
+    )
+    try:
+        pid_path.unlink()
+    except OSError:
+        # Best-effort cleanup of a stale pid file. If unlink races with
+        # another spawn or the file is already gone, ignore — the next
+        # caller will succeed.
+        pass
 
 
 def _build_config_path(name: str, provider: str | None, model: str | None) -> Path:
@@ -83,6 +157,7 @@ async def _run(mind: Consciousness, headless: bool) -> None:
 @click.option("--log-level", default="WARNING", show_default=True, help="Log level (DEBUG/INFO/WARNING/ERROR)")
 @click.option("--headless", is_flag=True, default=False, help="Skip TUI — run as a foreground log-only process")
 @click.option("--bg", is_flag=True, default=False, help="Detach into background (implies --headless); logs to run.log")
+@click.option("--force", is_flag=True, default=False, help="Spawn even if an instance with this name is already alive")
 def main(
     name: str,
     provider: str | None,
@@ -90,11 +165,17 @@ def main(
     log_level: str,
     headless: bool,
     bg: bool,
+    force: bool,
 ) -> None:
     load_dotenv()
 
+    # `--bg` re-invokes self with `_ACSF_SPAWN_INTERNAL=1` so the child skips
+    # this check (the parent already claimed the slot and recorded its PID).
+    internal_invocation = os.environ.get(_INTERNAL_SPAWN_ENV) == "1"
+    if not internal_invocation:
+        _check_duplicate_pid(name, force=force)
+
     if bg:
-        import os
         import subprocess
 
         agent_dir = consciousness_dir(name)
@@ -108,6 +189,7 @@ def main(
             a for a in sys.argv[1:] if a not in ("--bg",)
         ] + ["--headless"]
 
+        child_env = {**os.environ, _INTERNAL_SPAWN_ENV: "1"}
         with open(log_path, "a") as log_fh:
             proc = subprocess.Popen(
                 args,
@@ -115,7 +197,7 @@ def main(
                 stderr=log_fh,
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,
-                env={**os.environ},
+                env=child_env,
             )
 
         pid_path.write_text(str(proc.pid))
@@ -127,6 +209,30 @@ def main(
 
     log_path = configure_logging(name, log_level)
     logging.info("Spawn started — logs: %s", log_path)
+
+    # Foreground/--headless modes also record a pid file so future spawns
+    # can detect duplicates. Cleaned up on graceful exit; --bg's parent
+    # has already written this file with the same PID (idempotent overwrite).
+    agent_dir = consciousness_dir(name)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    pid_path = agent_dir / "pid"
+    pid_path.write_text(str(os.getpid()))
+
+    def _cleanup_pid_file() -> None:
+        # Only delete if the file still points at us — protects against the
+        # case where another spawn raced ahead and claimed the slot.
+        current = _read_pid(pid_path)
+        if current == os.getpid():
+            try:
+                pid_path.unlink()
+            except OSError:
+                # Best-effort cleanup at process exit. atexit handlers must
+                # never raise; the next spawn will see a stale pid file and
+                # remove it itself.
+                pass
+
+    atexit.register(_cleanup_pid_file)
+
     config_path = _build_config_path(name, provider, model)
     mind = Consciousness(name=name, config_path=str(config_path))
     asyncio.run(_run(mind, headless))
