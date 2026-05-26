@@ -125,19 +125,19 @@ class ThoughtLoop:
         # produce a double decay if the outer loop also decays on failure.
         context = self.short_term.render_for_prompt()
 
-        _t = time.monotonic()
+        t_start = time.monotonic()
         query_embedding = await self.provider.embed(context)
-        _embed_ms = (time.monotonic() - _t) * 1000
+        embed_ms = (time.monotonic() - t_start) * 1000
 
-        _t = time.monotonic()
+        t_start = time.monotonic()
         related = await self.long_term.similarity_search(query_embedding, limit=3)
-        _search_ms = (time.monotonic() - _t) * 1000
+        search_ms = (time.monotonic() - t_start) * 1000
 
         memories = "\n".join(f"- {m.summary}" for m in related) or "(none retrieved)"
 
-        _t = time.monotonic()
+        t_start = time.monotonic()
         perception = await self._maybe_fetch_perception(thought_count)
-        _perception_ms = (time.monotonic() - _t) * 1000
+        perception_ms = (time.monotonic() - t_start) * 1000
         if perception is not None:
             # Lingers into subsequent cycles via short-term buffer and gets
             # consolidated by the memory consolidator from episodic.
@@ -156,7 +156,7 @@ class ThoughtLoop:
         )
         prompt_text = f"{anchor}\n\n{prompt}"
 
-        _t = time.monotonic()
+        t_start = time.monotonic()
         raw = await self.provider.generate(
             prompt=prompt_text,
             system=(
@@ -168,17 +168,17 @@ class ThoughtLoop:
             temperature=self.thought_temperature,
             max_tokens=self.thought_max_tokens,
         )
-        _generate_ms = (time.monotonic() - _t) * 1000
+        generate_ms = (time.monotonic() - t_start) * 1000
 
         thought = self.inner_voice.render(raw, register=_select_register(raw, bool(related)))
 
         # PP-1: compare actual thought against prior cycle's predicted theme.
         # Continuity prior: predict the same theme will persist into the next cycle.
         # Surprise = predicted theme word absent from the actual thought.
-        _thought_words = set(re.findall(r"[a-z]+", thought.lower()))
+        thought_words = set(re.findall(r"[a-z]+", thought.lower()))
         prediction_error = (
             0.0
-            if not prior_prediction or prior_prediction in _thought_words
+            if not prior_prediction or prior_prediction in thought_words
             else 1.0
         )
         self._predicted_theme = _extract_theme(thought)  # prediction for next cycle
@@ -192,7 +192,7 @@ class ThoughtLoop:
                 "Cycle %d perf — embed: %.0fms  search: %.0fms  generate: %.0fms"
                 "  perception: %.0fms  prompt_chars: %d  pred_error: %.1f",
                 thought_count,
-                _embed_ms, _search_ms, _generate_ms, _perception_ms,
+                embed_ms, search_ms, generate_ms, perception_ms,
                 len(prompt_text), prediction_error,
             )
 
@@ -254,6 +254,5 @@ class ThoughtLoop:
         try:
             return await self.perception_provider.fetch()
         except Exception:  # belt-and-braces — providers should already swallow errors
-            import logging
             logging.warning("Perception provider raised unexpectedly; skipping", exc_info=True)
             return None
