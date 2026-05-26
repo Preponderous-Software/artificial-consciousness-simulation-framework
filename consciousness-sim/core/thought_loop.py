@@ -115,6 +115,25 @@ class ThoughtLoop:
         self.monitor = MetacognitiveMonitor()
         self._predicted_theme: str = ""  # PP-1: continuity prior set at end of each cycle
 
+    def _log_cycle_performance(
+        self,
+        thought_count: int,
+        embed_ms: float,
+        search_ms: float,
+        generate_ms: float,
+        perception_ms: float,
+        prompt_chars: int,
+        prediction_error: float,
+    ) -> None:
+        if self.perf_log_every_n > 0 and thought_count % self.perf_log_every_n == 0:
+            logging.info(
+                "Cycle %d perf — embed: %.0fms  search: %.0fms  generate: %.0fms"
+                "  perception: %.0fms  prompt_chars: %d  pred_error: %.1f",
+                thought_count,
+                embed_ms, search_ms, generate_ms, perception_ms,
+                prompt_chars, prediction_error,
+            )
+
     def _build_thought_prompt(self, context: str, memories: str, perception: "Perception | None") -> str:
         anchor = self.identity_anchor_path.read_text(encoding="utf-8").format(
             **self.identity.anchor_payload()
@@ -192,14 +211,10 @@ class ThoughtLoop:
         self.short_term.add("thought", thought, importance=self.monitor.importance(label))
         await self.episodic.append("thought", thought)
 
-        if self.perf_log_every_n > 0 and thought_count % self.perf_log_every_n == 0:
-            logging.info(
-                "Cycle %d perf — embed: %.0fms  search: %.0fms  generate: %.0fms"
-                "  perception: %.0fms  prompt_chars: %d  pred_error: %.1f",
-                thought_count,
-                embed_ms, search_ms, generate_ms, perception_ms,
-                len(prompt_text), prediction_error,
-            )
+        self._log_cycle_performance(
+            thought_count, embed_ms, search_ms, generate_ms, perception_ms,
+            len(prompt_text), prediction_error,
+        )
 
         reflection_text: str | None = None
         existential_text: str | None = None
