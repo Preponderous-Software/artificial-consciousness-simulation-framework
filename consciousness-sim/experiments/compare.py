@@ -43,21 +43,23 @@ class RunRef:
         return int(self.metrics.get("event_counts", {}).get("thought", 0))
 
 
+def _read_yaml(p: Path) -> dict[str, Any]:
+    if not p.exists():
+        return {}
+    return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+
+
+def _read_json(p: Path) -> dict[str, Any]:
+    if not p.exists():
+        return {}
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
 def load_run(run_dir: Path, label: str | None = None) -> RunRef:
     """Load the four artifacts a comparison reads from a recorded run."""
     run_dir = Path(run_dir)
     if not run_dir.exists():
         raise FileNotFoundError(f"Run directory does not exist: {run_dir}")
-
-    def _read_yaml(p: Path) -> dict[str, Any]:
-        if not p.exists():
-            return {}
-        return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-
-    def _read_json(p: Path) -> dict[str, Any]:
-        if not p.exists():
-            return {}
-        return json.loads(p.read_text(encoding="utf-8"))
 
     manifest = _read_yaml(run_dir / "manifest.yaml")
     meta = _read_yaml(run_dir / "meta.yaml")
