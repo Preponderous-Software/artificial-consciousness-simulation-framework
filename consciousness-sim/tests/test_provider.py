@@ -183,6 +183,137 @@ def test_try_ensure_running_returns_false_when_binary_missing(monkeypatch) -> No
     assert result is False
 
 
+# --- #113 LRU embed cache --------------------------------------------------
+
+
+def _install_counting_fake_ollama(monkeypatch) -> dict[str, int]:
+    """Install a fake ollama module that counts embed calls. Each embed returns
+    a unique vector incorporating the call count so cache hits are detectable."""
+    counters: dict[str, int] = {"embed_calls": 0}
+
+    class _Resp:
+        def __init__(self, embeddings):
+            self.embeddings = embeddings
+
+    class _Counting:
+        def __init__(self, host=None) -> None:
+            pass
+
+        async def embed(self, **kwargs):
+            counters["embed_calls"] += 1
+            # vector encodes the call sequence — distinct on every call
+            return _Resp([[float(counters["embed_calls"]), 0.0, 0.0]])
+
+    monkeypatch.setitem(sys.modules, "ollama", types.SimpleNamespace(AsyncClient=_Counting))
+    return counters
+
+
+def test_ollama_embed_cache_hit_returns_without_calling_ollama(monkeypatch) -> None:
+    """Two embed calls with the same input must issue exactly one Ollama request."""
+    counters = _install_counting_fake_ollama(monkeypatch)
+    provider = OllamaProvider(model="llama3.1", embed_cache_size=16)
+    first = asyncio.run(provider.embed("identical-context"))
+    second = asyncio.run(provider.embed("identical-context"))
+    assert first == second
+    assert counters["embed_calls"] == 1
+    assert provider.embed_cache_hits == 1
+    assert provider.embed_cache_misses == 1
+
+
+def test_ollama_embed_cache_distinct_inputs_each_call_ollama(monkeypatch) -> None:
+    counters = _install_counting_fake_ollama(monkeypatch)
+    provider = OllamaProvider(model="llama3.1", embed_cache_size=16)
+    asyncio.run(provider.embed("a"))
+    asyncio.run(provider.embed("b"))
+    asyncio.run(provider.embed("c"))
+    assert counters["embed_calls"] == 3
+    assert provider.embed_cache_hits == 0
+    assert provider.embed_cache_misses == 3
+
+
+def test_ollama_embed_cache_lru_evicts_oldest_first(monkeypatch) -> None:
+    """With capacity=2, the third unique input must evict the first."""
+    counters = _install_counting_fake_ollama(monkeypatch)
+    provider = OllamaProvider(model="llama3.1", embed_cache_size=2)
+    asyncio.run(provider.embed("a"))  # cache: [a] vec=[1]
+    asyncio.run(provider.embed("b"))  # cache: [a, b] vec=[2]
+    asyncio.run(provider.embed("c"))  # cache: [b, c] vec=[3]; "a" evicted
+    # "b" is still cached and returns its original vector (hit).
+    re_b = asyncio.run(provider.embed("b"))
+    assert counters["embed_calls"] == 3, "b should be a cache hit, no new call"
+    assert re_b[0] == 2.0
+    # "a" was evicted — re-fetched, gets new vector.
+    re_a = asyncio.run(provider.embed("a"))
+    assert counters["embed_calls"] == 4
+    assert re_a[0] == 4.0
+
+
+def test_ollama_embed_cache_hit_moves_entry_to_end_lru(monkeypatch) -> None:
+    """A cache hit must mark the entry as most-recently-used so it survives
+    eviction longer."""
+    counters = _install_counting_fake_ollama(monkeypatch)
+    provider = OllamaProvider(model="llama3.1", embed_cache_size=2)
+    asyncio.run(provider.embed("a"))  # cache: [a]
+    asyncio.run(provider.embed("b"))  # cache: [a, b]
+    asyncio.run(provider.embed("a"))  # cache hit; cache: [b, a]
+    asyncio.run(provider.embed("c"))  # cache: [a, c]  (b evicted)
+    # b is now a miss (newly fetched)
+    re_b = asyncio.run(provider.embed("b"))
+    # Total calls: a(1), b(2), c(3), b(4) = 4
+    assert counters["embed_calls"] == 4
+    assert re_b[0] == 4.0
+
+
+def test_ollama_embed_cache_disabled_with_size_zero(monkeypatch) -> None:
+    counters = _install_counting_fake_ollama(monkeypatch)
+    provider = OllamaProvider(model="llama3.1", embed_cache_size=0)
+    asyncio.run(provider.embed("same"))
+    asyncio.run(provider.embed("same"))
+    assert counters["embed_calls"] == 2
+    assert provider.embed_cache_hits == 0
+    assert provider.embed_cache_misses == 0  # no counter increment when disabled
+
+
+def test_ollama_embed_cache_stats_property(monkeypatch) -> None:
+    counters = _install_counting_fake_ollama(monkeypatch)
+    provider = OllamaProvider(model="llama3.1", embed_cache_size=4)
+    asyncio.run(provider.embed("x"))
+    asyncio.run(provider.embed("x"))
+    stats = provider.embed_cache_stats
+    assert stats["capacity"] == 4
+    assert stats["size"] == 1
+    assert stats["hits"] == 1
+    assert stats["misses"] == 1
+
+
+def test_ollama_embed_cache_keys_isolate_models(monkeypatch) -> None:
+    """Two providers using different models must not cross-contaminate cache."""
+    _install_counting_fake_ollama(monkeypatch)
+    a = OllamaProvider(model="llama3.1", embed_cache_size=8)
+    b = OllamaProvider(model="llama3.2", embed_cache_size=8)
+    va = asyncio.run(a.embed("shared text"))
+    vb = asyncio.run(b.embed("shared text"))
+    # Each provider has its own cache and its own counter; results need
+    # not match — what we assert is that b did NOT inherit a's cached vec.
+    assert b.embed_cache_misses == 1
+
+
+def test_build_provider_forwards_embed_cache_size_to_ollama(monkeypatch) -> None:
+    _install_counting_fake_ollama(monkeypatch)
+    from llm.provider import build_provider as _bp
+    provider = _bp("ollama", "llama3.1", embed_cache_size=42)
+    assert isinstance(provider, OllamaProvider)
+    assert provider._embed_cache_size == 42
+
+
+def test_build_provider_default_embed_cache_size(monkeypatch) -> None:
+    _install_counting_fake_ollama(monkeypatch)
+    from llm.provider import build_provider as _bp
+    provider = _bp("ollama", "llama3.1")
+    assert isinstance(provider, OllamaProvider)
+    assert provider._embed_cache_size == OllamaProvider.DEFAULT_EMBED_CACHE_SIZE
+
+
 def test_ollama_embed_timeout_logs_warning(monkeypatch) -> None:
     captured: dict[str, str | None] = {}
     install_fake_ollama_module(monkeypatch, captured)

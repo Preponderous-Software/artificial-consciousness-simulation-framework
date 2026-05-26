@@ -151,7 +151,15 @@ class Consciousness:
         cons_cfg = self.config["consciousness"]
 
         base = consciousness_dir(name)
-        self.provider = build_provider(llm_cfg["provider"], llm_cfg["model"])
+        # Optional per-provider knobs (#113). Absent → provider defaults.
+        embed_cache_size = llm_cfg.get("embed_cache_size")
+        self.provider = build_provider(
+            llm_cfg["provider"],
+            llm_cfg["model"],
+            embed_cache_size=(
+                int(embed_cache_size) if embed_cache_size is not None else None
+            ),
+        )
         self.identity = IdentityDocument(
             name=name,
             origin_story=cons_cfg["origin_story"],

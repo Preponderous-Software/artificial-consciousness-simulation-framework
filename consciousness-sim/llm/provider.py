@@ -13,6 +13,7 @@ update cycle.
 from __future__ import annotations
 
 import asyncio
+import collections
 import hashlib
 import logging
 import os
@@ -214,8 +215,35 @@ class OllamaProvider(LLMProvider):
     # causes the next request to block for >300s reloading the model weights.
     KEEP_ALIVE = "10m"
 
-    def __init__(self, model: str) -> None:
+    # Default LRU embed cache size (#113). At 768-dim float32 vectors (~3 KB
+    # each), 256 entries cap memory at <1 MB. Set to 0 to disable.
+    DEFAULT_EMBED_CACHE_SIZE: int = 256
+
+    def __init__(self, model: str, embed_cache_size: int = DEFAULT_EMBED_CACHE_SIZE) -> None:
         self.model = model
+        # Per-instance LRU cache keyed by sha256 of the input text (#113).
+        # Most embed calls during a long run repeat near-identical context
+        # strings cycle-to-cycle, so caching cuts Ollama load substantially
+        # under contention. Keys include the model name so two providers
+        # sharing one Python process don't cross-contaminate.
+        self._embed_cache_size: int = max(0, int(embed_cache_size))
+        self._embed_cache: "collections.OrderedDict[str, list[float]]" = collections.OrderedDict()
+        self.embed_cache_hits: int = 0
+        self.embed_cache_misses: int = 0
+
+    def _embed_cache_key(self, text: str) -> str:
+        h = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        return f"{self.model}:{h}"
+
+    @property
+    def embed_cache_stats(self) -> dict[str, int]:
+        """Return a snapshot of cache occupancy + hit/miss counters."""
+        return {
+            "size": len(self._embed_cache),
+            "capacity": self._embed_cache_size,
+            "hits": self.embed_cache_hits,
+            "misses": self.embed_cache_misses,
+        }
 
     @classmethod
     def _get_semaphore(cls) -> asyncio.Semaphore:
@@ -261,6 +289,28 @@ class OllamaProvider(LLMProvider):
         return await self.with_backoff(self._generate, prompt, system, temperature, max_tokens)
 
     async def embed(self, text: str) -> list[float]:
+        if self._embed_cache_size > 0:
+            key = self._embed_cache_key(text)
+            cached = self._embed_cache.get(key)
+            if cached is not None:
+                self._embed_cache.move_to_end(key)
+                self.embed_cache_hits += 1
+                logger.debug(
+                    "Ollama embed cache hit (model=%r, hits=%d/misses=%d)",
+                    self.model, self.embed_cache_hits, self.embed_cache_misses,
+                )
+                return list(cached)
+            self.embed_cache_misses += 1
+
+        vec = await self._do_embed(text)
+
+        if self._embed_cache_size > 0:
+            self._embed_cache[key] = list(vec)
+            while len(self._embed_cache) > self._embed_cache_size:
+                self._embed_cache.popitem(last=False)
+        return vec
+
+    async def _do_embed(self, text: str) -> list[float]:
         try:
             from ollama import AsyncClient
         except ImportError:
@@ -339,14 +389,27 @@ class MockProvider(LLMProvider, DeterministicFallbackMixin):
         return self._fallback_embed(text)
 
 
-def build_provider(provider: str, model: str) -> LLMProvider:
+def build_provider(
+    provider: str,
+    model: str,
+    *,
+    embed_cache_size: int | None = None,
+) -> LLMProvider:
+    """Build a concrete LLMProvider.
+
+    ``embed_cache_size`` (optional) is forwarded to OllamaProvider per #113
+    and ignored by other providers. Omit / pass None to use the provider's
+    own default.
+    """
     normalized = provider.lower()
     if normalized == "openai":
         return OpenAIProvider(model)
     if normalized == "anthropic":
         return AnthropicProvider(model)
     if normalized == "ollama":
-        return OllamaProvider(model)
+        if embed_cache_size is None:
+            return OllamaProvider(model)
+        return OllamaProvider(model, embed_cache_size=embed_cache_size)
     if normalized == "mock":
         # Deterministic fallback — used by the experiment harness (#57) and any
         # configuration that wants to run offline without an LLM round-trip.
