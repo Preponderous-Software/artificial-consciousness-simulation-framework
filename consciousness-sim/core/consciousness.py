@@ -319,36 +319,35 @@ class Consciousness:
                 },
             )
 
+    def _restore_from_state(self, restored: dict) -> None:
+        self.identity = IdentityDocument.from_dict(dict(restored.get("identity", {})))
+        if not self.identity.initial_mood:
+            # Legacy state pre-#62: populate the baseline from config so
+            # drift_mood reverts toward configured initial, not a possibly
+            # collapsed current mood.
+            self.identity.initial_mood = {
+                k: float(v) for k, v in self.config["mood"]["initial"].items()
+            }
+        self.thought_loop.identity = self.identity
+        self.thought_loop.inner_voice = InnerVoice(self.identity.name)
+        for item in restored.get("short_term", []):
+            if isinstance(item, dict):
+                self.short_term.add(str(item.get("kind", "thought")), str(item.get("content", "")))
+        self.thought_count = int(restored.get("thought_count", 0))
+        restored_health = restored.get("health")
+        if isinstance(restored_health, dict):
+            for key in (
+                "status", "consecutive_failures", "last_error",
+                "last_error_at", "last_successful_cycle_at",
+            ):
+                if key in restored_health:
+                    self.health[key] = restored_health[key]
+
     async def initialize(self) -> None:
         await self.long_term.initialize()
         restored = await self.state_manager.load()
         if restored:
-            self.identity = IdentityDocument.from_dict(dict(restored.get("identity", {})))
-            if not self.identity.initial_mood:
-                # Legacy state pre-#62: populate the baseline from config so
-                # drift_mood reverts toward configured initial, not a possibly
-                # collapsed current mood.
-                self.identity.initial_mood = {
-                    k: float(v) for k, v in self.config["mood"]["initial"].items()
-                }
-            self.thought_loop.identity = self.identity
-            self.thought_loop.inner_voice = InnerVoice(self.identity.name)
-            for item in restored.get("short_term", []):
-                if isinstance(item, dict):
-                    self.short_term.add(str(item.get("kind", "thought")), str(item.get("content", "")))
-            self.thought_count = int(restored.get("thought_count", 0))
-            # #117: restore health block if state.json has one; older state
-            # files lack the key, in which case we keep the defaults set in
-            # __init__.
-            restored_health = restored.get("health")
-            if isinstance(restored_health, dict):
-                # Don't overwrite the dict shape — only copy known keys.
-                for key in (
-                    "status", "consecutive_failures", "last_error",
-                    "last_error_at", "last_successful_cycle_at",
-                ):
-                    if key in restored_health:
-                        self.health[key] = restored_health[key]
+            self._restore_from_state(restored)
 
         lt_count = await self.long_term.count()
         await self._emit(
