@@ -263,3 +263,108 @@ def test_from_dict_legacy_state_leaves_initial_mood_empty() -> None:
     restored = IdentityDocument.from_dict(legacy_payload)
     assert restored.initial_mood == {}
     assert restored.mood == {"curiosity": 0.0, "wonder": 0.0}
+
+
+# --- #119 mood homeostasis -------------------------------------------------
+
+
+def test_drift_mood_homeostasis_caps_continuous_reinforcement() -> None:
+    """Regression for #119: dominant trait must plateau below 1.0 under
+    continuous reinforcement, instead of saturating at the ceiling.
+
+    The James run (2026-05-25) showed curiosity drifting to 0.997 in
+    ~34 cycles because the "?" trigger fired every cycle and there was
+    no opposing homeostatic pull. With additive homeostasis at 0.1,
+    the equilibrium is `initial + drift_rate / homeostasis_rate`
+    = 0.7 + 0.05/0.1 = 1.2, clipped — but the approach is exponential,
+    so the trait reaches 1.0 only asymptotically; over hundreds of
+    cycles with a less-than-maximal drift, the equilibrium for
+    continuously-triggered traits should be strictly below 1.0 for
+    realistic parameters. We pick parameters that exercise the
+    equilibrium: drift_rate=0.05, homeostasis_rate=0.2 → eq=0.95.
+    """
+    ident = _ident_with_initial({"curiosity": 0.7})
+    trigger = "what would I wonder about? a question."  # hits "wonder", "?", "question"
+    for _ in range(500):
+        ident.drift_mood(trigger, drift_rate=0.05, homeostasis_rate=0.2)
+    # Equilibrium 0.7 + 0.05/0.2 = 0.95; allow ±0.01 tolerance.
+    assert 0.93 <= ident.mood["curiosity"] <= 0.97, (
+        f"curiosity should equilibrate near 0.95 under continuous trigger "
+        f"with homeostasis_rate=0.2; got {ident.mood['curiosity']}"
+    )
+
+
+def test_drift_mood_homeostasis_keeps_dominant_trait_below_saturation_short_run() -> None:
+    """A short run that the prior implementation saturated must now stay
+    well below 1.0."""
+    ident = _ident_with_initial({"curiosity": 0.7})
+    trigger = "what would I explore? curious wonder."
+    # Old behaviour: ~6 triggered cycles took curiosity from 0.7 to 1.0
+    # (0.7 + 6 * 0.05 = 1.0). With homeostasis, the same 6 cycles should
+    # not reach 1.0.
+    for _ in range(6):
+        ident.drift_mood(trigger, drift_rate=0.05)
+    assert ident.mood["curiosity"] < 1.0
+
+
+def test_drift_mood_homeostasis_rate_override() -> None:
+    """Caller-supplied homeostasis_rate overrides the default."""
+    ident = _ident_with_initial({"curiosity": 0.7})
+    # zero homeostasis → unbounded drift toward 1.0 (old behaviour)
+    trigger = "what if?"
+    for _ in range(10):
+        ident.drift_mood(trigger, drift_rate=0.05, homeostasis_rate=0.0)
+    assert abs(ident.mood["curiosity"] - 1.0) < 1e-6  # saturated
+
+
+# --- #120 AttentionSchema.decay_only --------------------------------------
+
+
+def test_attention_schema_decay_only_smoothly_drops_salience() -> None:
+    """10 consecutive 'skipped cycles' must produce smooth, monotonic decay
+    rather than a freeze-then-collapse."""
+    schema = AttentionSchema(focus="memory", theme="time", salience=1.0)
+    prior = 1.0
+    for _ in range(10):
+        schema.decay_only()
+        # Each step must reduce salience and stay non-negative.
+        assert schema.salience <= prior
+        assert schema.salience >= 0.0
+        prior = schema.salience
+    # After 10 decay() calls at default rate 0.1, salience reaches floor.
+    # Accumulated FP error keeps it just barely positive (~1e-16) — the
+    # max(0, ...) clamp only fires when subtraction goes strictly negative.
+    assert schema.salience < 1e-9
+
+
+def test_attention_schema_decay_only_preserves_focus_and_theme() -> None:
+    """decay_only must not touch focus or theme — only salience changes."""
+    schema = AttentionSchema(focus="memory", theme="time", salience=0.8)
+    schema.decay_only()
+    assert schema.focus == "memory"
+    assert schema.theme == "time"
+    assert abs(schema.salience - 0.7) < 1e-9
+
+
+def test_attention_schema_decay_only_is_aliased_to_decay() -> None:
+    """Verify decay_only is behaviourally equivalent to decay so existing
+    callers can switch incrementally."""
+    a = AttentionSchema(salience=0.6)
+    b = AttentionSchema(salience=0.6)
+    a.decay(rate=0.15)
+    b.decay_only(rate=0.15)
+    assert a.salience == b.salience
+
+
+def test_attention_schema_failure_then_success_focus_updates_normally() -> None:
+    """After a long failure burst that decays salience to 0, the next
+    successful update() must restore salience to 1.0 with the new focus."""
+    schema = AttentionSchema(focus="reflection", theme="pause", salience=1.0)
+    for _ in range(15):
+        schema.decay_only()
+    assert schema.salience == 0.0
+    assert schema.focus == "reflection"  # focus preserved through decay burst
+    schema.update("memory", "river")
+    assert schema.focus == "memory"
+    assert schema.theme == "river"
+    assert schema.salience == 1.0

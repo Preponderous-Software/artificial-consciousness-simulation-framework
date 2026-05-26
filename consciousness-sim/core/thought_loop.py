@@ -118,7 +118,11 @@ class ThoughtLoop:
     async def run_cycle(self, thought_count: int) -> ThoughtCycleResult:
         # PP-1: record prediction from previous cycle before generating new thought.
         prior_prediction = self._predicted_theme
-        self.identity.attention_schema.decay()
+        # Note: per-cycle salience decay is owned by the outer loop's
+        # failure branch (#120). On success cycles the attention_schema is
+        # update()'d at the end, which resets salience to 1.0 — an inline
+        # decay() here would be immediately overwritten on success and
+        # produce a double decay if the outer loop also decays on failure.
         context = self.short_term.render_for_prompt()
 
         _t = time.monotonic()
