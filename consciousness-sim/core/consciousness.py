@@ -154,25 +154,8 @@ class Consciousness:
         cons_cfg = self.config["consciousness"]
 
         base = consciousness_dir(name)
-        # Optional per-provider knobs (#113). Absent → provider defaults.
-        embed_cache_size = llm_cfg.get("embed_cache_size")
-        self.provider = build_provider(
-            llm_cfg["provider"],
-            llm_cfg["model"],
-            embed_cache_size=(
-                int(embed_cache_size) if embed_cache_size is not None else None
-            ),
-        )
-        self.identity = IdentityDocument(
-            name=name,
-            origin_story=cons_cfg["origin_story"],
-            values=list(cons_cfg["values"]),
-            purpose=cons_cfg["purpose"],
-            self_concept=f"I am {name}, an emergent mind in process.",
-            personality_traits=["introspective", "curious"],
-            mood={k: float(v) for k, v in self.config["mood"]["initial"].items()},
-            initial_mood={k: float(v) for k, v in self.config["mood"]["initial"].items()},
-        )
+        self.provider = self._build_llm_provider(llm_cfg)
+        self.identity = self._build_identity(name, cons_cfg)
 
         self.short_term = ShortTermMemory(capacity=int(mem_cfg["short_term_capacity"]))
         self.episodic = EpisodicMemory(base / "episodic.jsonl")
@@ -181,47 +164,13 @@ class Consciousness:
         self.state_manager = StateManager(name)
 
         root = Path(__file__).resolve().parents[1]
-        reflection = ReflectionEngine(
-            provider=self.provider,
-            self_reflection_prompt=root / "llm" / "prompts" / "self_reflection.txt",
-            existential_prompt=root / "llm" / "prompts" / "existential_inquiry.txt",
-        )
+        reflection = self._build_reflection_engine(root)
 
         perc_cfg = self.config["perception"]
-        self.perception_provider: PerceptionProvider | None = None
-        if bool(perc_cfg.get("enabled", False)):
-            self.perception_provider = build_perception_provider(
-                provider=str(perc_cfg["provider"]),
-                timeout_seconds=float(perc_cfg["timeout_seconds"]),
-                cache_last_n=int(perc_cfg["cache_last_n"]),
-            )
+        self.perception_provider: PerceptionProvider | None = self._build_perception_provider(perc_cfg)
 
-        self.thought_loop = ThoughtLoop(
-            provider=self.provider,
-            identity=self.identity,
-            short_term=self.short_term,
-            episodic=self.episodic,
-            long_term=self.long_term,
-            reflection_engine=reflection,
-            thought_prompt_path=root / "llm" / "prompts" / "thought_generation.txt",
-            identity_anchor_path=root / "llm" / "prompts" / "identity_anchoring.txt",
-            reflection_probability=float(self.config["thought_loop"]["reflection_probability"]),
-            existential_every_n=int(self.config["thought_loop"]["existential_inquiry_every_n_thoughts"]),
-            perception_provider=self.perception_provider,
-            perception_every_n=int(perc_cfg.get("every_n_cycles", 0)) if self.perception_provider else 0,
-            thought_temperature=float(llm_cfg.get("temperature", 0.85)),
-            thought_max_tokens=int(llm_cfg.get("max_tokens", 220)),
-            perf_log_every_n=int(self.config["thought_loop"].get("perf_log_every_n", 10)),
-        )
-        self.consolidator = MemoryConsolidator(
-            provider=self.provider,
-            episodic=self.episodic,
-            long_term=self.long_term,
-            short_term=self.short_term,
-            prompt_path=root / "llm" / "prompts" / "memory_consolidation.txt",
-            forgetting_curve_enabled=bool(mem_cfg["forgetting_curve_enabled"]),
-            decay_rate=float(mem_cfg["importance_decay_rate"]),
-        )
+        self.thought_loop = self._build_thought_loop(root, llm_cfg, perc_cfg, reflection)
+        self.consolidator = self._build_consolidator(root, mem_cfg)
 
         self.on_thought: list[EventHandler] = []
         self.on_memory_stored: list[EventHandler] = []
@@ -251,6 +200,83 @@ class Consciousness:
         self.discord_sink = build_discord_sink(self.config.get("discord", {}))
         if self.discord_sink is not None:
             self.discord_sink.register(self)
+
+    def _build_consolidator(self, root: Path, mem_cfg: dict[str, Any]) -> MemoryConsolidator:
+        return MemoryConsolidator(
+            provider=self.provider,
+            episodic=self.episodic,
+            long_term=self.long_term,
+            short_term=self.short_term,
+            prompt_path=root / "llm" / "prompts" / "memory_consolidation.txt",
+            forgetting_curve_enabled=bool(mem_cfg["forgetting_curve_enabled"]),
+            decay_rate=float(mem_cfg["importance_decay_rate"]),
+        )
+
+    def _build_thought_loop(
+        self,
+        root: Path,
+        llm_cfg: dict[str, Any],
+        perc_cfg: dict[str, Any],
+        reflection: ReflectionEngine,
+    ) -> ThoughtLoop:
+        tl_cfg = self.config["thought_loop"]
+        return ThoughtLoop(
+            provider=self.provider,
+            identity=self.identity,
+            short_term=self.short_term,
+            episodic=self.episodic,
+            long_term=self.long_term,
+            reflection_engine=reflection,
+            thought_prompt_path=root / "llm" / "prompts" / "thought_generation.txt",
+            identity_anchor_path=root / "llm" / "prompts" / "identity_anchoring.txt",
+            reflection_probability=float(tl_cfg["reflection_probability"]),
+            existential_every_n=int(tl_cfg["existential_inquiry_every_n_thoughts"]),
+            perception_provider=self.perception_provider,
+            perception_every_n=int(perc_cfg.get("every_n_cycles", 0)) if self.perception_provider else 0,
+            thought_temperature=float(llm_cfg.get("temperature", 0.85)),
+            thought_max_tokens=int(llm_cfg.get("max_tokens", 220)),
+            perf_log_every_n=int(tl_cfg.get("perf_log_every_n", 10)),
+        )
+
+    def _build_perception_provider(self, perc_cfg: dict[str, Any]) -> PerceptionProvider | None:
+        if not bool(perc_cfg.get("enabled", False)):
+            return None
+        return build_perception_provider(
+            provider=str(perc_cfg["provider"]),
+            timeout_seconds=float(perc_cfg["timeout_seconds"]),
+            cache_last_n=int(perc_cfg["cache_last_n"]),
+        )
+
+    def _build_reflection_engine(self, root: Path) -> ReflectionEngine:
+        return ReflectionEngine(
+            provider=self.provider,
+            self_reflection_prompt=root / "llm" / "prompts" / "self_reflection.txt",
+            existential_prompt=root / "llm" / "prompts" / "existential_inquiry.txt",
+        )
+
+    def _build_identity(self, name: str, cons_cfg: dict[str, Any]) -> IdentityDocument:
+        mood_initial = {k: float(v) for k, v in self.config["mood"]["initial"].items()}
+        return IdentityDocument(
+            name=name,
+            origin_story=cons_cfg["origin_story"],
+            values=list(cons_cfg["values"]),
+            purpose=cons_cfg["purpose"],
+            self_concept=f"I am {name}, an emergent mind in process.",
+            personality_traits=["introspective", "curious"],
+            mood=mood_initial,
+            initial_mood=dict(mood_initial),
+        )
+
+    def _build_llm_provider(self, llm_cfg: dict[str, Any]) -> Any:
+        # Optional per-provider knobs (#113). Absent → provider defaults.
+        embed_cache_size = llm_cfg.get("embed_cache_size")
+        return build_provider(
+            llm_cfg["provider"],
+            llm_cfg["model"],
+            embed_cache_size=(
+                int(embed_cache_size) if embed_cache_size is not None else None
+            ),
+        )
 
     async def _emit(self, handlers: list[EventHandler], payload: dict[str, Any]) -> None:
         for handler in handlers:
