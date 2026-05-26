@@ -95,6 +95,30 @@ def _parse_consolidation_line(
     return float(match.group(1)), float(match.group(2)), match.group(3).strip()
 
 
+async def _store_fallback_memories(
+    provider: "LLMProvider",
+    long_term: "LongTermMemory",
+    candidates: list[str],
+    event_count: int,
+) -> int:
+    """Store plain-text fallback summaries when structured parsing yields nothing."""
+    logging.warning(
+        "Consolidation pass stored 0 memories from %d events; LLM output may have"
+        " changed format. Attempting plain-text fallback.",
+        event_count,
+    )
+    stored = 0
+    for summary in candidates:
+        if not summary:
+            continue
+        embedding = await provider.embed(summary)
+        await long_term.add_memory(summary, 0.0, 5.0, embedding)
+        stored += 1
+    if stored:
+        logging.info("Consolidation fallback stored %d memories with default importance/valence.", stored)
+    return stored
+
+
 class MemoryConsolidator:
     """Compresses recent episodic experience into durable semantic memories."""
 
@@ -155,20 +179,10 @@ class MemoryConsolidator:
 
         fell_through = False
         if stored == 0 and events:
-            logging.warning(
-                "Consolidation pass stored 0 memories from %d events; LLM output may have changed format."
-                " Attempting plain-text fallback.",
-                len(events),
-            )
             fell_through = True
-            for summary in fallback_candidates:
-                if not summary:
-                    continue
-                embedding = await self.provider.embed(summary)
-                await self.long_term.add_memory(summary, 0.0, 5.0, embedding)
-                stored += 1
-            if stored:
-                logging.info("Consolidation fallback stored %d memories with default importance/valence.", stored)
+            stored = await _store_fallback_memories(
+                self.provider, self.long_term, fallback_candidates, len(events)
+            )
 
         self.short_term.prune_to_capacity()
         if self.forgetting_curve_enabled:
