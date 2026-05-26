@@ -136,7 +136,7 @@ The brain constructs an internal **model of its own attention** (the attention s
 - A mechanism that uses this schema to generate self-reports about awareness.
 - Social attribution module: attribute attention/consciousness to other agents.
 
-**Implementation mapping:** `core/identity.py` (`AttentionSchema`) tracks `focus` (dominant cycle kind), `theme` (first content word), `salience` (0–1, decays each cycle), and `history` (last 10 foci). Updated after every thought cycle; rendered into the identity anchor prompt via `anchor_payload()["attention_state"]` so each thought is conditioned on the prior cycle's attention state (PR #61). Gap: focus is derived from discrete event type rather than a learned or competitive allocation model; no social attribution of attention to other agents.
+**Implementation mapping:** `core/identity.py` (`AttentionSchema`) tracks `focus` (dominant cycle kind), `theme` (first content word), `salience` (0–1), and `history` (last 10 foci). On every successful cycle, `ThoughtLoop.run_cycle()` calls `update()` which sets focus/theme and resets salience to 1.0. On a failed cycle, the outer loop in `consciousness.py` calls `decay_only()` instead, fading salience by 0.1 — so a long LLM-failure burst produces smooth per-cycle decay rather than freeze-then-collapse (PR #61 + #120). Rendered into the identity anchor prompt via `anchor_payload()["attention_state"]` so each thought is conditioned on the prior cycle's attention state. Gap: focus is derived from discrete event type rather than a learned or competitive allocation model; no social attribution of attention to other agents.
 
 ---
 
@@ -248,13 +248,17 @@ python -m pytest tests/ -v
 python -m pytest tests/test_bug_fixes.py -v
 
 # Run a single test by name
-python -m pytest tests/test_bug_fixes.py::test_validate_config_raises_on_missing_section -v
+python -m pytest tests/test_bug_fixes.py::test_validate_config_raises_on_missing_top_level_section -v
 
 # Inspect a running consciousness (separate terminal)
 python scripts/inspect.py --name "Aria"
 
 # Resume a paused consciousness
 python scripts/resume.py --name "Aria"
+
+# Spawn refuses if an instance with this name is already alive (#115);
+# stale pid files are cleaned silently. Pass --force to spawn anyway:
+python scripts/spawn.py --name "Aria" --force
 
 # Stop a background instance cleanly (SIGTERM, 5s grace window)
 python scripts/stop.py --name "Aria"
@@ -305,13 +309,16 @@ consciousness-sim/
 │   ├── short_term.py        # Sliding-window buffer (GWT workspace analog)
 │   ├── episodic.py          # Append-only JSONL event log (narrative continuity)
 │   ├── long_term.py         # SQLite + cosine similarity search over embeddings
-│   └── consolidator.py      # Background loop: episodic → long-term via LLM
+│   └── consolidator.py      # Background loop: episodic → long-term via LLM;
+│                            #   emits on_consolidation events per pass (#89)
 ├── persistence/
 │   ├── journal.py           # Append-only JSONL of all events (for inspection)
 │   ├── state_manager.py     # JSON snapshot of identity + short-term + thought count
+│   │                        #   + health block (#117)
 │   └── paths.py             # CONSCIOUSNESS_HOME resolution + name sanitization
 ├── llm/
-│   ├── provider.py          # LLMProvider ABC + Ollama/Anthropic/OpenAI/Mock impls
+│   ├── provider.py          # LLMProvider ABC + Ollama/Anthropic/OpenAI/Mock impls;
+│   │                        #   OllamaProvider has a per-instance LRU embed cache (#113)
 │   ├── perception.py        # PerceptionProvider ABC + WikipediaPerception +
 │   │                        #   MockPerception (issue #53 / PR #54)
 │   └── prompts/             # Prompt templates (thought_generation, self_reflection,
@@ -329,7 +336,8 @@ consciousness-sim/
 │       └── webhook.py
 ├── scripts/
 │   ├── spawn.py             # Entry point: build mind + optional perception
-│   │                        #   + sinks; foreground / --bg / --headless
+│   │                        #   + sinks; foreground / --bg / --headless;
+│   │                        #   refuses duplicate-name spawn (--force override) (#115)
 │   ├── web.py               # Standalone dashboard launcher (issue #55)
 │   ├── stop.py              # Send SIGTERM to a --bg instance (5s grace)
 │   ├── attach.py            # Connect a TUI to a --bg instance via Unix socket (#59)
@@ -369,9 +377,15 @@ consciousness-sim/
 - `long_term.add_memory()` rejects embeddings with dimension mismatches.
 - Memory consolidation logs a warning when 0 memories are stored from non-empty episodic events — always investigate.
 - `OllamaProvider` serializes all requests via a process-wide `asyncio.Semaphore(1)` — concurrent calls queue rather than compete; see `llm/provider.py`.
-- All LLM failures log a `WARNING` before falling back; silent fallback is a bug.
+- All LLM failures in production providers (Ollama / Anthropic / OpenAI) raise — they do **not** fall back to deterministic output, and they log a `WARNING` before propagating. Silent fallback is a bug (#46). `MockProvider` retains deterministic generation for tests.
 - `reflection_probability=0.0` disables reflection entirely — HOT-2 and PP-1 boosts do not override an explicit zero.
 - `LongTermMemory` has a compound index on `(embedding_dim, importance_score, timestamp)`; `similarity_search` candidate selection is O(log N), not O(table size).
+- `IdentityDocument.drift_mood()` applies trigger-driven drift *and* homeostatic reversion to `initial_mood` additively each cycle (#119) — continuously-triggered traits equilibrate at `baseline + drift_rate / homeostasis_rate` rather than saturating at 1.0. `mood.homeostasis_rate` (default 0.1) is optional in the config.
+- `AttentionSchema.decay_only()` runs only from the outer loop's failure branch (#120); successful cycles reset salience to 1.0 via `update()`.
+- `MemoryConsolidator.consolidate_once()` returns a `ConsolidationResult` (not a bare int) carrying `stored / events_in / fell_through_to_fallback / elapsed_s / long_term_total / error`. `run_forever` fires `on_consolidation` after every pass — including the failure case (#89). Equality with `int` is preserved on the `stored` count for callers that treated the prior return as a count.
+- `Consciousness.health` is updated on every cycle and snapshotted in `state.json`. `on_health_change` fires only on status *transitions* (ok ↔ degraded ↔ failing), not every failure (#117).
+- `OllamaProvider.embed` results are cached in a per-instance LRU keyed by `"{model}:{sha256(text)}"` with default capacity 256 (#113). `llm.embed_cache_size` (optional) configures the bound; 0 disables.
+- `scripts/spawn.py` refuses to spawn when a pid file points at a live process; `--force` overrides with a visible warning. Foreground / `--headless` modes record + `atexit`-clean their own pid file (#115).
 
 ---
 
