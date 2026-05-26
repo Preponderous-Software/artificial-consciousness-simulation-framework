@@ -33,7 +33,10 @@ logger = logging.getLogger(__name__)
 # kinds so a corrupted journal can't inject arbitrary payloads into the SSE
 # stream.
 _KNOWN_EVENT_TYPES = frozenset({
-    "thought", "reflection", "perception", "identity_shift", "memory"
+    "thought", "reflection", "perception", "identity_shift", "memory",
+    # MemoryConsolidator passes emit a "consolidation" event (#89) so
+    # the dashboard can surface per-pass stored counts and error flags.
+    "consolidation",
 })
 
 

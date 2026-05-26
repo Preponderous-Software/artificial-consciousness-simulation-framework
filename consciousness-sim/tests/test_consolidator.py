@@ -57,6 +57,9 @@ class _FakeLongTerm:
     async def apply_forgetting_curve(self, decay_rate: float) -> None:
         pass
 
+    async def count(self) -> int:
+        return len(self.added)
+
 
 class _FakeShortTerm:
     def prune_to_capacity(self) -> None:
@@ -232,3 +235,210 @@ def test_non_dash_prefixed_lines_skipped() -> None:
 def test_empty_output_stores_nothing() -> None:
     lt = _run_consolidate("")
     assert lt.added == []
+
+
+# --- #89 consolidation events ----------------------------------------------
+
+
+def test_consolidate_once_returns_rich_result_on_success() -> None:
+    """consolidate_once must return a ConsolidationResult populated with
+    stored count, events_in, fallback flag, and long_term_total (#89)."""
+    from memory.consolidator import ConsolidationResult
+
+    with tempfile.TemporaryDirectory() as tmp:
+        prompt_path = Path(tmp) / "p.txt"
+        prompt_path.write_text("PROMPT {episodic_chunk}", encoding="utf-8")
+        long_term = _FakeLongTerm()
+        events = [_FakeEpisodicEvent("thought", "I notice X.")]
+        consolidator = MemoryConsolidator(
+            provider=_ScriptedProvider("- [Importance: 7] [Emotional valence: 0.3] X happened."),
+            episodic=_FakeEpisodic(events),
+            long_term=long_term,
+            short_term=_FakeShortTerm(),
+            prompt_path=prompt_path,
+            forgetting_curve_enabled=False,
+            decay_rate=0.0,
+        )
+        result = asyncio.run(consolidator.consolidate_once())
+
+    assert isinstance(result, ConsolidationResult)
+    assert result.stored == 1
+    assert result.events_in == 1
+    assert result.fell_through_to_fallback is False
+    assert result.long_term_total == 1
+    assert result.error is None
+    # back-compat: prior tests asserted on int — int comparison still works
+    assert result == 1
+
+
+def test_consolidate_once_marks_fallback_when_parser_fails() -> None:
+    """When the LLM output has no parseable lines but contains text,
+    the fallback path fires and the result records fell_through_to_fallback=True."""
+    with tempfile.TemporaryDirectory() as tmp:
+        prompt_path = Path(tmp) / "p.txt"
+        prompt_path.write_text("PROMPT {episodic_chunk}", encoding="utf-8")
+        long_term = _FakeLongTerm()
+        events = [_FakeEpisodicEvent("thought", "I notice X.")]
+        consolidator = MemoryConsolidator(
+            provider=_ScriptedProvider("- A plain bullet without the bracket metadata."),
+            episodic=_FakeEpisodic(events),
+            long_term=long_term,
+            short_term=_FakeShortTerm(),
+            prompt_path=prompt_path,
+            forgetting_curve_enabled=False,
+            decay_rate=0.0,
+        )
+        result = asyncio.run(consolidator.consolidate_once())
+
+    assert result.fell_through_to_fallback is True
+    assert result.stored == 1  # fallback path stored the plain summary
+    assert result.events_in == 1
+
+
+def test_consolidate_once_empty_episodic_returns_zero_no_fallback() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        prompt_path = Path(tmp) / "p.txt"
+        prompt_path.write_text("PROMPT {episodic_chunk}", encoding="utf-8")
+        long_term = _FakeLongTerm()
+        consolidator = MemoryConsolidator(
+            provider=_ScriptedProvider("(unused)"),
+            episodic=_FakeEpisodic([]),
+            long_term=long_term,
+            short_term=_FakeShortTerm(),
+            prompt_path=prompt_path,
+            forgetting_curve_enabled=False,
+            decay_rate=0.0,
+        )
+        result = asyncio.run(consolidator.consolidate_once())
+
+    assert result.stored == 0
+    assert result.events_in == 0
+    assert result.fell_through_to_fallback is False
+    assert result.error is None
+
+
+def test_run_forever_emits_on_consolidation_callback_success() -> None:
+    """run_forever must invoke on_consolidation after each pass."""
+    received: list = []
+
+    async def _runner() -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_path = Path(tmp) / "p.txt"
+            prompt_path.write_text("PROMPT {episodic_chunk}", encoding="utf-8")
+            long_term = _FakeLongTerm()
+            events = [_FakeEpisodicEvent("thought", "I notice X.")]
+            consolidator = MemoryConsolidator(
+                provider=_ScriptedProvider(
+                    "- [Importance: 7] [Emotional valence: 0.3] X happened."
+                ),
+                episodic=_FakeEpisodic(events),
+                long_term=long_term,
+                short_term=_FakeShortTerm(),
+                prompt_path=prompt_path,
+                forgetting_curve_enabled=False,
+                decay_rate=0.0,
+            )
+
+            stop_event = asyncio.Event()
+
+            async def _on_consolidation(result) -> None:
+                received.append(result)
+                stop_event.set()
+
+            await consolidator.run_forever(
+                interval_seconds=0.01,
+                stop_event=stop_event,
+                on_consolidation=_on_consolidation,
+            )
+
+    asyncio.run(_runner())
+    assert len(received) == 1
+    assert received[0].stored == 1
+    assert received[0].error is None
+
+
+def test_run_forever_emits_error_field_on_exception() -> None:
+    """When consolidate_once raises, the callback still fires with the
+    captured exception in ``result.error``."""
+    from memory.consolidator import ConsolidationResult
+
+    received: list[ConsolidationResult] = []
+
+    class _BrokenEpisodic:
+        async def recent(self, limit: int = 20):
+            raise RuntimeError("episodic disk full")
+
+    async def _runner() -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_path = Path(tmp) / "p.txt"
+            prompt_path.write_text("PROMPT {episodic_chunk}", encoding="utf-8")
+            long_term = _FakeLongTerm()
+            consolidator = MemoryConsolidator(
+                provider=_ScriptedProvider("(unused)"),
+                episodic=_BrokenEpisodic(),
+                long_term=long_term,
+                short_term=_FakeShortTerm(),
+                prompt_path=prompt_path,
+                forgetting_curve_enabled=False,
+                decay_rate=0.0,
+            )
+
+            stop_event = asyncio.Event()
+
+            async def _on_consolidation(result: ConsolidationResult) -> None:
+                received.append(result)
+                stop_event.set()
+
+            await consolidator.run_forever(
+                interval_seconds=0.01,
+                stop_event=stop_event,
+                on_consolidation=_on_consolidation,
+            )
+
+    asyncio.run(_runner())
+    assert len(received) == 1
+    assert received[0].error is not None
+    assert "episodic disk full" in received[0].error
+    assert received[0].stored == 0
+
+
+def test_run_forever_swallows_callback_errors() -> None:
+    """A raising on_consolidation must NOT break the consolidation loop."""
+    callback_calls = 0
+
+    async def _runner() -> None:
+        nonlocal callback_calls
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_path = Path(tmp) / "p.txt"
+            prompt_path.write_text("PROMPT {episodic_chunk}", encoding="utf-8")
+            long_term = _FakeLongTerm()
+            events = [_FakeEpisodicEvent("thought", "I notice X.")]
+            consolidator = MemoryConsolidator(
+                provider=_ScriptedProvider(
+                    "- [Importance: 7] [Emotional valence: 0.3] X."
+                ),
+                episodic=_FakeEpisodic(events),
+                long_term=long_term,
+                short_term=_FakeShortTerm(),
+                prompt_path=prompt_path,
+                forgetting_curve_enabled=False,
+                decay_rate=0.0,
+            )
+
+            stop_event = asyncio.Event()
+
+            async def _on_consolidation(result) -> None:
+                nonlocal callback_calls
+                callback_calls += 1
+                stop_event.set()
+                raise RuntimeError("handler exploded")
+
+            # If the loop propagated the error, this would raise.
+            await consolidator.run_forever(
+                interval_seconds=0.01,
+                stop_event=stop_event,
+                on_consolidation=_on_consolidation,
+            )
+
+    asyncio.run(_runner())
+    assert callback_calls == 1

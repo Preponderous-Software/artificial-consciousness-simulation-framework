@@ -253,10 +253,10 @@ def test_run_loop_consolidator_cancelled_on_stop(tmp_path, monkeypatch) -> None:
 
         original_run_forever = mind.consolidator.run_forever
 
-        async def _spy_forever(interval: float, stop_event: asyncio.Event) -> None:
+        async def _spy_forever(interval: float, stop_event: asyncio.Event, **kwargs) -> None:
             nonlocal consolidator_ran
             consolidator_ran = True
-            await original_run_forever(interval, stop_event)
+            await original_run_forever(interval, stop_event, **kwargs)
 
         mind.consolidator.run_forever = _spy_forever
 
