@@ -110,9 +110,6 @@ class IdentityDocument:
     # With both terms additive, continuously-reinforced traits plateau at
     # ``baseline + drift_rate/homeostasis_rate`` rather than 1.0.
     _DEFAULT_HOMEOSTASIS_RATE: ClassVar[float] = 0.1
-    # Retained for back-compat with any caller that still imports the old
-    # private constant.
-    _REVERSION_RATE: ClassVar[float] = _DEFAULT_HOMEOSTASIS_RATE
 
     def apply_amendment(self, amendment: str) -> None:
         self.amendments.append(amendment)
