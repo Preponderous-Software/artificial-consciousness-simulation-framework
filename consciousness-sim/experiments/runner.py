@@ -419,11 +419,7 @@ def start_detached(
     experiments_root = experiments_root or EXPERIMENTS_ROOT
     manifest = ExperimentManifest.from_yaml(Path(manifest_path))
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
-    if manifest.replicates and manifest.replicates > 1:
-        # For replicates, the timestamped dir is the parent; children land beneath
-        run_dir = experiments_root / manifest.name / timestamp
-    else:
-        run_dir = experiments_root / manifest.name / timestamp
+    run_dir = experiments_root / manifest.name / timestamp
     run_dir.parent.mkdir(parents=True, exist_ok=True)
     run_dir.mkdir()
     (run_dir / _STARTED_MARKER).touch()
