@@ -29,7 +29,7 @@ from core.inner_voice import InnerVoice
 from core.reflection import ReflectionEngine
 from core.thought_loop import ThoughtLoop
 from interfaces.discord.webhook import build_sink_from_config as build_discord_sink
-from llm.perception import PerceptionProvider, build_perception_provider
+from llm.perception import Perception, PerceptionProvider, build_perception_provider
 from llm.provider import build_provider
 from memory.consolidator import ConsolidationResult, MemoryConsolidator
 from memory.episodic import EpisodicMemory
@@ -399,6 +399,20 @@ class Consciousness:
         await self._emit(self.on_reflection, {"type": "reflection", "content": text})
         return text
 
+    async def _handle_perception_event(self, perception: Perception) -> None:
+        perception_summary = f"[{perception.source}: {perception.title}] {perception.content}"
+        await self.journal.append("perception", perception_summary)
+        await self._emit(
+            self.on_perception,
+            {
+                "type": "perception",
+                "content": perception_summary,
+                "source": perception.source,
+                "title": perception.title,
+                "url": perception.url,
+            },
+        )
+
     async def _emit_consolidation_result(self, result: "ConsolidationResult") -> None:
         payload: dict[str, Any] = {
             "type": "consolidation",
@@ -512,19 +526,7 @@ class Consciousness:
                 self.identity.drift_mood(drift_text, drift_rate, homeostasis_rate)
 
                 if cycle.perception is not None:
-                    p = cycle.perception
-                    perception_summary = f"[{p.source}: {p.title}] {p.content}"
-                    await self.journal.append("perception", perception_summary)
-                    await self._emit(
-                        self.on_perception,
-                        {
-                            "type": "perception",
-                            "content": perception_summary,
-                            "source": p.source,
-                            "title": p.title,
-                            "url": p.url,
-                        },
-                    )
+                    await self._handle_perception_event(cycle.perception)
 
                 await self.journal.append("thought", cycle.thought)
                 await self._emit(self.on_thought, {"type": "thought", "content": cycle.thought})
