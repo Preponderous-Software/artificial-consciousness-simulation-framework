@@ -212,31 +212,9 @@ class ThoughtLoop:
             len(prompt_text), prediction_error,
         )
 
-        reflection_text: str | None = None
-        existential_text: str | None = None
-        # reflection_probability=0.0 means "disabled"; boosts only apply when a
-        # baseline is set, preserving the existing semantics of explicit zero.
-        effective_reflection_prob = (
-            min(1.0,
-                self.reflection_probability
-                + self.monitor.reflection_boost(label)
-                + (prediction_error * _PREDICTION_ERROR_BOOST))
-            if self.reflection_probability > 0.0
-            else 0.0
+        reflection_text, existential_text = await self._maybe_run_reflection_and_existential(
+            thought_count, label, prediction_error
         )
-        if random.random() < effective_reflection_prob:
-            recent = self.short_term.render_for_prompt()
-            if self.reflection_engine.should_deep_reflect(thought_count):
-                reflection_text = await self.reflection_engine.deep_reflection(self.identity.name, recent)
-            else:
-                reflection_text = await self.reflection_engine.shallow_reflection(self.identity.name, recent)
-            self.short_term.add("reflection", reflection_text)
-            await self.episodic.append("reflection", reflection_text)
-
-        if self.existential_every_n > 0 and thought_count > 0 and thought_count % self.existential_every_n == 0:
-            existential_text = await self.reflection_engine.existential_inquiry(self.identity.name, f"{thought_count} thoughts")
-            self.short_term.add("existential", existential_text)
-            await self.episodic.append("existential", existential_text)
 
         focus, theme = self._determine_attention_focus(
             thought, memories, related, perception, reflection_text, existential_text
@@ -275,6 +253,46 @@ class ThoughtLoop:
         if not theme:
             theme = _extract_theme(thought)
         return focus, theme
+
+    async def _maybe_run_reflection_and_existential(
+        self,
+        thought_count: int,
+        label: str,
+        prediction_error: float,
+    ) -> tuple[str | None, str | None]:
+        """Probabilistically trigger reflection and/or existential inquiry.
+
+        Returns (reflection_text, existential_text); either may be None.
+        reflection_probability=0.0 fully disables reflection — boosts don't override an explicit zero.
+        """
+        reflection_text: str | None = None
+        existential_text: str | None = None
+
+        effective_prob = (
+            min(1.0,
+                self.reflection_probability
+                + self.monitor.reflection_boost(label)
+                + (prediction_error * _PREDICTION_ERROR_BOOST))
+            if self.reflection_probability > 0.0
+            else 0.0
+        )
+        if random.random() < effective_prob:
+            recent = self.short_term.render_for_prompt()
+            if self.reflection_engine.should_deep_reflect(thought_count):
+                reflection_text = await self.reflection_engine.deep_reflection(self.identity.name, recent)
+            else:
+                reflection_text = await self.reflection_engine.shallow_reflection(self.identity.name, recent)
+            self.short_term.add("reflection", reflection_text)
+            await self.episodic.append("reflection", reflection_text)
+
+        if self.existential_every_n > 0 and thought_count > 0 and thought_count % self.existential_every_n == 0:
+            existential_text = await self.reflection_engine.existential_inquiry(
+                self.identity.name, f"{thought_count} thoughts"
+            )
+            self.short_term.add("existential", existential_text)
+            await self.episodic.append("existential", existential_text)
+
+        return reflection_text, existential_text
 
     async def _ingest_perception(self, perception: Perception) -> None:
         """Add perception stimulus to the short-term buffer and episodic log."""
