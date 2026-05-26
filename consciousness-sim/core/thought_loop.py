@@ -242,18 +242,9 @@ class ThoughtLoop:
             self.short_term.add("existential", existential_text)
             await self.episodic.append("existential", existential_text)
 
-        if perception is not None:
-            focus, theme = "perception", _extract_theme(perception.title + " " + perception.content)
-        elif existential_text is not None:
-            focus, theme = "existential", _extract_theme(existential_text)
-        elif reflection_text is not None:
-            focus, theme = "reflection", _extract_theme(reflection_text)
-        elif related:
-            focus, theme = "memory", _extract_theme(memories)
-        else:
-            focus, theme = "introspection", _extract_theme(thought)
-        if not theme:
-            theme = _extract_theme(thought)
+        focus, theme = self._determine_attention_focus(
+            thought, memories, related, perception, reflection_text, existential_text
+        )
         self.identity.attention_schema.update(focus, theme)
 
         return ThoughtCycleResult(
@@ -264,6 +255,30 @@ class ThoughtLoop:
             metacognitive_label=label,
             prediction_error=prediction_error,
         )
+
+    def _determine_attention_focus(
+        self,
+        thought: str,
+        memories: str,
+        related: list,
+        perception: "Perception | None",
+        reflection_text: "str | None",
+        existential_text: "str | None",
+    ) -> tuple[str, str]:
+        if perception is not None:
+            focus = "perception"
+            theme = _extract_theme(perception.title + " " + perception.content)
+        elif existential_text is not None:
+            focus, theme = "existential", _extract_theme(existential_text)
+        elif reflection_text is not None:
+            focus, theme = "reflection", _extract_theme(reflection_text)
+        elif related:
+            focus, theme = "memory", _extract_theme(memories)
+        else:
+            focus, theme = "introspection", _extract_theme(thought)
+        if not theme:
+            theme = _extract_theme(thought)
+        return focus, theme
 
     async def _maybe_fetch_perception(self, thought_count: int) -> Perception | None:
         """Fetch a perception every Nth cycle. Failures yield None (logged by provider)."""
