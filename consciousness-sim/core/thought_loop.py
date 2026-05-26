@@ -172,11 +172,7 @@ class ThoughtLoop:
         perception = await self._maybe_fetch_perception(thought_count)
         perception_ms = (time.monotonic() - t_start) * 1000
         if perception is not None:
-            # Lingers into subsequent cycles via short-term buffer and gets
-            # consolidated by the memory consolidator from episodic.
-            stim = f"[{perception.source}: {perception.title}] {perception.content}"
-            self.short_term.add("perception", stim)
-            await self.episodic.append("perception", stim)
+            await self._ingest_perception(perception)
 
         prompt_text = self._build_thought_prompt(context, memories, perception)
 
@@ -279,6 +275,12 @@ class ThoughtLoop:
         if not theme:
             theme = _extract_theme(thought)
         return focus, theme
+
+    async def _ingest_perception(self, perception: Perception) -> None:
+        """Add perception stimulus to the short-term buffer and episodic log."""
+        stim = f"[{perception.source}: {perception.title}] {perception.content}"
+        self.short_term.add("perception", stim)
+        await self.episodic.append("perception", stim)
 
     async def _maybe_fetch_perception(self, thought_count: int) -> Perception | None:
         """Fetch a perception every Nth cycle. Failures yield None (logged by provider)."""
