@@ -115,6 +115,20 @@ class ThoughtLoop:
         self.monitor = MetacognitiveMonitor()
         self._predicted_theme: str = ""  # PP-1: continuity prior set at end of each cycle
 
+    def _build_thought_prompt(self, context: str, memories: str, perception: "Perception | None") -> str:
+        anchor = self.identity_anchor_path.read_text(encoding="utf-8").format(
+            **self.identity.anchor_payload()
+        )
+        prompt = self.thought_prompt_path.read_text(encoding="utf-8").format(
+            name=self.identity.name,
+            identity_summary=self.identity.summary(),
+            mood_vector=self.identity.mood,
+            retrieved_memories=memories,
+            short_term_buffer=context,
+            perception_block=render_perception_block(perception),
+        )
+        return f"{anchor}\n\n{prompt}"
+
     async def run_cycle(self, thought_count: int) -> ThoughtCycleResult:
         # PP-1: record prediction from previous cycle before generating new thought.
         prior_prediction = self._predicted_theme
@@ -145,16 +159,7 @@ class ThoughtLoop:
             self.short_term.add("perception", stim)
             await self.episodic.append("perception", stim)
 
-        anchor = self.identity_anchor_path.read_text(encoding="utf-8").format(**self.identity.anchor_payload())
-        prompt = self.thought_prompt_path.read_text(encoding="utf-8").format(
-            name=self.identity.name,
-            identity_summary=self.identity.summary(),
-            mood_vector=self.identity.mood,
-            retrieved_memories=memories,
-            short_term_buffer=context,
-            perception_block=render_perception_block(perception),
-        )
-        prompt_text = f"{anchor}\n\n{prompt}"
+        prompt_text = self._build_thought_prompt(context, memories, perception)
 
         t_start = time.monotonic()
         raw = await self.provider.generate(
