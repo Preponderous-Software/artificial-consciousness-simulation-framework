@@ -74,6 +74,10 @@ python scripts/spawn.py --name Aria --headless
 # Background daemon — detaches, logs to ~/.consciousness/Aria/run.log
 python scripts/spawn.py --name Aria --bg
 
+# Spawn refuses to start if an instance with the same name is already alive (#115).
+# Stale pid files (process gone) are cleaned silently. Pass --force to spawn anyway:
+python scripts/spawn.py --name Aria --bg --force
+
 # Standalone web dashboard — separate process, manages many instances
 python scripts/web.py --port 8080
 # Default bind is 127.0.0.1; opt into LAN with --host 0.0.0.0
@@ -179,6 +183,7 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 - `llm.model`: provider-specific model name
 - `llm.temperature`: creativity level for generation
 - `llm.max_tokens`: max generation length
+- `llm.embed_cache_size`: optional. Per-process LRU cap for `OllamaProvider.embed` results, keyed by sha256 of the input text (#113). Default 256; 0 disables. Absent → provider default applies. Other providers ignore this key.
 - `thought_loop.min_interval_seconds / max_interval_seconds`: per-cycle cadence jitter
 - `thought_loop.reflection_probability`: base chance of reflection per cycle (0.0 disables all reflection including HOT-2/PP-1 boosts)
 - `thought_loop.existential_inquiry_every_n_thoughts`: deterministic existential cadence
@@ -189,6 +194,7 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 - `memory.importance_decay_rate`: decay amount per consolidation pass
 - `mood.initial`: starting emotional vector
 - `mood.drift_rate`: per-thought emotional drift magnitude
+- `mood.homeostasis_rate`: optional. Per-cycle pull toward `mood.initial` applied additively alongside trigger-driven drift (#119). Default 0.1 when absent. Continuously-triggered traits equilibrate at `initial + drift_rate / homeostasis_rate` rather than saturating at 1.0.
 - `perception.enabled`: opt in to the perception specialist (PR #54)
 - `perception.provider`: `wikipedia | mock` — source of external stimulus
 - `perception.every_n_cycles`: fetch cadence (default 3)
@@ -196,7 +202,7 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 - `perception.cache_last_n`: don't replay the same snippet within N fetches
 - `discord.enabled`: opt in to Discord webhook streaming (see "Discord webhook" above)
 - `discord.webhook_url`: webhook URL — use `${ENV_VAR}` indirection; never commit the literal URL
-- `discord.events`: which event types to forward (`thought`, `reflection`, `perception`, `identity_shift`, `memory_stored`)
+- `discord.events`: which event types to forward (`thought`, `reflection`, `perception`, `identity_shift`, `memory_stored`, `consolidation` (#89), `health_change` (#117)). Discord auto-subscribes to any of these via the existing `getattr(mind, "on_{event_type}")` register loop — opt in by adding the type to the list.
 - `discord.rate_limit.max_per_minute`: outbound rate cap (default 25; Discord allows ~30/min sustained)
 - `discord.truncate_chars`: max embed description length (default 1800; Discord cap 4096)
 
@@ -212,8 +218,8 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 8. **PP-1:** compute `prediction_error` against prior cycle's predicted theme (continuity prior); update `_predicted_theme` for next cycle; every `perf_log_every_n` cycles log per-component timing at INFO level
 9. Reflection trigger: `effective_prob = base + HOT-2 boost + PP-1 boost` (capped at 1.0; base=0.0 disables entirely)
 10. Periodically trigger existential inquiry (deterministic, every N thoughts)
-11. Update `AttentionSchema` (informed by cycle outcome); outer loop appends to journal and emits events to handlers
-12. Background consolidator compresses episodic traces into durable long-term memories
+11. Update `AttentionSchema` via `update()` on success (sets focus/theme, resets salience to 1.0); on a failed cycle the outer loop calls `decay_only()` instead so salience fades smoothly (#120). Mood is drifted via `IdentityDocument.drift_mood()` — trigger-driven drift plus additive homeostatic reversion (#119). Outer loop appends to journal and emits events to handlers, including `on_health_change` on status transitions (#117).
+12. Background consolidator compresses episodic traces into durable long-term memories and emits one `on_consolidation` event per pass (#89), success or failure
 
 ## Extending the System
 
