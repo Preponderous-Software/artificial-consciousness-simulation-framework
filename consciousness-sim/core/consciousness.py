@@ -456,7 +456,7 @@ class Consciousness:
             while not self._stop_event.is_set():
                 self.thought_count += 1
                 logging.debug("Thought cycle %d: starting LLM generation", self.thought_count)
-                t0 = asyncio.get_event_loop().time()
+                t0 = asyncio.get_running_loop().time()
                 try:
                     cycle = await self.thought_loop.run_cycle(self.thought_count)
                 except Exception as exc:
@@ -500,7 +500,7 @@ class Consciousness:
                 # #117: a successful cycle clears the degraded/failing state
                 # and emits a health_change event when transitioning back to ok.
                 await self._record_success()
-                elapsed = asyncio.get_event_loop().time() - t0
+                elapsed = asyncio.get_running_loop().time() - t0
                 logging.debug("Thought cycle %d: completed in %.1fs", self.thought_count, elapsed)
 
                 # Include perception content so external stimulus modulates
