@@ -72,6 +72,29 @@ class ConsolidationResult:
 OnConsolidation = Callable[[ConsolidationResult], Awaitable[None]]
 
 
+def _parse_consolidation_line(
+    raw_line: str,
+) -> tuple[float, float, str] | None:
+    """Parse one LLM output line into (importance, valence, summary).
+
+    Returns None and logs a warning if the line is unparseable or not
+    a list item. Strips markdown emphasis before matching so bold-wrapped
+    lines produced by llama3.2:3b (e.g. ``**- [Importance: 9]...**``)
+    are handled correctly (issue #63).
+    """
+    line = re.sub(r"[*_]+", "", raw_line).strip()
+    if not line.startswith("-"):
+        return None
+    match = re.match(
+        r"^-\s*\[Importance:\s*(\d+)\]\s*\[Emotional valence:\s*([-+]?\d*\.?\d+)\]\s*(.+)$",
+        line,
+    )
+    if not match:
+        logging.warning("Consolidation: skipping unparseable line: %r", raw_line)
+        return None
+    return float(match.group(1)), float(match.group(2)), match.group(3).strip()
+
+
 class MemoryConsolidator:
     """Compresses recent episodic experience into durable semantic memories."""
 
@@ -119,24 +142,13 @@ class MemoryConsolidator:
         stored = 0
         fallback_candidates: list[str] = []
         for raw_line in output.splitlines():
-            # Strip markdown emphasis (* and _) BEFORE the prefix check so lines
-            # like `- **[Importance: 9] [Emotional valence: 0.8]** summary` (the
-            # dominant llama3.2:3b output, per issue #63) parse correctly. Also
-            # handles `**- [Importance...]**` if the model wraps the whole line.
-            line = re.sub(r"[*_]+", "", raw_line).strip()
-            if not line.startswith("-"):
+            parsed = _parse_consolidation_line(raw_line)
+            if parsed is None:
+                line = re.sub(r"[*_]+", "", raw_line).strip()
+                if line.startswith("-"):
+                    fallback_candidates.append(line.lstrip("- ").strip())
                 continue
-            match = re.match(
-                r"^-\s*\[Importance:\s*(\d+)\]\s*\[Emotional valence:\s*([-+]?\d*\.?\d+)\]\s*(.+)$",
-                line,
-            )
-            if not match:
-                logging.warning("Consolidation: skipping unparseable line: %r", raw_line)
-                fallback_candidates.append(line.lstrip("- ").strip())
-                continue
-            importance = float(match.group(1))
-            valence = float(match.group(2))
-            summary = match.group(3).strip()
+            importance, valence, summary = parsed
             embedding = await self.provider.embed(summary)
             await self.long_term.add_memory(summary, valence, importance, embedding)
             stored += 1
