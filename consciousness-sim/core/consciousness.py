@@ -398,6 +398,18 @@ class Consciousness:
         await self._emit(self.on_reflection, {"type": "reflection", "content": text})
         return text
 
+    async def _emit_memory_count(self) -> None:
+        lt_count = await self.long_term.count()
+        memory_summary = f"Long-term store: {lt_count} memories"
+        # Journaled with structured `long_term_count` so out-of-process tailers
+        # (the standalone web dashboard) can update the counter without parsing
+        # the human-readable summary.
+        await self.journal.append("memory", memory_summary, long_term_count=lt_count)
+        await self._emit(
+            self.on_memory_stored,
+            {"type": "memory", "long_term_count": lt_count, "content": memory_summary},
+        )
+
     async def _handle_reflection_and_amendment(self, reflection: str) -> None:
         await self.journal.append("reflection", reflection)
         await self._emit(self.on_reflection, {"type": "reflection", "content": reflection})
@@ -554,16 +566,7 @@ class Consciousness:
                 if cycle.reflection:
                     await self._handle_reflection_and_amendment(cycle.reflection)
 
-                lt_count = await self.long_term.count()
-                memory_summary = f"Long-term store: {lt_count} memories"
-                # Journaled with structured `long_term_count` so out-of-process
-                # tailers (the standalone web dashboard, issue #55) can update
-                # the memory counter without parsing the human-readable summary.
-                await self.journal.append("memory", memory_summary, long_term_count=lt_count)
-                await self._emit(
-                    self.on_memory_stored,
-                    {"type": "memory", "long_term_count": lt_count, "content": memory_summary},
-                )
+                await self._emit_memory_count()
 
                 await self._save_state()
 
