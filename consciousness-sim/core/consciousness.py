@@ -439,13 +439,13 @@ class Consciousness:
         )
 
         try:
-            tcfg = self.config["thought_loop"]
-            min_interval = float(tcfg["min_interval_seconds"])
-            max_interval = float(tcfg["max_interval_seconds"])
+            thought_loop_cfg = self.config["thought_loop"]
+            min_interval = float(thought_loop_cfg["min_interval_seconds"])
+            max_interval = float(thought_loop_cfg["max_interval_seconds"])
             drift_rate = float(self.config["mood"]["drift_rate"])
             # Optional — IdentityDocument.drift_mood uses its default when None.
-            _h = self.config["mood"].get("homeostasis_rate")
-            homeostasis_rate = float(_h) if _h is not None else None
+            homeostasis_cfg = self.config["mood"].get("homeostasis_rate")
+            homeostasis_rate = float(homeostasis_cfg) if homeostasis_cfg is not None else None
 
             _MAX_CONSECUTIVE_FAILURES = 20
             _RECOVERY_TRIGGER = 3
