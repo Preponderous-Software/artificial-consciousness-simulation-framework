@@ -296,6 +296,26 @@ def _run_one(
 
     # 6. Persist artifacts
     (run_dir / "manifest.yaml").write_text(manifest.to_yaml(), encoding="utf-8")
+    meta = _build_run_meta(
+        manifest, started_at, ended_at, exit_reason,
+        starting_thought_count, log_path, run_dir,
+    )
+    (run_dir / "meta.yaml").write_text(yaml.safe_dump(meta, sort_keys=False), encoding="utf-8")
+    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    (run_dir / "report.md").write_text(render_report(manifest, meta, metrics), encoding="utf-8")
+
+    return run_dir
+
+
+def _build_run_meta(
+    manifest: "ExperimentManifest",
+    started_at: "datetime",
+    ended_at: "datetime",
+    exit_reason: str,
+    starting_thought_count: int,
+    log_path: Path,
+    run_dir: Path,
+) -> dict:
     meta = {
         "manifest_schema_version": manifest.schema_version,
         "branch_sha": manifest.branch_sha or _git_sha(),
@@ -308,11 +328,7 @@ def _run_one(
     }
     if manifest.resume_from is not None:
         meta["resumed_from"] = manifest.resume_from
-    (run_dir / "meta.yaml").write_text(yaml.safe_dump(meta, sort_keys=False), encoding="utf-8")
-    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-    (run_dir / "report.md").write_text(render_report(manifest, meta, metrics), encoding="utf-8")
-
-    return run_dir
+    return meta
 
 
 def _compute_thought_target(
