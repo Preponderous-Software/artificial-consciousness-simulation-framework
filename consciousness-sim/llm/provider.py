@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import urllib.parse
+import urllib.request
 from abc import ABC, abstractmethod
 from typing import Any, Sequence
 
@@ -341,11 +342,10 @@ class OllamaProvider(LLMProvider):
         raw = self._resolve_base_url() or "http://localhost:11434"
         base = raw if "://" in raw else f"http://{raw}"
         url = base.rstrip("/") + "/api/tags"
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
-            import urllib.request as _req
             await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: _req.urlopen(url, timeout=5)),
+                loop.run_in_executor(None, lambda: urllib.request.urlopen(url, timeout=5)),
                 timeout=6.0,
             )
             return True
