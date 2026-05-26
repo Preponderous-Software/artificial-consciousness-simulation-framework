@@ -15,8 +15,8 @@ from errors (full PP would revise the prior over time).
 from __future__ import annotations
 
 import logging
-import re
 import random
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
