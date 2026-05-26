@@ -61,6 +61,14 @@ def load_state(state_path: Path) -> dict[str, Any]:
     return json.loads(Path(state_path).read_text(encoding="utf-8"))
 
 
+def _perception_words(text: str, min_word_len: int) -> set[str]:
+    """Word set for perception overlap: lowercase, length-filtered, stop-word-filtered."""
+    return {
+        w for w in (m.lower() for m in _WORD_TOKEN_RE.findall(text))
+        if len(w) >= min_word_len and w not in _STOP_WORDS
+    }
+
+
 def _content_tokens(text: str) -> list[str]:
     """Lowercase, length-filtered, stop-word-filtered word tokens."""
     return [
@@ -182,26 +190,20 @@ def perception_word_overlap(
     Weakens as the agent matures (Echo's late perceptions show 0 word overlap
     while clearly being referenced semantically — see #74).
     """
-    def words_of(text: str) -> set[str]:
-        return {
-            w for w in (m.lower() for m in _WORD_TOKEN_RE.findall(text))
-            if len(w) >= min_word_len and w not in _STOP_WORDS
-        }
-
     seen: set[str] = set()
     traces: list[PerceptionTrace] = []
     for i, e in enumerate(events):
         if e.get("type") == "thought":
-            seen |= words_of(e.get("content", ""))
+            seen |= _perception_words(e.get("content", ""), min_word_len)
         elif e.get("type") == "perception":
-            perc_words = words_of(e.get("content", ""))
+            perc_words = _perception_words(e.get("content", ""), min_word_len)
             # Walk forward to find next `window` thoughts
             next_thought_words: set[str] = set()
             collected = 0
             for j in range(i + 1, len(events)):
                 if events[j].get("type") != "thought":
                     continue
-                next_thought_words |= words_of(events[j].get("content", ""))
+                next_thought_words |= _perception_words(events[j].get("content", ""), min_word_len)
                 collected += 1
                 if collected >= window:
                     break
@@ -278,6 +280,12 @@ class CycleIntervalStats:
     n_intervals: int
 
 
+def _percentile(sorted_values: list[float], p: float) -> float:
+    """Return the p-th percentile (0–1) of a pre-sorted list."""
+    n = len(sorted_values)
+    return sorted_values[min(n - 1, int(n * p))]
+
+
 def cycle_interval_stats(events: list[dict[str, Any]]) -> CycleIntervalStats:
     """Wall-clock seconds between consecutive thought events.
 
@@ -299,8 +307,8 @@ def cycle_interval_stats(events: list[dict[str, Any]]) -> CycleIntervalStats:
     return CycleIntervalStats(
         mean_s=sum(intervals) / n,
         p50_s=intervals_sorted[n // 2],
-        p95_s=intervals_sorted[min(n - 1, int(n * 0.95))],
-        p99_s=intervals_sorted[min(n - 1, int(n * 0.99))],
+        p95_s=_percentile(intervals_sorted, 0.95),
+        p99_s=_percentile(intervals_sorted, 0.99),
         n_intervals=n,
     )
 
@@ -350,6 +358,64 @@ DEFAULT_ATTRACTOR_WORDS = ["threads", "tapestry", "thread", "cosmic", "unfolding
 METRICS_SCHEMA_VERSION = 1
 
 
+def _build_vocabulary_section(
+    counter: "Counter[str]",
+    attractor_words: list[str],
+    n_thoughts: int,
+) -> dict[str, Any]:
+    resolved = attractor_words or DEFAULT_ATTRACTOR_WORDS
+    return {
+        "top_50": [[w, c] for w, c in counter.most_common(50)],
+        "top_word_density_per_thought": top_word_density(counter, n_thoughts),
+        "attractor_ranks_in_top_10": attractor_words_in_top_n(counter, resolved, n=10),
+        "attractor_ranks_in_top_50": attractor_words_in_top_n(counter, resolved, n=50),
+    }
+
+
+def _build_mood_section(state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "initial": state.get("identity", {}).get("initial_mood") or _DEFAULT_INITIAL_MOOD,
+        "final": state.get("identity", {}).get("mood", {}),
+        "dimensions_non_degenerate": mood_dimensions_non_degenerate(state),
+        "collapse_score": mood_collapse_score(state),
+    }
+
+
+def _build_perception_section(traces: list[PerceptionTrace]) -> dict[str, Any]:
+    # First / middle / last, dedup'd so n_traces < 3 doesn't produce
+    # the same trace 2-3 times (#106).
+    indices = sorted({0, len(traces) // 2, len(traces) - 1}) if traces else []
+    return {
+        "n_traces": len(traces),
+        "influence_rate": perception_influence_rate(traces),
+        "sample_traces": [
+            {
+                "title": traces[i].perception_title,
+                "new_words_in_next_thoughts": list(traces[i].new_words_in_next_thoughts),
+            }
+            for i in indices
+        ],
+    }
+
+
+def _build_performance_section(
+    events: list[dict[str, Any]],
+    intervals: CycleIntervalStats,
+    trajectory: list[float],
+) -> dict[str, Any]:
+    return {
+        "cycle_interval_stats": {
+            "mean_s": intervals.mean_s,
+            "p50_s": intervals.p50_s,
+            "p95_s": intervals.p95_s,
+            "p99_s": intervals.p99_s,
+            "n_intervals": intervals.n_intervals,
+        },
+        "cycle_rate_trajectory": trajectory,
+        "trajectory_window_size": 30,
+    }
+
+
 def compute_all(
     journal_path: Path,
     state_path: Path,
@@ -374,52 +440,13 @@ def compute_all(
     return {
         "_schema_version": METRICS_SCHEMA_VERSION,
         "event_counts": counts,
-        "vocabulary": {
-            "top_50": [[w, c] for w, c in counter.most_common(50)],
-            "top_word_density_per_thought": top_word_density(counter, n_thoughts),
-            "attractor_ranks_in_top_10": attractor_words_in_top_n(
-                counter, attractor_words or DEFAULT_ATTRACTOR_WORDS, n=10
-            ),
-            "attractor_ranks_in_top_50": attractor_words_in_top_n(
-                counter, attractor_words or DEFAULT_ATTRACTOR_WORDS, n=50
-            ),
-        },
-        "mood": {
-            "initial": (
-                state.get("identity", {}).get("initial_mood")
-                or _DEFAULT_INITIAL_MOOD
-            ),
-            "final": state.get("identity", {}).get("mood", {}),
-            "dimensions_non_degenerate": mood_dimensions_non_degenerate(state),
-            "collapse_score": mood_collapse_score(state),
-        },
-        "perception": {
-            "n_traces": len(traces),
-            "influence_rate": perception_influence_rate(traces),
-            "sample_traces": [
-                {
-                    "title": traces[i].perception_title,
-                    "new_words_in_next_thoughts": list(traces[i].new_words_in_next_thoughts),
-                }
-                # First / middle / last, dedup'd so n_traces < 3 doesn't produce
-                # the same trace 2-3 times (#106).
-                for i in (sorted({0, len(traces) // 2, len(traces) - 1}) if traces else [])
-            ],
-        },
+        "vocabulary": _build_vocabulary_section(counter, attractor_words or DEFAULT_ATTRACTOR_WORDS, n_thoughts),
+        "mood": _build_mood_section(state),
+        "perception": _build_perception_section(traces),
         "reflections": {
             "rate_per_thought": reflection_rate(events),
             "shifts_per_reflection": identity_shifts_per_reflection(events, state),
             "n_amendments_in_state": len(state.get("identity", {}).get("amendments", [])),
         },
-        "performance": {
-            "cycle_interval_stats": {
-                "mean_s": intervals.mean_s,
-                "p50_s": intervals.p50_s,
-                "p95_s": intervals.p95_s,
-                "p99_s": intervals.p99_s,
-                "n_intervals": intervals.n_intervals,
-            },
-            "cycle_rate_trajectory": trajectory,
-            "trajectory_window_size": 30,
-        },
+        "performance": _build_performance_section(events, intervals, trajectory),
     }
