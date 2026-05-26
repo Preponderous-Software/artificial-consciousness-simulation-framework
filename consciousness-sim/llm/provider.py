@@ -128,15 +128,19 @@ class OpenAIProvider(LLMProvider):
     def __init__(self, model: str) -> None:
         self.model = model
 
-    async def _generate(self, prompt: str, system: str, temperature: float, max_tokens: int) -> str:
+    def _get_client(self) -> "AsyncOpenAI":
         try:
             from openai import AsyncOpenAI
-        except Exception:
+        except ImportError:
             raise RuntimeError("openai package not installed")
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY not set")
-        client = AsyncOpenAI(api_key=api_key)
+        from openai import AsyncOpenAI
+        return AsyncOpenAI(api_key=api_key)
+
+    async def _generate(self, prompt: str, system: str, temperature: float, max_tokens: int) -> str:
+        client = self._get_client()
         resp = await client.chat.completions.create(
             model=self.model,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
@@ -152,14 +156,7 @@ class OpenAIProvider(LLMProvider):
         return await self.with_backoff(self._generate, prompt, system, temperature, max_tokens)
 
     async def _embed(self, text: str) -> list[float]:
-        try:
-            from openai import AsyncOpenAI
-        except Exception:
-            raise RuntimeError("openai package not installed")
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise RuntimeError("OPENAI_API_KEY not set")
-        client = AsyncOpenAI(api_key=api_key)
+        client = self._get_client()
         resp = await client.embeddings.create(model="text-embedding-3-small", input=text)
         embedding = resp.data[0].embedding
         return [float(x) for x in embedding]
@@ -175,7 +172,7 @@ class AnthropicProvider(LLMProvider):
     async def _generate(self, prompt: str, system: str, temperature: float, max_tokens: int) -> str:
         try:
             from anthropic import AsyncAnthropic
-        except Exception:
+        except ImportError:
             raise RuntimeError("anthropic package not installed")
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
@@ -227,17 +224,20 @@ class OllamaProvider(LLMProvider):
     def _resolve_base_url() -> str | None:
         return os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST") or None
 
-    async def _generate(self, prompt: str, system: str, temperature: float, max_tokens: int) -> str:
+    def _get_async_client(self) -> "AsyncClient":  # type: ignore[name-defined]
         try:
             from ollama import AsyncClient
         except ImportError:
             raise RuntimeError("ollama Python package not installed")
+        return AsyncClient(host=self._resolve_base_url())
+
+    async def _generate(self, prompt: str, system: str, temperature: float, max_tokens: int) -> str:
         sem = self._get_semaphore()
         if sem.locked():
             logger.debug("Ollama semaphore busy; queuing generate request for model %r", self.model)
         async with sem:
             logger.debug("Ollama generate started (model=%r, max_tokens=%d)", self.model, max_tokens)
-            client = AsyncClient(host=self._resolve_base_url())
+            client = self._get_async_client()
             try:
                 resp = await asyncio.wait_for(
                     client.chat(
@@ -261,16 +261,12 @@ class OllamaProvider(LLMProvider):
         return await self.with_backoff(self._generate, prompt, system, temperature, max_tokens)
 
     async def embed(self, text: str) -> list[float]:
-        try:
-            from ollama import AsyncClient
-        except ImportError:
-            raise RuntimeError("ollama Python package not installed")
         sem = self._get_semaphore()
         if sem.locked():
             logger.debug("Ollama semaphore busy; queuing embed request for model %r", self.model)
         async with sem:
             logger.debug("Ollama embed started (model=%r)", self.model)
-            client = AsyncClient(host=self._resolve_base_url())
+            client = self._get_async_client()
             try:
                 resp = await asyncio.wait_for(
                     client.embed(model=self.model, input=text, keep_alive=self.KEEP_ALIVE),

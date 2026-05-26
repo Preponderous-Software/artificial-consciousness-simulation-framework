@@ -41,23 +41,25 @@ class EventRelay:
         self._mind.on_memory_stored.append(self._on_memory_stored)
         self._mind.on_perception.append(self._on_perception)
 
+    @staticmethod
+    def _cap(items: list[str], max_size: int) -> list[str]:
+        return items[-max_size:] if len(items) > max_size else items
+
     async def _on_thought(self, payload: dict) -> None:
-        content = str(payload.get("content", ""))
-        self._recent_thoughts.append(content)
-        self._recent_thoughts = self._recent_thoughts[-20:]
+        self._recent_thoughts.append(str(payload.get("content", "")))
+        self._recent_thoughts = self._cap(self._recent_thoughts, 20)
         await self._broadcast(payload)
 
     async def _on_reflection(self, payload: dict) -> None:
-        content = str(payload.get("content", ""))
-        self._recent_thoughts.append(f"[reflection] {content}")
-        self._recent_thoughts = self._recent_thoughts[-20:]
+        self._recent_thoughts.append(f"[reflection] {payload.get('content', '')}")
+        self._recent_thoughts = self._cap(self._recent_thoughts, 20)
         await self._broadcast(payload)
 
     async def _on_memory_stored(self, payload: dict) -> None:
         content = str(payload.get("content", ""))
         if content:
             self._recent_memories.append(content)
-            self._recent_memories = self._recent_memories[-8:]
+            self._recent_memories = self._cap(self._recent_memories, 8)
         await self._broadcast(payload)
 
     async def _on_perception(self, payload: dict) -> None:

@@ -121,19 +121,19 @@ class ThoughtLoop:
         self.identity.attention_schema.decay()
         context = self.short_term.render_for_prompt()
 
-        _t = time.monotonic()
+        _start = time.monotonic()
         query_embedding = await self.provider.embed(context)
-        _embed_ms = (time.monotonic() - _t) * 1000
+        _embed_ms = (time.monotonic() - _start) * 1000
 
-        _t = time.monotonic()
+        _start = time.monotonic()
         related = await self.long_term.similarity_search(query_embedding, limit=3)
-        _search_ms = (time.monotonic() - _t) * 1000
+        _search_ms = (time.monotonic() - _start) * 1000
 
         memories = "\n".join(f"- {m.summary}" for m in related) or "(none retrieved)"
 
-        _t = time.monotonic()
+        _start = time.monotonic()
         perception = await self._maybe_fetch_perception(thought_count)
-        _perception_ms = (time.monotonic() - _t) * 1000
+        _perception_ms = (time.monotonic() - _start) * 1000
         if perception is not None:
             # Lingers into subsequent cycles via short-term buffer and gets
             # consolidated by the memory consolidator from episodic.
@@ -152,7 +152,7 @@ class ThoughtLoop:
         )
         prompt_text = f"{anchor}\n\n{prompt}"
 
-        _t = time.monotonic()
+        _start = time.monotonic()
         raw = await self.provider.generate(
             prompt=prompt_text,
             system=(
@@ -164,7 +164,7 @@ class ThoughtLoop:
             temperature=self.thought_temperature,
             max_tokens=self.thought_max_tokens,
         )
-        _generate_ms = (time.monotonic() - _t) * 1000
+        _generate_ms = (time.monotonic() - _start) * 1000
 
         thought = self.inner_voice.render(raw, register=_select_register(raw, bool(related)))
 
@@ -218,18 +218,9 @@ class ThoughtLoop:
             self.short_term.add("existential", existential_text)
             await self.episodic.append("existential", existential_text)
 
-        if perception is not None:
-            focus, theme = "perception", _extract_theme(perception.title + " " + perception.content)
-        elif existential_text is not None:
-            focus, theme = "existential", _extract_theme(existential_text)
-        elif reflection_text is not None:
-            focus, theme = "reflection", _extract_theme(reflection_text)
-        elif related:
-            focus, theme = "memory", _extract_theme(memories)
-        else:
-            focus, theme = "introspection", _extract_theme(thought)
-        if not theme:
-            theme = _extract_theme(thought)
+        focus, theme = self._determine_attention_focus(
+            thought, perception, reflection_text, existential_text, related, memories
+        )
         self.identity.attention_schema.update(focus, theme)
 
         return ThoughtCycleResult(
@@ -241,6 +232,31 @@ class ThoughtLoop:
             prediction_error=prediction_error,
         )
 
+    def _determine_attention_focus(
+        self,
+        thought: str,
+        perception: Perception | None,
+        reflection_text: str | None,
+        existential_text: str | None,
+        related: list,
+        memories: str,
+    ) -> tuple[str, str]:
+        """Return (focus, theme) for the AttentionSchema update."""
+        if perception is not None:
+            focus = "perception"
+            theme = _extract_theme(perception.title + " " + perception.content)
+        elif existential_text is not None:
+            focus, theme = "existential", _extract_theme(existential_text)
+        elif reflection_text is not None:
+            focus, theme = "reflection", _extract_theme(reflection_text)
+        elif related:
+            focus, theme = "memory", _extract_theme(memories)
+        else:
+            focus, theme = "introspection", _extract_theme(thought)
+        if not theme:
+            theme = _extract_theme(thought)
+        return focus, theme
+
     async def _maybe_fetch_perception(self, thought_count: int) -> Perception | None:
         """Fetch a perception every Nth cycle. Failures yield None (logged by provider)."""
         if self.perception_provider is None or self.perception_every_n <= 0:
@@ -250,6 +266,5 @@ class ThoughtLoop:
         try:
             return await self.perception_provider.fetch()
         except Exception:  # belt-and-braces — providers should already swallow errors
-            import logging
             logging.warning("Perception provider raised unexpectedly; skipping", exc_info=True)
             return None

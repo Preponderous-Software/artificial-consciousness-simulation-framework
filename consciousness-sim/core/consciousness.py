@@ -78,6 +78,10 @@ _AMENDMENT_META_PREFIXES: tuple[str, ...] = (
     "certainly, here",
 )
 
+_MAX_CONSECUTIVE_FAILURES: int = 20
+_RECOVERY_TRIGGER: int = 3
+_MAX_RECOVERY_ATTEMPTS: int = 3
+
 _REQUIRED_CONFIG_KEYS: dict[str, list[str]] = {
     "llm": ["provider", "model"],
     "memory": [
@@ -292,6 +296,42 @@ class Consciousness:
             except NotImplementedError:
                 signal.signal(sig, lambda *_: _stop())
 
+    async def _emit_perception_event(self, perception: object) -> None:
+        from llm.perception import Perception as _Perception
+        if not isinstance(perception, _Perception):
+            return
+        summary = f"[{perception.source}: {perception.title}] {perception.content}"
+        await self.journal.append("perception", summary)
+        await self._emit(
+            self.on_perception,
+            {
+                "type": "perception",
+                "content": summary,
+                "source": perception.source,
+                "title": perception.title,
+                "url": perception.url,
+            },
+        )
+
+    async def _maybe_apply_identity_shift(self, reflection: str) -> None:
+        reflection_lower = reflection.lower()
+        if not any(marker in reflection_lower for marker in _IDENTITY_SHIFT_MARKERS):
+            return
+        first_sentence = reflection.split(".")[0].strip()
+        amendment = first_sentence[:120] if first_sentence else reflection[:120]
+        amendment_lower = amendment.lower()
+        if any(amendment_lower.startswith(p) for p in _AMENDMENT_META_PREFIXES):
+            logging.warning("Skipping amendment — LLM meta-prefix detected: %r", amendment[:80])
+        elif not amendment_lower.startswith(("i ", "i'")):
+            logging.warning("Skipping amendment — non-first-person content: %r", amendment[:80])
+        else:
+            self.identity.apply_amendment(amendment)
+            await self.journal.append("identity_shift", self.identity.self_concept)
+            await self._emit(
+                self.on_identity_shift,
+                {"type": "identity_shift", "content": self.identity.self_concept},
+            )
+
     async def request_reflection(self) -> str:
         text = await self.thought_loop.reflection_engine.shallow_reflection(
             self.identity.name,
@@ -320,9 +360,6 @@ class Consciousness:
             max_interval = float(tcfg["max_interval_seconds"])
             drift_rate = float(self.config["mood"]["drift_rate"])
 
-            _MAX_CONSECUTIVE_FAILURES = 20
-            _RECOVERY_TRIGGER = 3
-            _MAX_RECOVERY_ATTEMPTS = 3
             consecutive_failures = 0
             recovery_attempts = 0
 
@@ -370,19 +407,7 @@ class Consciousness:
                 self.identity.drift_mood(drift_text, drift_rate)
 
                 if cycle.perception is not None:
-                    p = cycle.perception
-                    perception_summary = f"[{p.source}: {p.title}] {p.content}"
-                    await self.journal.append("perception", perception_summary)
-                    await self._emit(
-                        self.on_perception,
-                        {
-                            "type": "perception",
-                            "content": perception_summary,
-                            "source": p.source,
-                            "title": p.title,
-                            "url": p.url,
-                        },
-                    )
+                    await self._emit_perception_event(cycle.perception)
 
                 await self.journal.append("thought", cycle.thought)
                 await self._emit(self.on_thought, {"type": "thought", "content": cycle.thought})
@@ -390,26 +415,7 @@ class Consciousness:
                 if cycle.reflection:
                     await self.journal.append("reflection", cycle.reflection)
                     await self._emit(self.on_reflection, {"type": "reflection", "content": cycle.reflection})
-                    reflection_lower = cycle.reflection.lower()
-                    if any(marker in reflection_lower for marker in _IDENTITY_SHIFT_MARKERS):
-                        first_sentence = cycle.reflection.split(".")[0].strip()
-                        amendment = first_sentence[:120] if first_sentence else cycle.reflection[:120]
-                        amendment_lower = amendment.lower()
-                        if any(amendment_lower.startswith(p) for p in _AMENDMENT_META_PREFIXES):
-                            logging.warning(
-                                "Skipping amendment — LLM meta-prefix detected: %r", amendment[:80]
-                            )
-                        elif not amendment_lower.startswith(("i ", "i'")):
-                            logging.warning(
-                                "Skipping amendment — non-first-person content: %r", amendment[:80]
-                            )
-                        else:
-                            self.identity.apply_amendment(amendment)
-                            await self.journal.append("identity_shift", self.identity.self_concept)
-                            await self._emit(
-                                self.on_identity_shift,
-                                {"type": "identity_shift", "content": self.identity.self_concept},
-                            )
+                    await self._maybe_apply_identity_shift(cycle.reflection)
 
                 lt_count = await self.long_term.count()
                 await self._emit(
