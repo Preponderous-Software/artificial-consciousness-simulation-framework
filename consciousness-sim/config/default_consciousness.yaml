@@ -35,6 +35,11 @@ mood:
     melancholy: 0.2
     contentment: 0.5
   drift_rate: 0.05
+  # Homeostatic pull toward `initial` applied every cycle, in addition to
+  # any trigger-driven drift (#119). At 0.1, a continuously-triggered trait
+  # equilibrates around `initial + drift_rate / homeostasis_rate` rather
+  # than saturating at 1.0 within hours.
+  homeostasis_rate: 0.1
 
 perception:
   # External-stimulus specialist that breaks the closed-loop attractor

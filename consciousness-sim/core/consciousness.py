@@ -93,6 +93,8 @@ _REQUIRED_CONFIG_KEYS: dict[str, list[str]] = {
         "min_interval_seconds",
         "max_interval_seconds",
     ],
+    # homeostasis_rate is optional — drift_mood falls back to its built-in
+    # default when absent, keeping legacy/test configs without the key valid.
     "mood": ["initial", "drift_rate"],
     "perception": [
         "enabled",
@@ -319,6 +321,9 @@ class Consciousness:
             min_interval = float(tcfg["min_interval_seconds"])
             max_interval = float(tcfg["max_interval_seconds"])
             drift_rate = float(self.config["mood"]["drift_rate"])
+            # Optional — IdentityDocument.drift_mood uses its default when None.
+            _h = self.config["mood"].get("homeostasis_rate")
+            homeostasis_rate = float(_h) if _h is not None else None
 
             _MAX_CONSECUTIVE_FAILURES = 20
             _RECOVERY_TRIGGER = 3
@@ -334,6 +339,14 @@ class Consciousness:
                     cycle = await self.thought_loop.run_cycle(self.thought_count)
                 except Exception as exc:
                     consecutive_failures += 1
+                    # AST-1: even when no new thought is generated, attention
+                    # salience should continue to fade (#120). Calling decay
+                    # here is idempotent with the decay() call at the top of
+                    # ThoughtLoop.run_cycle — but that call may not have run
+                    # if the failure happened before it, so we apply it
+                    # explicitly on the failure branch to guarantee a smooth
+                    # per-cycle drop rather than a freeze-then-collapse.
+                    self.identity.attention_schema.decay_only()
                     logging.warning(
                         "Thought cycle %d: LLM failed (%s); skipping (%d/%d consecutive failures)",
                         self.thought_count, exc, consecutive_failures, _MAX_CONSECUTIVE_FAILURES,
@@ -367,7 +380,7 @@ class Consciousness:
                 drift_text = cycle.thought
                 if cycle.perception is not None:
                     drift_text = f"{cycle.thought} {cycle.perception.content}"
-                self.identity.drift_mood(drift_text, drift_rate)
+                self.identity.drift_mood(drift_text, drift_rate, homeostasis_rate)
 
                 if cycle.perception is not None:
                     p = cycle.perception

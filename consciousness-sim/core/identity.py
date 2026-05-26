@@ -45,6 +45,13 @@ class AttentionSchema:
     def decay(self, rate: float = 0.1) -> None:
         self.salience = max(0.0, self.salience - rate)
 
+    # Alias for clarity at call sites that want to express "salience-only
+    # decay" semantics — used by paths where focus/theme are intentionally
+    # kept stale (e.g. cycle-failure branches that produce no new thought
+    # to extract a theme from). Equivalent to ``decay`` (#120).
+    def decay_only(self, rate: float = 0.1) -> None:
+        self.decay(rate)
+
     def render(self) -> str:
         theme_part = f": {self.theme}" if self.theme else ""
         return f"{self.focus}{theme_part} (salience {self.salience:.2f})"
@@ -95,10 +102,17 @@ class IdentityDocument:
         "contentment": ("peace", "calm", "rest", "ease", "warm", "settled", "still", "quiet"),
     }
 
-    # Rate at which absent-trigger cycles pull mood toward initial_mood.
-    # Small enough that a single trigger (+drift_rate) dominates the cycle,
-    # but enough to prevent monotonic drift away from baseline over a long run.
-    _REVERSION_RATE: ClassVar[float] = 0.01
+    # Homeostasis: every cycle, mood is pulled toward initial_mood at this
+    # rate, regardless of whether a trigger fired. Replaces the prior
+    # if-trigger/else-revert split (#119) — that branch let the dominant
+    # trait saturate at 1.0 within hours because the "?" trigger fired
+    # on almost every thought, never letting the reversion term run.
+    # With both terms additive, continuously-reinforced traits plateau at
+    # ``baseline + drift_rate/homeostasis_rate`` rather than 1.0.
+    _DEFAULT_HOMEOSTASIS_RATE: ClassVar[float] = 0.1
+    # Retained for back-compat with any caller that still imports the old
+    # private constant.
+    _REVERSION_RATE: ClassVar[float] = _DEFAULT_HOMEOSTASIS_RATE
 
     def apply_amendment(self, amendment: str) -> None:
         self.amendments.append(amendment)
@@ -111,16 +125,29 @@ class IdentityDocument:
             combined = "..." + combined[-self._MAX_SELF_CONCEPT_LEN:]
         self.self_concept = combined
 
-    def drift_mood(self, text: str, drift_rate: float) -> None:
+    def drift_mood(
+        self,
+        text: str,
+        drift_rate: float,
+        homeostasis_rate: float | None = None,
+    ) -> None:
+        """Update mood by combining trigger-driven drift with homeostatic reversion.
+
+        Both terms apply every cycle (#119): a triggered trait gets
+        ``+drift_rate`` *and* a reversion of ``(baseline - current) *
+        homeostasis_rate``. The equilibrium for a continuously-triggered
+        trait is ``baseline + drift_rate / homeostasis_rate`` (clipped to
+        [0, 1]), so saturation at 1.0 only happens when the bias is large
+        enough to overwhelm the homeostatic pull.
+        """
+        rate = self._DEFAULT_HOMEOSTASIS_RATE if homeostasis_rate is None else homeostasis_rate
         lowered = text.lower()
         for key, triggers in self._MOOD_TRIGGERS.items():
             current = self.mood.get(key, 0.5)
             baseline = self.initial_mood.get(key, current)
-            if any(t in lowered for t in triggers):
-                delta = drift_rate
-            else:
-                delta = (baseline - current) * self._REVERSION_RATE
-            self.mood[key] = float(min(1.0, max(0.0, current + delta)))
+            trigger_delta = drift_rate if any(t in lowered for t in triggers) else 0.0
+            reversion_delta = (baseline - current) * rate
+            self.mood[key] = float(min(1.0, max(0.0, current + trigger_delta + reversion_delta)))
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
