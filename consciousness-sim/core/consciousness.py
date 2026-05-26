@@ -399,6 +399,30 @@ class Consciousness:
         await self._emit(self.on_reflection, {"type": "reflection", "content": text})
         return text
 
+    async def _emit_consolidation_result(self, result: "ConsolidationResult") -> None:
+        payload: dict[str, Any] = {
+            "type": "consolidation",
+            "stored": result.stored,
+            "events_in": result.events_in,
+            "fell_through_to_fallback": result.fell_through_to_fallback,
+            "elapsed_s": result.elapsed_s,
+            "long_term_total": result.long_term_total,
+        }
+        if result.error is not None:
+            payload["error"] = result.error
+        # Journal first so the standalone web dashboard's tailer can
+        # surface it (the in-process on_consolidation channel only
+        # reaches handlers inside this process).
+        content = (
+            f"stored={result.stored} events_in={result.events_in} "
+            f"fallback={result.fell_through_to_fallback} "
+            f"long_term_total={result.long_term_total}"
+            + (f" error={result.error}" if result.error else "")
+        )
+        extras = {k: v for k, v in payload.items() if k not in ("type", "content")}
+        await self.journal.append("consolidation", content, **extras)
+        await self._emit(self.on_consolidation, payload)
+
     async def run(self) -> None:
         await self.initialize()
         # Write state.json immediately so freshly-spawned instances are visible
@@ -407,34 +431,11 @@ class Consciousness:
         self._install_signal_handlers()
 
         consolidation_interval = float(self.config["memory"]["consolidation_interval_minutes"]) * 60
-
-        async def _emit_consolidation(result: "ConsolidationResult") -> None:
-            payload: dict[str, Any] = {
-                "type": "consolidation",
-                "stored": result.stored,
-                "events_in": result.events_in,
-                "fell_through_to_fallback": result.fell_through_to_fallback,
-                "elapsed_s": result.elapsed_s,
-                "long_term_total": result.long_term_total,
-            }
-            if result.error is not None:
-                payload["error"] = result.error
-            # Journal first so the standalone web dashboard's tailer can
-            # surface it (the in-process on_consolidation channel only
-            # reaches handlers inside this process).
-            content = (
-                f"stored={result.stored} events_in={result.events_in} "
-                f"fallback={result.fell_through_to_fallback} "
-                f"long_term_total={result.long_term_total}"
-                + (f" error={result.error}" if result.error else "")
-            )
-            extras = {k: v for k, v in payload.items() if k not in ("type", "content")}
-            await self.journal.append("consolidation", content, **extras)
-            await self._emit(self.on_consolidation, payload)
-
         consolidator_task = asyncio.create_task(
             self.consolidator.run_forever(
-                consolidation_interval, self._stop_event, on_consolidation=_emit_consolidation
+                consolidation_interval,
+                self._stop_event,
+                on_consolidation=self._emit_consolidation_result,
             )
         )
 
