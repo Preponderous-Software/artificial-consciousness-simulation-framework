@@ -18,6 +18,7 @@ import random
 import re
 import signal
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -229,6 +230,20 @@ class Consciousness:
         self.on_perception: list[EventHandler] = []
         self.on_initialized: list[EventHandler] = []
         self.on_consolidation: list[EventHandler] = []
+        self.on_health_change: list[EventHandler] = []
+
+        # Provider-health tracking (#117). Observers (CLI, web dashboard,
+        # Discord, scripts/doctor.py) read this to distinguish a healthy
+        # instance from one that's minutes from auto-shutdown after
+        # repeated LLM failures. State.json snapshots the block on every
+        # save; transitions fire on_health_change events.
+        self.health: dict[str, Any] = {
+            "status": "ok",
+            "consecutive_failures": 0,
+            "last_error": None,
+            "last_error_at": None,
+            "last_successful_cycle_at": None,
+        }
 
         # Optional Discord webhook sink (issue #56). Built after event lists
         # exist so register() can subscribe to them. The section is optional in
@@ -245,6 +260,64 @@ class Consciousness:
                     await result
             except Exception:
                 logging.exception("Event handler %r raised unexpectedly; continuing", handler)
+
+    # ---- Provider-health tracking (#117) ----
+
+    @staticmethod
+    def _status_for_failures(consecutive_failures: int) -> str:
+        """Map consecutive_failures to a status label.
+
+        0 → ok, 1..9 → degraded, 10..19 → failing.
+        At 20 the run loop calls _stop_event.set(); status remains "failing"
+        until the process exits.
+        """
+        if consecutive_failures <= 0:
+            return "ok"
+        if consecutive_failures < 10:
+            return "degraded"
+        return "failing"
+
+    async def _record_failure(self, exc: BaseException, consecutive_failures: int) -> None:
+        """Update self.health on a failed thought cycle and emit on_health_change
+        when the status label transitions."""
+        prev_status = self.health["status"]
+        self.health["consecutive_failures"] = consecutive_failures
+        self.health["last_error"] = f"{type(exc).__name__}: {exc}"
+        self.health["last_error_at"] = datetime.now(timezone.utc).isoformat()
+        new_status = self._status_for_failures(consecutive_failures)
+        self.health["status"] = new_status
+        if new_status != prev_status:
+            await self._emit(
+                self.on_health_change,
+                {
+                    "type": "health_change",
+                    "previous_status": prev_status,
+                    "status": new_status,
+                    "consecutive_failures": consecutive_failures,
+                    "last_error": self.health["last_error"],
+                    "last_error_at": self.health["last_error_at"],
+                },
+            )
+
+    async def _record_success(self) -> None:
+        """Clear failure counters on a successful cycle and emit when status
+        transitions back to ok."""
+        prev_status = self.health["status"]
+        self.health["consecutive_failures"] = 0
+        self.health["last_successful_cycle_at"] = datetime.now(timezone.utc).isoformat()
+        new_status = "ok"
+        self.health["status"] = new_status
+        if new_status != prev_status:
+            await self._emit(
+                self.on_health_change,
+                {
+                    "type": "health_change",
+                    "previous_status": prev_status,
+                    "status": new_status,
+                    "consecutive_failures": 0,
+                    "last_successful_cycle_at": self.health["last_successful_cycle_at"],
+                },
+            )
 
     async def initialize(self) -> None:
         await self.long_term.initialize()
@@ -264,6 +337,18 @@ class Consciousness:
                 if isinstance(item, dict):
                     self.short_term.add(str(item.get("kind", "thought")), str(item.get("content", "")))
             self.thought_count = int(restored.get("thought_count", 0))
+            # #117: restore health block if state.json has one; older state
+            # files lack the key, in which case we keep the defaults set in
+            # __init__.
+            restored_health = restored.get("health")
+            if isinstance(restored_health, dict):
+                # Don't overwrite the dict shape — only copy known keys.
+                for key in (
+                    "status", "consecutive_failures", "last_error",
+                    "last_error_at", "last_successful_cycle_at",
+                ):
+                    if key in restored_health:
+                        self.health[key] = restored_health[key]
 
         lt_count = await self.long_term.count()
         await self._emit(
@@ -282,6 +367,7 @@ class Consciousness:
                 "identity": self.identity.to_dict(),
                 "short_term": [asdict(item) for item in self.short_term.list()],
                 "thought_count": self.thought_count,
+                "health": dict(self.health),
             }
         )
 
@@ -383,6 +469,8 @@ class Consciousness:
                     # explicitly on the failure branch to guarantee a smooth
                     # per-cycle drop rather than a freeze-then-collapse.
                     self.identity.attention_schema.decay_only()
+                    # #117: surface provider-degradation in state.json + events.
+                    await self._record_failure(exc, consecutive_failures)
                     logging.warning(
                         "Thought cycle %d: LLM failed (%s); skipping (%d/%d consecutive failures)",
                         self.thought_count, exc, consecutive_failures, _MAX_CONSECUTIVE_FAILURES,
@@ -403,11 +491,15 @@ class Consciousness:
                             if await self.provider.try_ensure_running():
                                 logging.info("Provider recovered; resuming thought loop")
                                 consecutive_failures = 0
+                                await self._record_success()
                                 continue
                         await asyncio.sleep(random.uniform(min_interval, max_interval))
                     continue
                 consecutive_failures = 0
                 recovery_attempts = 0
+                # #117: a successful cycle clears the degraded/failing state
+                # and emits a health_change event when transitioning back to ok.
+                await self._record_success()
                 elapsed = asyncio.get_event_loop().time() - t0
                 logging.debug("Thought cycle %d: completed in %.1fs", self.thought_count, elapsed)
 

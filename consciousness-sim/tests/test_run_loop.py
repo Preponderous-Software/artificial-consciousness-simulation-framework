@@ -696,3 +696,153 @@ def test_observer_filters_by_subscribed_type(tmp_path, monkeypatch, capsys) -> N
     output = capsys.readouterr().out
     assert "should be filtered" not in output
     assert "should appear" in output
+
+
+# --- #117 health-status tracking -------------------------------------------
+
+
+def test_health_block_initialized_with_ok_defaults(tmp_path, monkeypatch) -> None:
+    mind = _make_mind(tmp_path, monkeypatch)
+    assert mind.health["status"] == "ok"
+    assert mind.health["consecutive_failures"] == 0
+    assert mind.health["last_error"] is None
+    assert mind.health["last_error_at"] is None
+    assert mind.health["last_successful_cycle_at"] is None
+
+
+def test_health_record_failure_transitions_to_degraded(tmp_path, monkeypatch) -> None:
+    mind = _make_mind(tmp_path, monkeypatch)
+
+    received: list[dict] = []
+
+    async def _on_change(payload: dict) -> None:
+        received.append(payload)
+
+    mind.on_health_change.append(_on_change)
+    asyncio.run(mind._record_failure(RuntimeError("first"), consecutive_failures=1))
+    assert mind.health["status"] == "degraded"
+    assert mind.health["consecutive_failures"] == 1
+    assert "RuntimeError" in mind.health["last_error"]
+    assert mind.health["last_error_at"] is not None
+    assert len(received) == 1
+    assert received[0]["status"] == "degraded"
+    assert received[0]["previous_status"] == "ok"
+
+
+def test_health_record_failure_no_event_when_status_unchanged(tmp_path, monkeypatch) -> None:
+    """Going from 1 → 2 failures stays at 'degraded' — no health_change event."""
+    mind = _make_mind(tmp_path, monkeypatch)
+    received: list[dict] = []
+
+    async def _on_change(payload: dict) -> None:
+        received.append(payload)
+
+    mind.on_health_change.append(_on_change)
+    asyncio.run(mind._record_failure(RuntimeError("e1"), consecutive_failures=1))
+    received.clear()
+    asyncio.run(mind._record_failure(RuntimeError("e2"), consecutive_failures=2))
+    assert mind.health["consecutive_failures"] == 2
+    assert mind.health["status"] == "degraded"
+    assert received == []  # no transition
+
+
+def test_health_record_failure_degraded_to_failing(tmp_path, monkeypatch) -> None:
+    mind = _make_mind(tmp_path, monkeypatch)
+    received: list[dict] = []
+
+    async def _on_change(payload: dict) -> None:
+        received.append(payload)
+
+    mind.on_health_change.append(_on_change)
+    # Walk: 1 (→degraded, event), 5 (no event), 10 (→failing, event)
+    asyncio.run(mind._record_failure(RuntimeError("e"), 1))
+    asyncio.run(mind._record_failure(RuntimeError("e"), 5))
+    asyncio.run(mind._record_failure(RuntimeError("e"), 10))
+    assert mind.health["status"] == "failing"
+    assert len(received) == 2
+    assert received[0]["status"] == "degraded"
+    assert received[1]["status"] == "failing"
+    assert received[1]["previous_status"] == "degraded"
+
+
+def test_health_record_success_resets_counter_and_transitions_back(
+    tmp_path, monkeypatch
+) -> None:
+    mind = _make_mind(tmp_path, monkeypatch)
+    received: list[dict] = []
+
+    async def _on_change(payload: dict) -> None:
+        received.append(payload)
+
+    mind.on_health_change.append(_on_change)
+    asyncio.run(mind._record_failure(RuntimeError("e"), 5))
+    received.clear()
+    asyncio.run(mind._record_success())
+    assert mind.health["consecutive_failures"] == 0
+    assert mind.health["status"] == "ok"
+    assert mind.health["last_successful_cycle_at"] is not None
+    assert len(received) == 1
+    assert received[0]["status"] == "ok"
+    assert received[0]["previous_status"] == "degraded"
+
+
+def test_health_record_success_no_event_when_already_ok(tmp_path, monkeypatch) -> None:
+    """A success after a success doesn't re-fire the ok→ok 'transition'."""
+    mind = _make_mind(tmp_path, monkeypatch)
+    received: list[dict] = []
+
+    async def _on_change(payload: dict) -> None:
+        received.append(payload)
+
+    mind.on_health_change.append(_on_change)
+    asyncio.run(mind._record_success())
+    assert received == []
+
+
+def test_health_block_included_in_state_snapshot(tmp_path, monkeypatch) -> None:
+    """_save_state must serialise the health block alongside identity etc."""
+    mind = _make_mind(tmp_path, monkeypatch)
+    asyncio.run(mind._record_failure(RuntimeError("disk full"), 3))
+    asyncio.run(mind._save_state())
+    loaded = asyncio.run(mind.state_manager.load())
+    assert loaded is not None
+    assert "health" in loaded
+    assert loaded["health"]["status"] == "degraded"
+    assert loaded["health"]["consecutive_failures"] == 3
+    assert "RuntimeError" in loaded["health"]["last_error"]
+
+
+def test_health_initialize_restores_health_from_state(tmp_path, monkeypatch) -> None:
+    """A pre-existing state.json's health block is restored on initialize()."""
+
+    async def _run() -> None:
+        mind = _make_mind(tmp_path, monkeypatch)
+        # Simulate prior shutdown with degraded health.
+        asyncio.run  # noqa: B018 — just keep helper import warm
+        mind.health["status"] = "failing"
+        mind.health["consecutive_failures"] = 12
+        mind.health["last_error"] = "Earlier RuntimeError: it broke"
+        await mind._save_state()
+
+        # Fresh mind reads the same state.json on initialize.
+        mind2 = _make_mind(tmp_path, monkeypatch)
+        # Patch long_term I/O so we don't need to schema the db.
+        with patch.object(mind2.long_term, "initialize", new=AsyncMock()), \
+             patch.object(mind2.long_term, "count", new=AsyncMock(return_value=0)):
+            await mind2.initialize()
+        assert mind2.health["status"] == "failing"
+        assert mind2.health["consecutive_failures"] == 12
+        assert "RuntimeError" in mind2.health["last_error"]
+
+    asyncio.run(_run())
+
+
+def test_status_for_failures_thresholds() -> None:
+    from core.consciousness import Consciousness as _C
+
+    assert _C._status_for_failures(0) == "ok"
+    assert _C._status_for_failures(1) == "degraded"
+    assert _C._status_for_failures(9) == "degraded"
+    assert _C._status_for_failures(10) == "failing"
+    assert _C._status_for_failures(19) == "failing"
+    assert _C._status_for_failures(20) == "failing"
