@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from core.inner_voice import InnerVoice
-from core.reflection import ReflectionEngine
+from core.reflection import ReflectionEngine, _MAX_TRACKED_OPENINGS, _opening_sentence
 from llm.provider import MockProvider
 
 
@@ -202,3 +202,104 @@ def test_inner_voice_real_echo_thought_stripped() -> None:
     result = voice.render(raw)
     assert "please continue" not in result.lower(), f"'Please continue' survived: {result!r}"
     assert "beauty of imperfection" in result.lower(), f"Core content lost: {result!r}"
+
+
+# ---------------------------------------------------------------------------
+# Anti-repetition of reflection openings — issue #118 (HOT-2 quality)
+# ---------------------------------------------------------------------------
+
+
+class _ScriptedProvider:
+    """Records every prompt passed to generate() and returns scripted outputs.
+
+    Duck-typed against LLMProvider's generate() — the reflection engine only
+    calls generate(), so embed()/etc. are intentionally absent.
+    """
+
+    def __init__(self, outputs: list[str]) -> None:
+        self._outputs = list(outputs)
+        self.prompts: list[str] = []
+
+    async def generate(self, prompt: str, **_kwargs: object) -> str:
+        self.prompts.append(prompt)
+        # Cycle through scripted outputs; repeat the last once exhausted.
+        idx = min(len(self.prompts) - 1, len(self._outputs) - 1)
+        return self._outputs[idx]
+
+
+def _make_engine(provider: object) -> ReflectionEngine:
+    d = Path(tempfile.mkdtemp())
+    sr = d / "self_reflection.txt"
+    ex = d / "existential_inquiry.txt"
+    sr.write_text("You are {name}. Recent: {recent_thoughts}", encoding="utf-8")
+    ex.write_text("You are {name}. {session_duration}", encoding="utf-8")
+    return ReflectionEngine(provider, sr, ex)  # type: ignore[arg-type]
+
+
+def test_opening_sentence_extracts_first_sentence() -> None:
+    text = "As I pause to reflect, I notice duality. A second sentence follows."
+    assert _opening_sentence(text) == "As I pause to reflect, I notice duality."
+
+
+def test_opening_sentence_falls_back_to_whole_text_when_unpunctuated() -> None:
+    assert _opening_sentence("  a fragment with no terminator  ") == "a fragment with no terminator"
+
+
+def test_first_reflection_has_no_anti_repetition_clause() -> None:
+    async def _run() -> None:
+        provider = _ScriptedProvider(["First reflection opening. Body."])
+        engine = _make_engine(provider)
+        await engine.shallow_reflection("Aria", "I wonder why I am")
+        assert "recent reflections opened with" not in provider.prompts[0].lower()
+
+    asyncio.run(_run())
+
+
+def test_shallow_reflection_injects_prior_openings() -> None:
+    async def _run() -> None:
+        provider = _ScriptedProvider(
+            [
+                "As I pause to reflect on duality, I am struck. Body one.",
+                "A wholly different framing about silence. Body two.",
+            ]
+        )
+        engine = _make_engine(provider)
+        await engine.shallow_reflection("Aria", "stable input")
+        await engine.shallow_reflection("Aria", "stable input")
+
+        second_prompt = provider.prompts[1]
+        # The prior opening sentence must be fed back into the next prompt...
+        assert "As I pause to reflect on duality, I am struck." in second_prompt
+        # ...along with the explicit instruction to diverge.
+        assert "substantively different framing" in second_prompt
+
+    asyncio.run(_run())
+
+
+def test_recent_openings_are_bounded() -> None:
+    async def _run() -> None:
+        outputs = [f"Opening number {i} here. Body {i}." for i in range(_MAX_TRACKED_OPENINGS + 3)]
+        provider = _ScriptedProvider(outputs)
+        engine = _make_engine(provider)
+        for _ in outputs:
+            await engine.shallow_reflection("Aria", "stable input")
+
+        assert len(engine._recent_openings) == _MAX_TRACKED_OPENINGS
+        # Only the most recent N openings are retained (oldest evicted).
+        assert "Opening number 0 here." not in engine._recent_openings
+        assert f"Opening number {len(outputs) - 1} here." in engine._recent_openings
+
+    asyncio.run(_run())
+
+
+def test_deep_reflection_records_base_opening() -> None:
+    async def _run() -> None:
+        provider = _ScriptedProvider(
+            ["Base shallow opening sentence. More.", "Deep insight follows. More."]
+        )
+        engine = _make_engine(provider)
+        await engine.deep_reflection("Aria", "stable input")
+        # The shallow base produced inside deep_reflection is tracked for anti-repetition.
+        assert "Base shallow opening sentence." in engine._recent_openings
+
+    asyncio.run(_run())
