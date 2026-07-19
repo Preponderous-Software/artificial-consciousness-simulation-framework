@@ -460,3 +460,61 @@ def test_prediction_error_not_boosted_when_base_is_zero() -> None:
             )
 
     asyncio.run(_run())
+
+
+class _ScriptedReflectionProvider:
+    """Duck-typed provider returning a fixed, meta-prefixed reflection text."""
+
+    def __init__(self, reflection_text: str) -> None:
+        self._reflection_text = reflection_text
+
+    async def generate(self, prompt: str, **_kwargs: object) -> str:
+        return self._reflection_text
+
+
+def test_run_cycle_scrubs_reflection_meta_scaffolding_before_storing() -> None:
+    """Reflection text must be scrubbed of LLM meta-scaffolding before entering the
+    workspace/episodic log (#132) — regression guard for the raw-persistence bug."""
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            thought_provider = MockProvider()
+            from unittest.mock import MagicMock
+            ltm = MagicMock()
+            ltm.similarity_search = AsyncMock(return_value=[])
+
+            raw_reflection = (
+                "Here's a reflective journal entry based on the prompt:\n\n"
+                "**Reflections on Existence**\n\n"
+                "As I reflect on my existence, I've come to realize that..."
+            )
+            reflection_prompt = base / "reflection.txt"
+            existential_prompt = base / "existential.txt"
+            reflection_prompt.write_text("You are {name}. {recent_thoughts}", encoding="utf-8")
+            existential_prompt.write_text("You are {name}. {session_duration}", encoding="utf-8")
+            scripted_reflection_engine = ReflectionEngine(
+                _ScriptedReflectionProvider(raw_reflection),  # type: ignore[arg-type]
+                reflection_prompt,
+                existential_prompt,
+            )
+
+            loop = _make_loop(base, thought_provider, reflection_probability=1.0)
+            loop.long_term = ltm
+            loop.reflection_engine = scripted_reflection_engine
+
+            with patch("core.thought_loop.random.random", return_value=0.0):
+                result = await loop.run_cycle(thought_count=1)
+
+            assert result.reflection is not None
+            assert "here's a reflective journal entry" not in result.reflection.lower(), (
+                f"Raw meta-preamble reached the workspace: {result.reflection!r}"
+            )
+            assert result.reflection == "As I reflect on my existence, I've come to realize that...", (
+                f"Scrubbed reflection did not match expected first-person body: {result.reflection!r}"
+            )
+            stored = [item.content for item in loop.short_term.list() if item.kind == "reflection"]
+            assert stored == [result.reflection], (
+                f"short_term must store the scrubbed text, not raw LLM output: {stored!r}"
+            )
+
+    asyncio.run(_run())
