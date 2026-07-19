@@ -45,6 +45,37 @@ def _build_manifest(name: str, n_thoughts: int) -> ExperimentManifest:
     })
 
 
+# ---------------------------------------------------------------------------
+# Pure unit tests — no subprocess, no I/O
+# ---------------------------------------------------------------------------
+
+def test_merge_config_deep_merges_nested_dicts() -> None:
+    from experiments.runner import _merge_config
+
+    base = {"llm": {"provider": "ollama", "model": "llama3.2:3b"}}
+    overrides = {"llm": {"provider": "mock"}}
+    merged = _merge_config(base, overrides)
+    assert merged == {"llm": {"provider": "mock", "model": "llama3.2:3b"}}
+
+
+def test_merge_config_replaces_lists_wholesale_not_concatenated() -> None:
+    from experiments.runner import _merge_config
+
+    base = {"tags": ["a", "b"]}
+    overrides = {"tags": ["c"]}
+    merged = _merge_config(base, overrides)
+    assert merged["tags"] == ["c"]
+
+
+def test_merge_config_preserves_base_only_keys() -> None:
+    from experiments.runner import _merge_config
+
+    base = {"a": 1, "b": {"nested": 2}}
+    overrides = {"c": 3}
+    merged = _merge_config(base, overrides)
+    assert merged == {"a": 1, "b": {"nested": 2}, "c": 3}
+
+
 def test_runner_produces_all_artifacts(tmp_path: Path, monkeypatch) -> None:
     """Happy path: target reached, all six artifacts present, report renders."""
     # Isolate ~/.consciousness so we don't trash real instances
