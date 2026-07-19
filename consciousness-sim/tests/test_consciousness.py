@@ -111,6 +111,40 @@ def test_state_manager_load_recovers_from_corrupt_file(tmp_path, monkeypatch) ->
     asyncio.run(_run())
 
 
+def test_state_manager_load_renames_after_closing_file(tmp_path, monkeypatch) -> None:
+    """rename() must run after the read handle is closed — Windows disallows
+    renaming a file that is still open, unlike POSIX (#136)."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+
+    async def _run() -> None:
+        sm = StateManager("Aria")
+        sm.path.write_text("not valid json", encoding="utf-8")
+
+        opened_files: list = []
+        original_open = Path.open
+
+        def spy_open(self, *args, **kwargs):
+            f = original_open(self, *args, **kwargs)
+            opened_files.append(f)
+            return f
+
+        original_rename = Path.rename
+
+        def checked_rename(self, target):
+            assert opened_files and opened_files[-1].closed, (
+                "rename() must be called after the read file handle is closed"
+            )
+            return original_rename(self, target)
+
+        monkeypatch.setattr(Path, "open", spy_open)
+        monkeypatch.setattr(Path, "rename", checked_rename)
+
+        result = await sm.load()
+        assert result is None
+
+    asyncio.run(_run())
+
+
 def test_perception_disabled_yields_no_provider(tmp_path, monkeypatch) -> None:
     """With perception.enabled=false, thought_loop has no provider and no scheduled fetches."""
     import pytest as _pytest

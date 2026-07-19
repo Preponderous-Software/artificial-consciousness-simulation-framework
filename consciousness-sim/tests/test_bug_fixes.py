@@ -83,6 +83,42 @@ def test_consciousness_init_raises_on_missing_section(tmp_path, monkeypatch) -> 
 
 
 # ---------------------------------------------------------------------------
+# #138 — _expand_env_vars() has no test coverage
+# ---------------------------------------------------------------------------
+
+from core.consciousness import _expand_env_vars
+
+
+def test_expand_env_vars_substitutes_plain_string(monkeypatch) -> None:
+    monkeypatch.setenv("MY_SECRET", "hunter2")
+    assert _expand_env_vars("${MY_SECRET}") == "hunter2"
+
+
+def test_expand_env_vars_substitutes_nested_in_dict(monkeypatch) -> None:
+    monkeypatch.setenv("WEBHOOK_URL", "https://example.invalid/hook")
+    value = {"discord": {"webhook_url": "${WEBHOOK_URL}"}}
+    assert _expand_env_vars(value) == {"discord": {"webhook_url": "https://example.invalid/hook"}}
+
+
+def test_expand_env_vars_substitutes_nested_in_list(monkeypatch) -> None:
+    monkeypatch.setenv("TAG_A", "alpha")
+    monkeypatch.setenv("TAG_B", "beta")
+    value = ["${TAG_A}", "${TAG_B}", "literal"]
+    assert _expand_env_vars(value) == ["alpha", "beta", "literal"]
+
+
+def test_expand_env_vars_unset_variable_resolves_to_empty_string(monkeypatch) -> None:
+    monkeypatch.delenv("DEFINITELY_UNSET_VAR", raising=False)
+    assert _expand_env_vars("${DEFINITELY_UNSET_VAR}") == ""
+
+
+def test_expand_env_vars_leaves_value_without_placeholder_unchanged() -> None:
+    assert _expand_env_vars("plain value") == "plain value"
+    assert _expand_env_vars({"a": 1, "b": [1, 2]}) == {"a": 1, "b": [1, 2]}
+    assert _expand_env_vars(42) == 42
+
+
+# ---------------------------------------------------------------------------
 # Bug #4 — event handler exceptions propagate and crash the thought loop
 # ---------------------------------------------------------------------------
 
