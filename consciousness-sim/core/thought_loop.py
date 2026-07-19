@@ -214,11 +214,16 @@ class ThoughtLoop:
                 reflection_text = await self.reflection_engine.deep_reflection(self.identity.name, recent)
             else:
                 reflection_text = await self.reflection_engine.shallow_reflection(self.identity.name, recent)
+            # Scrub LLM meta-scaffolding (preambles/headers/second-person drift)
+            # before the reflection enters the workspace (#132) — mirrors the
+            # render() scrub already applied to thoughts.
+            reflection_text = self.inner_voice.scrub_reflection(reflection_text)
             self.short_term.add("reflection", reflection_text)
             await self.episodic.append("reflection", reflection_text)
 
         if self.existential_every_n > 0 and thought_count > 0 and thought_count % self.existential_every_n == 0:
             existential_text = await self.reflection_engine.existential_inquiry(self.identity.name, f"{thought_count} thoughts")
+            existential_text = self.inner_voice.scrub_reflection(existential_text)
             self.short_term.add("existential", existential_text)
             await self.episodic.append("existential", existential_text)
 

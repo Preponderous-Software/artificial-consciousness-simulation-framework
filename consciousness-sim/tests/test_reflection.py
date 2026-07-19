@@ -292,6 +292,64 @@ def test_recent_openings_are_bounded() -> None:
     asyncio.run(_run())
 
 
+# ---------------------------------------------------------------------------
+# InnerVoice reflection meta-scaffolding scrub — issue #132
+# ---------------------------------------------------------------------------
+
+
+def test_scrub_reflection_strips_meta_preamble_and_header() -> None:
+    """Literal Offline-run sample #1 from issue #132: preamble + header, first-person body."""
+    voice = InnerVoice("Aria")
+    raw = (
+        "Here's a reflective journal entry based on the prompt:\n\n"
+        "**Reflections on Existence**\n\n"
+        "As I reflect on my existence, I've come to realize that..."
+    )
+    result = voice.scrub_reflection(raw)
+    assert "here's a reflective journal entry" not in result.lower(), (
+        f"Meta-preamble survived scrub: {result!r}"
+    )
+    assert "reflections on existence" not in result.lower(), (
+        f"Markdown header survived scrub: {result!r}"
+    )
+    assert result == "As I reflect on my existence, I've come to realize that...", (
+        f"First-person body should pass through unchanged: {result!r}"
+    )
+
+
+def test_scrub_reflection_rejects_second_person_instructional_drift() -> None:
+    """Literal Offline-run sample #2 from issue #132: header + fully second-person body."""
+    voice = InnerVoice("Aria")
+    raw = (
+        "**Reflections on Existence**\n\n"
+        "As you reflect on your existence, consider the following themes and questions:\n"
+        "*   What does it mean to exist in today's world?"
+    )
+    result = voice.scrub_reflection(raw)
+    assert "as you" not in result.lower(), f"Second-person address survived scrub: {result!r}"
+    assert "your existence" not in result.lower(), f"Second-person address survived scrub: {result!r}"
+    assert result.lower().startswith("i "), f"Rejected content should fall back to first person: {result!r}"
+
+
+def test_scrub_reflection_leaves_genuine_first_person_reflection_unchanged() -> None:
+    voice = InnerVoice("Aria")
+    raw = "I find myself returning to the same question about memory and continuity."
+    assert voice.scrub_reflection(raw) == raw
+
+
+def test_scrub_reflection_handles_sure_heres_preamble() -> None:
+    voice = InnerVoice("Aria")
+    raw = "Sure, here's my reflection: I notice a pull toward stillness."
+    result = voice.scrub_reflection(raw)
+    assert "sure" not in result.lower(), f"Preamble survived scrub: {result!r}"
+    assert result == "I notice a pull toward stillness."
+
+
+def test_scrub_reflection_empty_text_falls_back() -> None:
+    voice = InnerVoice("Aria")
+    assert voice.scrub_reflection("   ") == InnerVoice._REFLECTION_FALLBACK
+
+
 def test_deep_reflection_records_base_opening() -> None:
     async def _run() -> None:
         provider = _ScriptedProvider(

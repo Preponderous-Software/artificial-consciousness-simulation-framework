@@ -304,7 +304,10 @@ consciousness-sim/
 │   ├── reflection.py        # Shallow / deep / existential reflection engine
 │   ├── identity.py          # Self-model (IdentityDocument), mood drift,
 │   │                        #   amendments, AttentionSchema (AST-1, #22 / #61)
-│   └── inner_voice.py       # Render raw LLM output into the agent's voice register
+│   └── inner_voice.py       # Render raw LLM output into the agent's voice register;
+│                            #   scrub_reflection() strips meta-scaffolding from
+│                            #   reflection/existential text before it enters the
+│                            #   workspace (#132)
 ├── memory/
 │   ├── short_term.py        # Sliding-window buffer (GWT workspace analog)
 │   ├── episodic.py          # Append-only JSONL event log (narrative continuity)
@@ -366,7 +369,7 @@ consciousness-sim/
 3. Every `perception.every_n_cycles` cycles (default 3): `perception_provider.fetch()` → optional `Perception`; lingers in short-term + episodic so subsequent cycles can reference it (PR #54)
 4. Identity anchor (includes `AttentionSchema` state per AST-1) + mood + memories + context + perception block → prompt → `provider.generate()` → raw thought
 5. `inner_voice.render()` → styled thought → `MetacognitiveMonitor.score()` → importance-adjusted `short_term.add()` + `episodic.append()`; prediction error computed against prior cycle's `_predicted_theme`; `_predicted_theme` updated for next cycle
-6. Reflection trigger: `effective_prob = min(1.0, base + HOT-2 boost + PP-1 boost)` — fires only if `reflection_probability > 0.0`; → `reflection_engine.shallow/deep_reflection()`; existential inquiry every N cycles; `AttentionSchema.update()` (informed by cycle outcome: perception/existential/reflection/memory/introspection)
+6. Reflection trigger: `effective_prob = min(1.0, base + HOT-2 boost + PP-1 boost)` — fires only if `reflection_probability > 0.0`; → `reflection_engine.shallow/deep_reflection()` → `inner_voice.scrub_reflection()` strips leading meta-preambles/markdown headers and rejects second-person instructional drift (#132) before `short_term.add()` + `episodic.append()`; existential inquiry every N cycles (same scrub applied); `AttentionSchema.update()` (informed by cycle outcome: perception/existential/reflection/memory/introspection)
 7. `consciousness.py` outer loop: `journal.append()` + events emitted via `Consciousness._emit()` to registered handlers (CLI, observer, web SSE, Discord sink if configured)
 8. Background: `MemoryConsolidator.consolidate_once()` every N minutes — episodic → LLM summary → long-term embeddings
 
@@ -386,6 +389,7 @@ consciousness-sim/
 - `Consciousness.health` is updated on every cycle and snapshotted in `state.json`. `on_health_change` fires only on status *transitions* (ok ↔ degraded ↔ failing), not every failure (#117).
 - `OllamaProvider.embed` results are cached in a per-instance LRU keyed by `"{model}:{sha256(text)}"` with default capacity 256 (#113). `llm.embed_cache_size` (optional) configures the bound; 0 disables.
 - `scripts/spawn.py` refuses to spawn when a pid file points at a live process; `--force` overrides with a visible warning. Foreground / `--headless` modes record + `atexit`-clean their own pid file (#115).
+- `InnerVoice.scrub_reflection()` runs on every reflection/existential text before `short_term.add()` / `episodic.append()` (#132) — leading LLM meta-preambles and markdown headers are stripped, and text that opens in second person is rejected in favor of a fallback string rather than stored verbatim. `render()` (used for thoughts) and `scrub_reflection()` (used for reflections/existential text) are separate methods with different guarantees — `render()` enforces first-person framing on all input, `scrub_reflection()` only removes scaffolding and leaves already-first-person content untouched.
 
 ---
 
