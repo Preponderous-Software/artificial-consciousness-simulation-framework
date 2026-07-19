@@ -75,6 +75,21 @@ def test_content_word_distribution_filters_stop_and_short_words() -> None:
     assert "i" not in c            # stop word
 
 
+def test_content_tokens_lowercases_filters_stopwords_and_short_words() -> None:
+    from experiments.metrics import _content_tokens
+
+    tokens = _content_tokens("The Void STIRS within me and it hums")
+    assert tokens == ["void", "stirs", "within", "hums"]
+
+
+def test_content_tokens_respects_custom_min_word_len() -> None:
+    from experiments.metrics import _content_tokens
+
+    # "void" (4) and "hums" (4) survive default min_len=4; only "stirs" (5)+ survive min_len=5.
+    tokens = _content_tokens("void stirs hums", min_word_len=5)
+    assert tokens == ["stirs"]
+
+
 def test_top_word_density_per_thought() -> None:
     c = Counter({"void": 4, "ripple": 2})
     assert top_word_density(c, n_thoughts=2) == 2.0

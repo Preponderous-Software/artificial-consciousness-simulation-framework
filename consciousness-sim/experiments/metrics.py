@@ -61,11 +61,11 @@ def load_state(state_path: Path) -> dict[str, Any]:
     return json.loads(Path(state_path).read_text(encoding="utf-8"))
 
 
-def _content_tokens(text: str) -> list[str]:
+def _content_tokens(text: str, min_word_len: int = _MIN_WORD_LEN) -> list[str]:
     """Lowercase, length-filtered, stop-word-filtered word tokens."""
     return [
         w for w in (m.lower() for m in _WORD_TOKEN_RE.findall(text))
-        if len(w) >= _MIN_WORD_LEN and w not in _STOP_WORDS
+        if len(w) >= min_word_len and w not in _STOP_WORDS
     ]
 
 
@@ -183,10 +183,7 @@ def perception_word_overlap(
     while clearly being referenced semantically — see #74).
     """
     def words_of(text: str) -> set[str]:
-        return {
-            w for w in (m.lower() for m in _WORD_TOKEN_RE.findall(text))
-            if len(w) >= min_word_len and w not in _STOP_WORDS
-        }
+        return set(_content_tokens(text, min_word_len=min_word_len))
 
     seen: set[str] = set()
     traces: list[PerceptionTrace] = []
