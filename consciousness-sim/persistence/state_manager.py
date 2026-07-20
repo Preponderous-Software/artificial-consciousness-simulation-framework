@@ -50,17 +50,20 @@ class StateManager:
 
         async with self._lock:
             def _read() -> dict[str, Any] | None:
-                with self.path.open("r", encoding="utf-8") as f:
-                    try:
-                        return dict(json.load(f))
-                    except json.JSONDecodeError as exc:
-                        logger.warning(
-                            "state.json is corrupt (%s) — starting fresh; "
-                            "corrupt file moved to %s.corrupt",
-                            exc,
-                            self.path,
-                        )
-                        self.path.rename(self.path.with_suffix(".json.corrupt"))
-                        return None
+                # read_text() opens, reads, and closes the file before returning,
+                # so by the time we get here for the except branch the handle is
+                # already closed — rename() must happen after that: Windows raises
+                # PermissionError when renaming a file that is still open.
+                try:
+                    return dict(json.loads(self.path.read_text(encoding="utf-8")))
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "state.json is corrupt (%s) — starting fresh; "
+                        "corrupt file moved to %s.corrupt",
+                        exc,
+                        self.path,
+                    )
+                    self.path.rename(self.path.with_suffix(".json.corrupt"))
+                    return None
 
             return await asyncio.to_thread(_read)
