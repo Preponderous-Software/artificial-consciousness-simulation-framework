@@ -91,6 +91,12 @@ class IdentityDocument:
     _MAX_SELF_CONCEPT_LEN: ClassVar[int] = 300
     _MAX_AMENDMENTS: ClassVar[int] = 20
 
+    # Dedup window/threshold for apply_amendment (#133): a trait that keeps
+    # producing the same amendment must not fill the entire self_concept
+    # budget with one repeated phrase. Cheap and deterministic — no LLM call.
+    _DEDUP_LOOKBACK: ClassVar[int] = 5
+    _DEDUP_JACCARD_THRESHOLD: ClassVar[float] = 0.8
+
     # Substrings matched (case-insensitively) against thought + perception text
     # to trigger an affect increment on the corresponding dimension. Lexicons
     # are intentionally broad so ordinary introspective text can register
@@ -108,10 +114,19 @@ class IdentityDocument:
     # trait saturate at 1.0 within hours because the "?" trigger fired
     # on almost every thought, never letting the reversion term run.
     # With both terms additive, continuously-reinforced traits plateau at
-    # ``baseline + drift_rate/homeostasis_rate`` rather than 1.0.
-    _DEFAULT_HOMEOSTASIS_RATE: ClassVar[float] = 0.1
+    # ``baseline + drift_rate/homeostasis_rate`` rather than 1.0 — but only
+    # if that equilibrium is itself below 1.0, i.e. the caller must keep
+    # ``drift_rate / homeostasis_rate < 1 - initial_mood[trait]`` for every
+    # trait (#134: at rate=0.1, curiosity's baseline 0.7 gave an equilibrium
+    # of 1.2, clipped to 1.0 — the exact saturation #119 was meant to
+    # prevent). At 0.3, curiosity's equilibrium is 0.7 + 0.05/0.3 ≈ 0.87,
+    # comfortably below the ceiling for every default trait.
+    _DEFAULT_HOMEOSTASIS_RATE: ClassVar[float] = 0.3
 
     def apply_amendment(self, amendment: str) -> None:
+        normalized = amendment.strip()
+        if not normalized or self._is_duplicate_amendment(normalized):
+            return
         self.amendments.append(amendment)
         if len(self.amendments) > self._MAX_AMENDMENTS:
             # Drop the oldest to keep the serialized state finite.
@@ -121,6 +136,30 @@ class IdentityDocument:
             # Preserve the tail: most recent amendments carry current identity.
             combined = "..." + combined[-self._MAX_SELF_CONCEPT_LEN:]
         self.self_concept = combined
+
+    def _is_duplicate_amendment(self, normalized: str) -> bool:
+        """True if ``normalized`` would be a verbatim or near-duplicate append.
+
+        Two checks, both case-insensitive and threshold-free of any LLM call
+        (#133): (1) the amendment is already present verbatim in the current
+        self_concept tail; (2) the amendment's token set overlaps a recently
+        applied amendment above ``_DEDUP_JACCARD_THRESHOLD`` (catches
+        near-duplicates that self_concept truncation already dropped from
+        view, e.g. reworded repeats of the same fragment).
+        """
+        lowered = normalized.lower()
+        if lowered in self.self_concept.lower():
+            return True
+        candidate_tokens = set(lowered.split())
+        for prior in self.amendments[-self._DEDUP_LOOKBACK :]:
+            prior_tokens = set(prior.strip().lower().split())
+            union = candidate_tokens | prior_tokens
+            if not union:
+                continue
+            jaccard = len(candidate_tokens & prior_tokens) / len(union)
+            if jaccard >= self._DEDUP_JACCARD_THRESHOLD:
+                return True
+        return False
 
     def drift_mood(
         self,

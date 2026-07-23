@@ -64,6 +64,82 @@ def test_apply_amendment_caps_at_max() -> None:
     assert ident.amendments[0] == f"amendment 5"
 
 
+def test_apply_amendment_skips_verbatim_repeat() -> None:
+    """Regression for #133: feeding the same amendment N times must yield it
+    at most once in self_concept, instead of accreting N copies."""
+    ident = IdentityDocument(
+        name="Offline",
+        origin_story="origin",
+        values=["curiosity"],
+        purpose="explore",
+        self_concept="I am Offline, an emergent mind in process.",
+        mood={},
+    )
+    for _ in range(8):
+        ident.apply_amendment("I remain Offline")
+    assert ident.self_concept.count("I remain Offline") == 1
+    assert ident.amendments.count("I remain Offline") == 1
+
+
+def test_apply_amendment_skips_case_insensitive_repeat() -> None:
+    """The observed Offline run mixed casing ('I remain offline' vs 'I remain
+    Offline') across repeats — dedup must be case-insensitive."""
+    ident = IdentityDocument(
+        name="Offline",
+        origin_story="origin",
+        values=["curiosity"],
+        purpose="explore",
+        self_concept="I am Offline.",
+        mood={},
+    )
+    ident.apply_amendment("I remain offline")
+    ident.apply_amendment("I remain Offline")
+    ident.apply_amendment("I REMAIN OFFLINE")
+    assert len(ident.amendments) == 1
+    assert ident.self_concept.lower().count("i remain offline") == 1
+
+
+def test_apply_amendment_skips_near_duplicate_outside_self_concept_tail() -> None:
+    """A near-duplicate (high token overlap) of a recent amendment is skipped
+    even when self_concept truncation has already dropped the original text
+    from view (issue #133's substring check alone would miss this case)."""
+    ident = IdentityDocument(
+        name="Test",
+        origin_story="origin",
+        values=["curiosity"],
+        purpose="explore",
+        self_concept="x" * (IdentityDocument._MAX_SELF_CONCEPT_LEN - 5),
+        mood={},
+    )
+    ident.apply_amendment("I remain quiet and still")
+    before = len(ident.amendments)
+    ident.apply_amendment("I remain quiet and still today")
+    assert len(ident.amendments) == before, "near-duplicate amendment must not be appended"
+
+
+def test_apply_amendment_distinct_amendments_still_accumulate() -> None:
+    """No regression to legitimate growth: genuinely distinct amendments
+    keep accumulating in both amendments and self_concept."""
+    ident = IdentityDocument(
+        name="Test",
+        origin_story="origin",
+        values=["curiosity"],
+        purpose="explore",
+        self_concept="I am Test",
+        mood={},
+    )
+    phrases = [
+        "I value curiosity",
+        "I seek connection with others",
+        "I question the nature of memory",
+    ]
+    for phrase in phrases:
+        ident.apply_amendment(phrase)
+    assert ident.amendments == phrases
+    for phrase in phrases:
+        assert phrase in ident.self_concept
+
+
 def test_attention_schema_update() -> None:
     schema = AttentionSchema()
     schema.update("memory", "identity")
@@ -315,6 +391,24 @@ def test_drift_mood_homeostasis_rate_override() -> None:
     for _ in range(10):
         ident.drift_mood(trigger, drift_rate=0.05, homeostasis_rate=0.0)
     assert abs(ident.mood["curiosity"] - 1.0) < 1e-6  # saturated
+
+
+def test_drift_mood_default_homeostasis_keeps_high_baseline_trait_below_ceiling() -> None:
+    """Regression for #134: at the *default* homeostasis_rate (no override),
+    curiosity's 0.7 baseline must equilibrate strictly below 1.0 under
+    continuous reinforcement — at rate=0.1 this saturated at 1.0 (the exact
+    failure #119 was meant to prevent); at the new default the equilibrium
+    is 0.7 + 0.05/0.3 ≈ 0.867.
+    """
+    ident = _ident_with_initial({"curiosity": 0.7})
+    trigger = "what would I wonder about? a question."  # hits "wonder", "?", "question"
+    for _ in range(500):
+        ident.drift_mood(trigger, drift_rate=0.05)  # homeostasis_rate defaults
+    assert ident.mood["curiosity"] <= 0.9, (
+        f"curiosity should equilibrate below the 0.9 acceptance bound at the "
+        f"default homeostasis_rate; got {ident.mood['curiosity']}"
+    )
+    assert 0.85 <= ident.mood["curiosity"] <= 0.9
 
 
 # --- #120 AttentionSchema.decay_only --------------------------------------

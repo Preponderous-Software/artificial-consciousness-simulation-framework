@@ -36,10 +36,14 @@ mood:
     contentment: 0.5
   drift_rate: 0.05
   # Homeostatic pull toward `initial` applied every cycle, in addition to
-  # any trigger-driven drift (#119). At 0.1, a continuously-triggered trait
-  # equilibrates around `initial + drift_rate / homeostasis_rate` rather
-  # than saturating at 1.0 within hours.
-  homeostasis_rate: 0.1
+  # any trigger-driven drift (#119). A continuously-triggered trait
+  # equilibrates around `initial + drift_rate / homeostasis_rate`, so this
+  # rate must satisfy `drift_rate / homeostasis_rate < 1 - max(initial.*)`
+  # or the highest-baseline trait will still saturate at 1.0 (#134 — at
+  # 0.1 this held false for curiosity's 0.7 baseline: 0.05/0.1 = 0.5 is not
+  # < 0.3). At 0.3, curiosity's equilibrium is ~0.87, safely below the
+  # ceiling for every default trait.
+  homeostasis_rate: 0.3
 
 perception:
   # External-stimulus specialist that breaks the closed-loop attractor
