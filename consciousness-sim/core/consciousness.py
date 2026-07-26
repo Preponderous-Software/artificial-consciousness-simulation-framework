@@ -33,7 +33,7 @@ from llm.perception import PerceptionProvider, build_perception_provider
 from llm.provider import build_provider
 from memory.consolidator import ConsolidationResult, MemoryConsolidator
 from memory.episodic import EpisodicMemory
-from memory.long_term import LongTermMemory
+from memory.long_term import DEFAULT_MAX_ROWS, LongTermMemory
 from memory.short_term import ShortTermMemory
 from persistence.journal import Journal
 from persistence.paths import consciousness_dir
@@ -108,13 +108,37 @@ _REQUIRED_CONFIG_KEYS: dict[str, list[str]] = {
 
 
 def _validate_config(config: dict[str, Any]) -> None:
-    """Raise KeyError with a descriptive message if any required config key is absent."""
+    """Raise if any required config key is absent or an optional key is malformed.
+
+    Missing required keys raise KeyError; present-but-invalid optional values
+    raise ValueError, so a typo in an optional knob fails at startup rather
+    than at the subsystem that eventually reads it.
+    """
     for section, keys in _REQUIRED_CONFIG_KEYS.items():
         if section not in config:
             raise KeyError(f"Config missing required section: '{section}'")
         for key in keys:
             if key not in config[section]:
                 raise KeyError(f"Config missing required key: '{section}.{key}'")
+
+    # Optional: memory.long_term_max_rows (#135). Absent → LongTermMemory's
+    # built-in default bound. 0 disables the bound (unbounded growth).
+    max_rows = config["memory"].get("long_term_max_rows")
+    if max_rows is not None:
+        # Reject bools explicitly: YAML 1.1 parses `yes`/`on`/`true` as True, and
+        # int(True) == 1 would silently configure a one-row store that evicts
+        # nearly everything on the next insert. Floats are rejected rather than
+        # truncated so `2500.0` vs `2500.9` can't mean two different bounds.
+        if isinstance(max_rows, bool) or not isinstance(max_rows, int):
+            raise ValueError(
+                f"Config 'memory.long_term_max_rows' must be an integer >= 0 "
+                f"(0 disables the bound), got {max_rows!r}"
+            )
+        if max_rows < 0:
+            raise ValueError(
+                f"Config 'memory.long_term_max_rows' must be >= 0 (0 disables the bound), "
+                f"got {max_rows}"
+            )
 
 
 _ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -176,7 +200,14 @@ class Consciousness:
 
         self.short_term = ShortTermMemory(capacity=int(mem_cfg["short_term_capacity"]))
         self.episodic = EpisodicMemory(base / "episodic.jsonl")
-        self.long_term = LongTermMemory(base / "memory.db")
+        # Optional retention bound (#135). Absent → LongTermMemory's default.
+        long_term_max_rows = mem_cfg.get("long_term_max_rows")
+        self.long_term = LongTermMemory(
+            base / "memory.db",
+            max_rows=(
+                DEFAULT_MAX_ROWS if long_term_max_rows is None else int(long_term_max_rows)
+            ),
+        )
         self.journal = Journal(base / "journal.jsonl")
         self.state_manager = StateManager(name)
 
@@ -320,6 +351,8 @@ class Consciousness:
             )
 
     async def initialize(self) -> None:
+        # LongTermMemory.initialize() also applies the retention bound once, so
+        # a store grown past it under an older config is trimmed here (#135).
         await self.long_term.initialize()
         restored = await self.state_manager.load()
         if restored:

@@ -311,7 +311,9 @@ consciousness-sim/
 ├── memory/
 │   ├── short_term.py        # Sliding-window buffer (GWT workspace analog)
 │   ├── episodic.py          # Append-only JSONL event log (narrative continuity)
-│   ├── long_term.py         # SQLite + cosine similarity search over embeddings
+│   ├── long_term.py         # SQLite + cosine similarity search over embeddings;
+│   │                        #   row-count retention bound evicts low-importance
+│   │                        #   rows on insert and at open (#135)
 │   └── consolidator.py      # Background loop: episodic → long-term via LLM;
 │                            #   emits on_consolidation events per pass (#89)
 ├── persistence/
@@ -383,6 +385,7 @@ consciousness-sim/
 - All LLM failures in production providers (Ollama / Anthropic / OpenAI) raise — they do **not** fall back to deterministic output, and they log a `WARNING` before propagating. Silent fallback is a bug (#46). `MockProvider` retains deterministic generation for tests.
 - `reflection_probability=0.0` disables reflection entirely — HOT-2 and PP-1 boosts do not override an explicit zero.
 - `LongTermMemory` has a compound index on `(embedding_dim, importance_score, timestamp)`; `similarity_search` candidate selection is O(log N), not O(table size).
+- `LongTermMemory` is bounded by `max_rows` (config `memory.long_term_max_rows`, default `DEFAULT_MAX_ROWS = 2000`; 0 disables) (#135). The bound is enforced inside the insert transaction of `add_memory()` and once in `initialize()`, evicting lowest-`importance_score` / oldest rows. Because eviction runs after the insert, `add_memory()` can evict the row it just wrote when that row is the least important in the store — the returned id is then no longer present. Retention is capacity-triggered, not time-triggered: it composes with, but does not replace, `apply_forgetting_curve()`.
 - `IdentityDocument.drift_mood()` applies trigger-driven drift *and* homeostatic reversion to `initial_mood` additively each cycle (#119) — continuously-triggered traits equilibrate at `baseline + drift_rate / homeostasis_rate` rather than saturating at 1.0. `mood.homeostasis_rate` (default 0.1) is optional in the config.
 - `AttentionSchema.decay_only()` runs only from the outer loop's failure branch (#120); successful cycles reset salience to 1.0 via `update()`.
 - `MemoryConsolidator.consolidate_once()` returns a `ConsolidationResult` (not a bare int) carrying `stored / events_in / fell_through_to_fallback / elapsed_s / long_term_total / error`. `run_forever` fires `on_consolidation` after every pass — including the failure case (#89). Equality with `int` is preserved on the `stored` count for callers that treated the prior return as a count.

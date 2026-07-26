@@ -27,6 +27,13 @@ memory:
   consolidation_interval_minutes: 5
   forgetting_curve_enabled: true
   importance_decay_rate: 0.02
+  # Retention bound on the long-term SQLite store (#135). Optional — absent
+  # falls back to memory/long_term.py's DEFAULT_MAX_ROWS. When an insert takes
+  # the store above this count, the lowest-importance rows (oldest first on a
+  # tie) are deleted so the count returns to the bound. 0 = unbounded, which
+  # restores pre-#135 growth. At 3072-dim embeddings a row costs ~40 KB, so
+  # 2000 rows plateaus memory.db at roughly 80 MB.
+  long_term_max_rows: 2000
 
 mood:
   initial:
