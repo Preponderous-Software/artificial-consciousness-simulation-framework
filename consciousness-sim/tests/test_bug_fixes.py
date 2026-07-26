@@ -113,6 +113,22 @@ def test_validate_config_raises_on_non_integer_long_term_max_rows() -> None:
         _validate_config(cfg)
 
 
+def test_validate_config_rejects_boolean_long_term_max_rows() -> None:
+    """YAML `yes`/`on`/`true` must not silently become a one-row store."""
+    cfg = _minimal_valid_config()
+    cfg["memory"]["long_term_max_rows"] = True
+    with pytest.raises(ValueError, match="long_term_max_rows"):
+        _validate_config(cfg)
+
+
+def test_validate_config_rejects_float_long_term_max_rows() -> None:
+    """A float is rejected rather than truncated to a different bound."""
+    cfg = _minimal_valid_config()
+    cfg["memory"]["long_term_max_rows"] = 2500.9
+    with pytest.raises(ValueError, match="long_term_max_rows"):
+        _validate_config(cfg)
+
+
 def test_consciousness_wires_long_term_max_rows_from_config(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
     cfg = _minimal_valid_config()

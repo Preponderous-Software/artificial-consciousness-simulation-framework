@@ -125,16 +125,19 @@ def _validate_config(config: dict[str, Any]) -> None:
     # built-in default bound. 0 disables the bound (unbounded growth).
     max_rows = config["memory"].get("long_term_max_rows")
     if max_rows is not None:
-        try:
-            max_rows_int = int(max_rows)
-        except (TypeError, ValueError):
+        # Reject bools explicitly: YAML 1.1 parses `yes`/`on`/`true` as True, and
+        # int(True) == 1 would silently configure a one-row store that evicts
+        # nearly everything on the next insert. Floats are rejected rather than
+        # truncated so `2500.0` vs `2500.9` can't mean two different bounds.
+        if isinstance(max_rows, bool) or not isinstance(max_rows, int):
             raise ValueError(
-                f"Config 'memory.long_term_max_rows' must be an integer >= 0, got {max_rows!r}"
-            ) from None
-        if max_rows_int < 0:
+                f"Config 'memory.long_term_max_rows' must be an integer >= 0 "
+                f"(0 disables the bound), got {max_rows!r}"
+            )
+        if max_rows < 0:
             raise ValueError(
                 f"Config 'memory.long_term_max_rows' must be >= 0 (0 disables the bound), "
-                f"got {max_rows_int}"
+                f"got {max_rows}"
             )
 
 
