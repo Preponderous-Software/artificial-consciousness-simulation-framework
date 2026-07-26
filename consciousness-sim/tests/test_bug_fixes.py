@@ -83,6 +83,95 @@ def test_consciousness_init_raises_on_missing_section(tmp_path, monkeypatch) -> 
 
 
 # ---------------------------------------------------------------------------
+# #135 — long-term memory retention bound (memory.long_term_max_rows)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_config_accepts_absent_long_term_max_rows() -> None:
+    cfg = _minimal_valid_config()
+    assert "long_term_max_rows" not in cfg["memory"]
+    _validate_config(cfg)  # optional key — must not raise
+
+
+def test_validate_config_accepts_zero_long_term_max_rows() -> None:
+    cfg = _minimal_valid_config()
+    cfg["memory"]["long_term_max_rows"] = 0
+    _validate_config(cfg)  # 0 = unbounded, explicitly allowed
+
+
+def test_validate_config_raises_on_negative_long_term_max_rows() -> None:
+    cfg = _minimal_valid_config()
+    cfg["memory"]["long_term_max_rows"] = -5
+    with pytest.raises(ValueError, match="long_term_max_rows"):
+        _validate_config(cfg)
+
+
+def test_validate_config_raises_on_non_integer_long_term_max_rows() -> None:
+    cfg = _minimal_valid_config()
+    cfg["memory"]["long_term_max_rows"] = "lots"
+    with pytest.raises(ValueError, match="long_term_max_rows"):
+        _validate_config(cfg)
+
+
+def test_consciousness_wires_long_term_max_rows_from_config(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    cfg = _minimal_valid_config()
+    cfg["memory"]["long_term_max_rows"] = 7
+    config_path = tmp_path / "cfg.yaml"
+    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    from core.consciousness import Consciousness
+
+    mind = Consciousness(name="Aria", config_path=str(config_path))
+    assert mind.long_term.max_rows == 7
+
+
+def test_consciousness_uses_default_bound_when_key_absent(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    config_path = tmp_path / "cfg.yaml"
+    config_path.write_text(yaml.safe_dump(_minimal_valid_config()), encoding="utf-8")
+
+    from core.consciousness import Consciousness
+    from memory.long_term import DEFAULT_MAX_ROWS
+
+    mind = Consciousness(name="Aria", config_path=str(config_path))
+    assert mind.long_term.max_rows == DEFAULT_MAX_ROWS
+
+
+def test_initialize_sweeps_store_that_grew_past_the_bound(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    cfg = _minimal_valid_config()
+    cfg["memory"]["long_term_max_rows"] = 2
+    config_path = tmp_path / "cfg.yaml"
+    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    from core.consciousness import Consciousness
+    from memory.long_term import LongTermMemory
+
+    mind = Consciousness(name="Aria", config_path=str(config_path))
+
+    async def _run() -> None:
+        # Simulate a store grown under an unbounded (pre-#135) configuration.
+        legacy = LongTermMemory(mind.long_term.db_path, max_rows=0)
+        await legacy.initialize()
+        for i in range(6):
+            await legacy.add_memory(f"memory {i}", 0.0, float(i), [float(i), 1.0])
+        assert await legacy.count() == 6
+
+        await mind.initialize()
+        assert await mind.long_term.count() == 2
+
+    asyncio.run(_run())
+
+
+def test_default_config_yaml_declares_long_term_max_rows() -> None:
+    config_path = Path(__file__).resolve().parents[1] / "config" / "default_consciousness.yaml"
+    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert "long_term_max_rows" in cfg["memory"]
+    _validate_config(cfg)
+
+
+# ---------------------------------------------------------------------------
 # #138 — _expand_env_vars() has no test coverage
 # ---------------------------------------------------------------------------
 
