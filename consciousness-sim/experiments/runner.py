@@ -286,6 +286,13 @@ def _run_one(
     journal_path = run_dir / "journal.jsonl"
     state_dest = run_dir / "state.json"
     if not (journal_path.exists() and state_dest.exists()):
+        if exit_reason.startswith("max_wall_clock_minutes"):
+            raise RunnerError(
+                f"Run was capped by max_wall_clock_minutes={max_wall_clock_minutes} before "
+                f"the consciousness could initialize (no journal.jsonl / state.json written "
+                f"to {cons_dir}). The cap is likely too short for this host's subprocess "
+                f"startup cost — try a larger --max-wall-clock-minutes. Spawn log: {log_path}"
+            )
         raise RunnerError(
             f"Run completed but artifacts missing in {cons_dir}: "
             f"journal_exists={journal_path.exists()}, state_exists={state_dest.exists()}. "
