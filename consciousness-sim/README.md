@@ -87,6 +87,16 @@ python scripts/stop.py --name Aria
 
 # Attach a live TUI to a --bg instance via Unix socket (PR #59)
 python scripts/attach.py --name Aria
+
+# Enumerate every instance under CONSCIOUSNESS_HOME — alive / stopped / orphan,
+# pid, uptime, thought count, last-cycle timestamp, and health status (issue #116)
+python scripts/doctor.py
+
+# Remove stale pid files for orphaned instances (prompts per-instance unless --yes)
+python scripts/doctor.py --prune --yes
+
+# Machine-readable output for tooling
+python scripts/doctor.py --json
 ```
 
 ### Web dashboard (PR #52, decoupled in issue #55)
