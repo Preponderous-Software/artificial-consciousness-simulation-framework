@@ -135,15 +135,40 @@ def test_runner_wall_clock_cap_terminates_long_run(tmp_path: Path, monkeypatch) 
 
     # Target many thoughts so we definitely hit the wall-clock cap first.
     # Mock provider is fast; use a very tight cap to be sure we hit it.
+    #
+    # The cap must clear the child's `import scripts.spawn`-equivalent startup
+    # cost (fastapi/anthropic/openai/chromadb/numpy imports), not just the
+    # thought rate — on a slow host that import alone can exceed 3s, which
+    # SIGTERMs the child before Consciousness is ever constructed and the
+    # test never reaches the assertion below (#145).
     manifest = _build_manifest("smoke-walltime-cap", n_thoughts=10_000)
     run_dir = run_experiment(
         manifest,
         experiments_root=tmp_path / "experiments",
-        max_wall_clock_minutes=0.05,    # 3 seconds — well below typical mock-run rate
+        max_wall_clock_minutes=0.25,    # 15 seconds — clears startup cost, still hit before target
         poll_interval_s=0.2,
     )
     meta = yaml.safe_load((run_dir / "meta.yaml").read_text())
     assert "max_wall_clock_minutes" in meta["exit_reason"]
+
+
+def test_runner_cap_before_init_names_the_cap_as_likely_cause(tmp_path: Path, monkeypatch) -> None:
+    """A cap too short for subprocess startup should raise a RunnerError that
+    names the wall-clock cap as the likely cause, not a generic "artifacts
+    missing" message (#145)."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path / "home"))
+    from experiments.runner import RunnerError
+
+    manifest = _build_manifest("smoke-cap-before-init", n_thoughts=10_000)
+    with pytest.raises(RunnerError, match="max_wall_clock_minutes"):
+        run_experiment(
+            manifest,
+            experiments_root=tmp_path / "experiments",
+            # Impossibly short: the child can't even be forked and start
+            # importing within this window, guaranteeing zero artifacts.
+            max_wall_clock_minutes=0.0005,   # 30 milliseconds
+            poll_interval_s=0.01,
+        )
 
 
 def test_runner_starts_from_clean_consciousness_dir(tmp_path: Path, monkeypatch) -> None:
