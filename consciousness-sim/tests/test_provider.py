@@ -9,6 +9,8 @@ import textwrap
 import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from llm.provider import MockProvider, OllamaProvider
 
 
@@ -339,3 +341,220 @@ def test_ollama_embed_timeout_logs_warning(monkeypatch) -> None:
             pass
         warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
         assert any("timed out" in c for c in warning_calls), f"Expected timeout warning, got: {warning_calls}"
+
+
+# ---------------------------------------------------------------------------
+# #112 — dedicated embedding model
+# ---------------------------------------------------------------------------
+
+
+def _install_model_recording_fake_ollama(monkeypatch) -> dict[str, list[str]]:
+    """Fake ollama client that records which model each endpoint was called with."""
+    seen: dict[str, list[str]] = {"chat": [], "embed": []}
+
+    class _Msg:
+        content = "generated"
+
+    class _ChatResp:
+        message = _Msg()
+
+    class _EmbedResp:
+        embeddings = [[0.5, 0.25]]
+
+    class _Recording:
+        def __init__(self, host=None) -> None:
+            pass
+
+        async def chat(self, **kwargs):
+            seen["chat"].append(kwargs["model"])
+            return _ChatResp()
+
+        async def embed(self, **kwargs):
+            seen["embed"].append(kwargs["model"])
+            return _EmbedResp()
+
+    monkeypatch.setitem(sys.modules, "ollama", types.SimpleNamespace(AsyncClient=_Recording))
+    return seen
+
+
+def test_ollama_embed_model_defaults_to_generation_model(monkeypatch) -> None:
+    seen = _install_model_recording_fake_ollama(monkeypatch)
+    provider = OllamaProvider(model="llama3.2:3b")
+    assert provider.embed_model == "llama3.2:3b"
+    asyncio.run(provider.embed("text"))
+    assert seen["embed"] == ["llama3.2:3b"]
+
+
+def test_ollama_embed_model_routes_embeds_to_dedicated_model(monkeypatch) -> None:
+    """#112 acceptance: distinct embed/generate models route to the right endpoints."""
+    seen = _install_model_recording_fake_ollama(monkeypatch)
+    provider = OllamaProvider(model="llama3.2:3b", embed_model="nomic-embed-text")
+    asyncio.run(provider.generate("prompt", "system", 0.5, 32))
+    asyncio.run(provider.embed("text"))
+    assert seen["chat"] == ["llama3.2:3b"], "generation must still use llm.model"
+    assert seen["embed"] == ["nomic-embed-text"], "embeds must use llm.embed_model"
+
+
+def test_ollama_empty_embed_model_falls_back_to_generation_model(monkeypatch) -> None:
+    _install_model_recording_fake_ollama(monkeypatch)
+    assert OllamaProvider(model="llama3.2:3b", embed_model="").embed_model == "llama3.2:3b"
+
+
+def test_ollama_embed_cache_key_tracks_embed_model_not_generation_model(monkeypatch) -> None:
+    """Two providers sharing a generation model but differing in embed_model
+    produce different-dimensioned vectors, so their cache keys must differ."""
+    _install_model_recording_fake_ollama(monkeypatch)
+    a = OllamaProvider(model="llama3.2:3b", embed_cache_size=8, embed_model="nomic-embed-text")
+    b = OllamaProvider(model="llama3.2:3b", embed_cache_size=8)
+    assert a._embed_cache_key("same text") != b._embed_cache_key("same text")
+
+
+def test_build_provider_forwards_embed_model_to_ollama(monkeypatch) -> None:
+    _install_model_recording_fake_ollama(monkeypatch)
+    from llm.provider import build_provider as _bp
+    provider = _bp("ollama", "llama3.2:3b", embed_model="nomic-embed-text")
+    assert isinstance(provider, OllamaProvider)
+    assert provider.embed_model == "nomic-embed-text"
+    assert provider.model == "llama3.2:3b"
+    # embed_cache_size omitted → provider default preserved
+    assert provider._embed_cache_size == OllamaProvider.DEFAULT_EMBED_CACHE_SIZE
+
+
+# ---------------------------------------------------------------------------
+# #114 — circuit breaker wrapping generate/embed
+# ---------------------------------------------------------------------------
+
+
+def _install_timing_out_fake_ollama(monkeypatch) -> dict[str, int]:
+    calls: dict[str, int] = {"chat": 0, "embed": 0}
+
+    class _Timeout:
+        def __init__(self, host=None) -> None:
+            pass
+
+        async def chat(self, **kwargs):
+            calls["chat"] += 1
+            raise TimeoutError("simulated")
+
+        async def embed(self, **kwargs):
+            calls["embed"] += 1
+            raise TimeoutError("simulated")
+
+    monkeypatch.setitem(sys.modules, "ollama", types.SimpleNamespace(AsyncClient=_Timeout))
+    return calls
+
+
+def test_provider_without_breaker_keeps_pre_114_behavior(monkeypatch) -> None:
+    calls = _install_timing_out_fake_ollama(monkeypatch)
+    provider = OllamaProvider(model="llama3.1", embed_cache_size=0)
+    assert provider.circuit_state is None
+    for _ in range(4):
+        with pytest.raises(TimeoutError):
+            asyncio.run(provider.embed("text"))
+    assert calls["embed"] == 4, "no breaker → every call still reaches the server"
+
+
+def test_open_breaker_fast_fails_ollama_embed(monkeypatch) -> None:
+    from llm.circuit_breaker import CircuitBreaker, LLMUnavailableError
+
+    calls = _install_timing_out_fake_ollama(monkeypatch)
+    breaker = CircuitBreaker(name="test", failure_threshold=2, cooldown_seconds=60.0)
+    provider = OllamaProvider(model="llama3.1", embed_cache_size=0, circuit_breaker=breaker)
+
+    for _ in range(2):
+        with pytest.raises(TimeoutError):
+            asyncio.run(provider.embed("text"))
+    assert provider.circuit_state == "open"
+
+    with pytest.raises(LLMUnavailableError):
+        asyncio.run(provider.embed("text"))
+    assert calls["embed"] == 2, "open circuit must not reach the server"
+
+
+def test_open_breaker_fast_fails_ollama_generate_without_retry_ladder(monkeypatch) -> None:
+    """The breaker sits outside with_backoff, so an open circuit short-circuits
+    the whole retry ladder rather than one attempt of it."""
+    from llm.circuit_breaker import CircuitBreaker, LLMUnavailableError
+
+    calls = _install_timing_out_fake_ollama(monkeypatch)
+    breaker = CircuitBreaker(name="test", failure_threshold=1, cooldown_seconds=60.0)
+    provider = OllamaProvider(model="llama3.1", circuit_breaker=breaker)
+
+    with patch("llm.provider.asyncio.sleep", new=AsyncMock()):
+        with pytest.raises(TimeoutError):
+            asyncio.run(provider.generate("p", "s", 0.5, 8))
+    first_round = calls["chat"]
+    assert first_round > 1, "with_backoff should have retried inside the breaker"
+
+    with pytest.raises(LLMUnavailableError):
+        asyncio.run(provider.generate("p", "s", 0.5, 8))
+    assert calls["chat"] == first_round, "open circuit must skip the whole retry ladder"
+
+
+def test_generate_and_embed_share_one_breaker(monkeypatch) -> None:
+    """The contended resource is the server, so embed failures must also
+    short-circuit generate."""
+    from llm.circuit_breaker import CircuitBreaker, LLMUnavailableError
+
+    calls = _install_timing_out_fake_ollama(monkeypatch)
+    breaker = CircuitBreaker(name="test", failure_threshold=2, cooldown_seconds=60.0)
+    provider = OllamaProvider(model="llama3.1", embed_cache_size=0, circuit_breaker=breaker)
+
+    for _ in range(2):
+        with pytest.raises(TimeoutError):
+            asyncio.run(provider.embed("text"))
+    with pytest.raises(LLMUnavailableError):
+        asyncio.run(provider.generate("p", "s", 0.5, 8))
+    assert calls["chat"] == 0
+
+
+def test_embed_cache_hit_is_served_while_circuit_is_open(monkeypatch) -> None:
+    """A cached vector never touches the server, so an open circuit must not
+    block it — otherwise the breaker would degrade retrieval it cannot help."""
+    from llm.circuit_breaker import CircuitBreaker
+
+    seen = _install_model_recording_fake_ollama(monkeypatch)
+    breaker = CircuitBreaker(name="test", failure_threshold=1, cooldown_seconds=60.0)
+    provider = OllamaProvider(model="llama3.1", embed_cache_size=8, circuit_breaker=breaker)
+
+    warm = asyncio.run(provider.embed("cached text"))
+    breaker._consecutive_failures = 1
+    breaker._open("forced for test")
+    assert provider.circuit_state == "open"
+
+    assert asyncio.run(provider.embed("cached text")) == warm
+    assert len(seen["embed"]) == 1, "cache hit must not issue a second request"
+
+
+def test_llm_unavailable_error_is_not_treated_as_retryable() -> None:
+    """with_backoff must not sleep-and-retry the breaker's own fast-fail."""
+    from llm.circuit_breaker import LLMUnavailableError
+
+    assert OllamaProvider._is_retryable_error(LLMUnavailableError("open")) is False
+
+
+def test_build_provider_forwards_circuit_breaker_to_ollama(monkeypatch) -> None:
+    from llm.circuit_breaker import CircuitBreaker
+
+    _install_model_recording_fake_ollama(monkeypatch)
+    from llm.provider import build_provider as _bp
+    breaker = CircuitBreaker(name="test")
+    provider = _bp("ollama", "llama3.1", circuit_breaker=breaker)
+    assert isinstance(provider, OllamaProvider)
+    assert provider.circuit_breaker is breaker
+    assert provider.circuit_state == "closed"
+
+
+def test_try_ensure_running_does_not_reset_an_open_breaker(monkeypatch) -> None:
+    """A saturated Ollama still answers /api/tags, so a healthy probe must not
+    be mistaken for recovery and reopen the floodgates."""
+    from llm.circuit_breaker import CircuitBreaker
+
+    breaker = CircuitBreaker(name="test", failure_threshold=1, cooldown_seconds=60.0)
+    provider = OllamaProvider(model="llama3.1", circuit_breaker=breaker)
+    breaker._consecutive_failures = 1
+    breaker._open("forced for test")
+
+    with patch.object(OllamaProvider, "_is_ollama_healthy", new=AsyncMock(return_value=True)):
+        assert asyncio.run(provider.try_ensure_running()) is True
+    assert provider.circuit_state == "open"

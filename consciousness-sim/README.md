@@ -53,6 +53,14 @@ python scripts/spawn.py --name "Test"
 By default the framework is configured for a **local open-source model via Ollama** (`provider: ollama`, `model: llama3.2:3b`).
 Cloud providers (`openai`, `anthropic`) remain optional overrides.
 
+If you plan to run several instances against one Ollama server, also pull a dedicated
+embedding model and point `llm.embed_model` at it before the first run — see
+`llm.embed_model` under [Configuration Guide](#configuration-guide-configdefault_consciousnessyaml):
+
+```bash
+ollama pull nomic-embed-text
+```
+
 For local test tooling:
 
 ```bash
@@ -184,6 +192,8 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 - `llm.temperature`: creativity level for generation
 - `llm.max_tokens`: max generation length
 - `llm.embed_cache_size`: optional. Per-process LRU cap for `OllamaProvider.embed` results, keyed by sha256 of the input text (#113). Default 256; 0 disables. Absent → provider default applies. Other providers ignore this key.
+- `llm.embed_model`: optional. Dedicated Ollama model for embeddings (#112). `null`/absent → embeddings use `llm.model`. Setting it (recommended: `nomic-embed-text`, ~270 MB — `ollama pull nomic-embed-text`) stops embeds and generations from contending for the same model slot in Ollama's queue, which is what produced repeated 120s embed timeouts under concurrent load. **Changing this on an existing instance changes embedding dimensionality** (llama3.2:3b is 3072-dim, nomic-embed-text is 768-dim), and `LongTermMemory.add_memory()` raises on a dimension mismatch — set it before an instance's first run, or move that instance's `memory.db` aside first. Other providers ignore this key.
+- `llm.circuit_breaker`: optional mapping wrapping `OllamaProvider` generate + embed (#114). Absent → no breaker; every call waits out its full request timeout however saturated the server is. Keys: `enabled` (default `true` when the mapping is present), `failure_threshold` (default 3 consecutive timeout/connection failures before the circuit opens), `cooldown_seconds` (default 60 — the fast-fail window before one probe call is admitted), `max_cooldown_seconds` (default 300 — ceiling on the doubling backoff applied each time a probe fails). While the circuit is open, calls raise `LLMUnavailableError` in <1s instead of blocking; the thought loop still counts those toward its 20-consecutive-failure shutdown, so an unresponsive provider is detected in minutes rather than tens of minutes. Cached embeds are still served while the circuit is open, since they never reach the server. The current state is mirrored into `state.json`'s `health.circuit_state`. Other providers ignore this key.
 - `thought_loop.min_interval_seconds / max_interval_seconds`: per-cycle cadence jitter
 - `thought_loop.reflection_probability`: base chance of reflection per cycle (0.0 disables all reflection including HOT-2/PP-1 boosts)
 - `thought_loop.existential_inquiry_every_n_thoughts`: deterministic existential cadence

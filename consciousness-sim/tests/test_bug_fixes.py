@@ -564,3 +564,194 @@ def test_episodic_cache_does_not_exceed_max_on_load(tmp_path) -> None:
     # The tail (most recent) entries are retained.
     assert mem._cache[-1].content == f"disk event {max_size + 99}"
 
+
+# ---------------------------------------------------------------------------
+# #112 — optional dedicated embedding model (llm.embed_model)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_config_accepts_absent_embed_model() -> None:
+    cfg = _minimal_valid_config()
+    assert "embed_model" not in cfg["llm"]
+    _validate_config(cfg)  # optional key — must not raise
+
+
+def test_validate_config_accepts_null_embed_model() -> None:
+    cfg = _minimal_valid_config()
+    cfg["llm"]["embed_model"] = None
+    _validate_config(cfg)  # null = fall back to llm.model
+
+
+def test_validate_config_rejects_blank_embed_model() -> None:
+    """An empty string is a typo, not 'use the generation model' — say so at
+    startup rather than silently ignoring it."""
+    cfg = _minimal_valid_config()
+    cfg["llm"]["embed_model"] = "   "
+    with pytest.raises(ValueError, match="embed_model"):
+        _validate_config(cfg)
+
+
+def test_validate_config_rejects_non_string_embed_model() -> None:
+    cfg = _minimal_valid_config()
+    cfg["llm"]["embed_model"] = 3
+    with pytest.raises(ValueError, match="embed_model"):
+        _validate_config(cfg)
+
+
+def test_consciousness_wires_embed_model_from_config(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    cfg = _minimal_valid_config()
+    cfg["llm"]["embed_model"] = "nomic-embed-text"
+    config_path = tmp_path / "cfg.yaml"
+    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    from core.consciousness import Consciousness
+
+    mind = Consciousness(name="Aria", config_path=str(config_path))
+    assert mind.provider.embed_model == "nomic-embed-text"
+    assert mind.provider.model == "llama3"
+
+
+def test_consciousness_embed_model_defaults_to_generation_model(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    config_path = tmp_path / "cfg.yaml"
+    config_path.write_text(yaml.safe_dump(_minimal_valid_config()), encoding="utf-8")
+
+    from core.consciousness import Consciousness
+
+    mind = Consciousness(name="Aria", config_path=str(config_path))
+    assert mind.provider.embed_model == "llama3"
+
+
+# ---------------------------------------------------------------------------
+# #114 — optional provider circuit breaker (llm.circuit_breaker)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_config_accepts_absent_circuit_breaker() -> None:
+    cfg = _minimal_valid_config()
+    assert "circuit_breaker" not in cfg["llm"]
+    _validate_config(cfg)  # optional section — must not raise
+
+
+def test_validate_config_rejects_non_mapping_circuit_breaker() -> None:
+    cfg = _minimal_valid_config()
+    cfg["llm"]["circuit_breaker"] = "on"
+    with pytest.raises(ValueError, match="circuit_breaker"):
+        _validate_config(cfg)
+
+
+def test_validate_config_rejects_boolean_failure_threshold() -> None:
+    """YAML `yes`/`on` must not silently configure a one-failure breaker."""
+    cfg = _minimal_valid_config()
+    cfg["llm"]["circuit_breaker"] = {"failure_threshold": True}
+    with pytest.raises(ValueError, match="failure_threshold"):
+        _validate_config(cfg)
+
+
+def test_validate_config_rejects_zero_failure_threshold() -> None:
+    cfg = _minimal_valid_config()
+    cfg["llm"]["circuit_breaker"] = {"failure_threshold": 0}
+    with pytest.raises(ValueError, match="failure_threshold"):
+        _validate_config(cfg)
+
+
+def test_validate_config_rejects_non_positive_cooldown() -> None:
+    cfg = _minimal_valid_config()
+    cfg["llm"]["circuit_breaker"] = {"cooldown_seconds": 0}
+    with pytest.raises(ValueError, match="cooldown_seconds"):
+        _validate_config(cfg)
+
+
+def test_validate_config_rejects_non_numeric_max_cooldown() -> None:
+    cfg = _minimal_valid_config()
+    cfg["llm"]["circuit_breaker"] = {"max_cooldown_seconds": "five minutes"}
+    with pytest.raises(ValueError, match="max_cooldown_seconds"):
+        _validate_config(cfg)
+
+
+def test_consciousness_wires_circuit_breaker_from_config(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    cfg = _minimal_valid_config()
+    cfg["llm"]["circuit_breaker"] = {
+        "enabled": True,
+        "failure_threshold": 4,
+        "cooldown_seconds": 30,
+        "max_cooldown_seconds": 90,
+    }
+    config_path = tmp_path / "cfg.yaml"
+    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    from core.consciousness import Consciousness
+
+    mind = Consciousness(name="Aria", config_path=str(config_path))
+    breaker = mind.provider.circuit_breaker
+    assert breaker is not None
+    assert breaker.failure_threshold == 4
+    assert breaker.base_cooldown_seconds == 30.0
+    assert breaker.max_cooldown_seconds == 90.0
+    assert mind.health["circuit_state"] is None, "state is only sampled on cycle outcomes"
+
+
+def test_consciousness_has_no_breaker_when_section_absent(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    config_path = tmp_path / "cfg.yaml"
+    config_path.write_text(yaml.safe_dump(_minimal_valid_config()), encoding="utf-8")
+
+    from core.consciousness import Consciousness
+
+    mind = Consciousness(name="Aria", config_path=str(config_path))
+    assert mind.provider.circuit_breaker is None
+
+
+def test_health_block_mirrors_circuit_state_on_failure(tmp_path, monkeypatch) -> None:
+    """#114: an operator reading state.json must be able to tell a fast-fail
+    from a real timeout."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    cfg = _minimal_valid_config()
+    cfg["llm"]["circuit_breaker"] = {"enabled": True, "failure_threshold": 1}
+    config_path = tmp_path / "cfg.yaml"
+    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    from core.consciousness import Consciousness
+
+    mind = Consciousness(name="Aria", config_path=str(config_path))
+    breaker = mind.provider.circuit_breaker
+    breaker._consecutive_failures = 1
+    breaker._open("forced for test")
+
+    asyncio.run(mind._record_failure(TimeoutError("boom"), 1))
+    assert mind.health["circuit_state"] == "open"
+
+    breaker.reset()
+    asyncio.run(mind._record_success())
+    assert mind.health["circuit_state"] == "closed"
+
+
+def test_health_circuit_state_is_not_restored_from_state_json(tmp_path, monkeypatch) -> None:
+    """A cooldown recorded by a previous process says nothing about this one."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    cfg = _minimal_valid_config()
+    cfg["llm"]["circuit_breaker"] = {"enabled": True}
+    config_path = tmp_path / "cfg.yaml"
+    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    from core.consciousness import Consciousness
+
+    mind = Consciousness(name="Aria", config_path=str(config_path))
+    state_path = mind.state_manager.path
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps({
+            "identity": mind.identity.to_dict(),
+            "short_term": [],
+            "thought_count": 3,
+            "health": {"status": "failing", "circuit_state": "open"},
+        }),
+        encoding="utf-8",
+    )
+
+    asyncio.run(mind.initialize())
+    assert mind.health["status"] == "failing", "status is restored (#117)"
+    assert mind.health["circuit_state"] is None, "circuit state must not be restored"
+

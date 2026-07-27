@@ -14,6 +14,35 @@ llm:
   model: "llama3.2:3b"
   temperature: 0.85   # thought-generation sampling temperature (0.0–1.0)
   max_tokens: 220     # max tokens per thought (≈2–5 sentences for llama3.2:3b)
+  # Optional dedicated embedding model (#112). Ollama only; ignored by other
+  # providers. null → embeddings use `model` above, which is the historical
+  # behaviour. Setting a dedicated model (recommended: "nomic-embed-text",
+  # ~270 MB) stops embeds and generations from contending for the same model
+  # slot in Ollama's queue — the failure mode that produced repeated 120s
+  # embed timeouts under concurrent load.
+  #
+  # MIGRATION WARNING: this changes embedding dimensionality (llama3.2:3b is
+  # 3072-dim, nomic-embed-text is 768-dim). `LongTermMemory.add_memory()`
+  # raises on a dimension mismatch against an existing store, so switching
+  # this on an instance that already has memories will make every
+  # consolidation insert fail. Either set it before an instance's first run,
+  # or move that instance's `memory.db` aside first. It is left unset by
+  # default for exactly that reason; run `ollama pull nomic-embed-text`
+  # before enabling it.
+  embed_model: null
+  # Optional circuit breaker around Ollama generate/embed (#114). Absent or
+  # `enabled: false` → every call waits out its full request timeout however
+  # saturated the server is. When enabled, `failure_threshold` consecutive
+  # timeout/connection failures open the circuit; subsequent calls fast-fail
+  # in <1s for `cooldown_seconds`, then one probe call is admitted. A failed
+  # probe doubles the cooldown up to `max_cooldown_seconds`. The thought loop
+  # still counts fast-fails toward its 20-consecutive-failure shutdown, so a
+  # dead provider is now detected in minutes rather than tens of minutes.
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 3       # consecutive transient failures before opening
+    cooldown_seconds: 60       # fast-fail window before the first probe
+    max_cooldown_seconds: 300  # ceiling on the doubling backoff
 
 thought_loop:
   min_interval_seconds: 10

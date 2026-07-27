@@ -30,6 +30,7 @@ from core.reflection import ReflectionEngine
 from core.thought_loop import ThoughtLoop
 from interfaces.discord.webhook import build_sink_from_config as build_discord_sink
 from llm.perception import PerceptionProvider, build_perception_provider
+from llm.circuit_breaker import build_circuit_breaker
 from llm.provider import build_provider
 from memory.consolidator import ConsolidationResult, MemoryConsolidator
 from memory.episodic import EpisodicMemory
@@ -140,6 +141,42 @@ def _validate_config(config: dict[str, Any]) -> None:
                 f"got {max_rows}"
             )
 
+    # Optional: llm.embed_model (#112). Absent/null → embeddings use the
+    # generation model, which is the pre-#112 behaviour.
+    embed_model = config["llm"].get("embed_model")
+    if embed_model is not None:
+        if not isinstance(embed_model, str) or not embed_model.strip():
+            raise ValueError(
+                f"Config 'llm.embed_model' must be a non-empty model name or null "
+                f"(null = use llm.model), got {embed_model!r}"
+            )
+
+    # Optional: llm.circuit_breaker (#114). Absent → no breaker, which is the
+    # pre-#114 behaviour of waiting out every request timeout.
+    breaker_cfg = config["llm"].get("circuit_breaker")
+    if breaker_cfg is not None:
+        if not isinstance(breaker_cfg, dict):
+            raise ValueError(
+                f"Config 'llm.circuit_breaker' must be a mapping or null, got {breaker_cfg!r}"
+            )
+        if "failure_threshold" in breaker_cfg:
+            threshold = breaker_cfg["failure_threshold"]
+            # Bools rejected for the same reason as long_term_max_rows above:
+            # YAML 1.1 turns `yes`/`on` into True, and int(True) == 1 would
+            # silently configure a breaker that opens on the first hiccup.
+            if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 1:
+                raise ValueError(
+                    f"Config 'llm.circuit_breaker.failure_threshold' must be an integer >= 1, "
+                    f"got {threshold!r}"
+                )
+        for key in ("cooldown_seconds", "max_cooldown_seconds"):
+            if key in breaker_cfg:
+                value = breaker_cfg[key]
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                    raise ValueError(
+                        f"Config 'llm.circuit_breaker.{key}' must be a number > 0, got {value!r}"
+                    )
+
 
 _ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -178,13 +215,19 @@ class Consciousness:
         cons_cfg = self.config["consciousness"]
 
         base = consciousness_dir(name)
-        # Optional per-provider knobs (#113). Absent → provider defaults.
+        # Optional per-provider knobs (#113 cache, #112 embed model,
+        # #114 circuit breaker). Absent → provider defaults.
         embed_cache_size = llm_cfg.get("embed_cache_size")
+        embed_model = llm_cfg.get("embed_model")
         self.provider = build_provider(
             llm_cfg["provider"],
             llm_cfg["model"],
             embed_cache_size=(
                 int(embed_cache_size) if embed_cache_size is not None else None
+            ),
+            embed_model=(str(embed_model) if embed_model else None),
+            circuit_breaker=build_circuit_breaker(
+                llm_cfg.get("circuit_breaker"), name=f"{llm_cfg['provider']}:{name}"
             ),
         )
         self.identity = IdentityDocument(
@@ -274,6 +317,11 @@ class Consciousness:
             "last_error": None,
             "last_error_at": None,
             "last_successful_cycle_at": None,
+            # #114: circuit-breaker state, or None when no breaker is
+            # configured / the provider has no breaker (Anthropic, OpenAI,
+            # Mock). Runtime-only — never restored from state.json, since a
+            # cooldown from a previous process says nothing about this one.
+            "circuit_state": None,
         }
 
         # Optional Discord webhook sink (issue #56). Built after event lists
@@ -308,10 +356,19 @@ class Consciousness:
             return "degraded"
         return "failing"
 
+    def _refresh_circuit_state(self) -> None:
+        """Mirror the provider's circuit-breaker state into the health block (#114).
+
+        Read via getattr because only OllamaProvider exposes `circuit_state`;
+        every other provider leaves the field None.
+        """
+        self.health["circuit_state"] = getattr(self.provider, "circuit_state", None)
+
     async def _record_failure(self, exc: BaseException, consecutive_failures: int) -> None:
         """Update self.health on a failed thought cycle and emit on_health_change
         when the status label transitions."""
         prev_status = self.health["status"]
+        self._refresh_circuit_state()
         self.health["consecutive_failures"] = consecutive_failures
         self.health["last_error"] = f"{type(exc).__name__}: {exc}"
         self.health["last_error_at"] = datetime.now(timezone.utc).isoformat()
@@ -334,6 +391,7 @@ class Consciousness:
         """Clear failure counters on a successful cycle and emit when status
         transitions back to ok."""
         prev_status = self.health["status"]
+        self._refresh_circuit_state()
         self.health["consecutive_failures"] = 0
         self.health["last_successful_cycle_at"] = datetime.now(timezone.utc).isoformat()
         new_status = "ok"
@@ -376,6 +434,9 @@ class Consciousness:
             restored_health = restored.get("health")
             if isinstance(restored_health, dict):
                 # Don't overwrite the dict shape — only copy known keys.
+                # "circuit_state" is deliberately excluded (#114): the breaker
+                # starts closed in every new process regardless of how the
+                # previous one ended.
                 for key in (
                     "status", "consecutive_failures", "last_error",
                     "last_error_at", "last_successful_cycle_at",

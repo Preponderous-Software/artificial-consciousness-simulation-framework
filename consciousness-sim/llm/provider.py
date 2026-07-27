@@ -23,6 +23,8 @@ import urllib.parse
 from abc import ABC, abstractmethod
 from typing import Any, Sequence
 
+from llm.circuit_breaker import CircuitBreaker, LLMUnavailableError
+
 logger = logging.getLogger(__name__)
 MAX_FALLBACK_PURPOSE_LENGTH = 120
 
@@ -60,6 +62,11 @@ class LLMProvider(ABC):
 
     @staticmethod
     def _is_retryable_error(exc: Exception) -> bool:
+        # A fast-fail from an open circuit is the opposite of retryable: the
+        # breaker raised it precisely to stop us from waiting on the provider
+        # again (#114). Sleeping and retrying here would reintroduce the delay.
+        if isinstance(exc, LLMUnavailableError):
+            return False
         if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
             return True
         name = exc.__class__.__name__.lower()
@@ -219,8 +226,20 @@ class OllamaProvider(LLMProvider):
     # each), 256 entries cap memory at <1 MB. Set to 0 to disable.
     DEFAULT_EMBED_CACHE_SIZE: int = 256
 
-    def __init__(self, model: str, embed_cache_size: int = DEFAULT_EMBED_CACHE_SIZE) -> None:
+    def __init__(
+        self,
+        model: str,
+        embed_cache_size: int = DEFAULT_EMBED_CACHE_SIZE,
+        *,
+        embed_model: str | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
+    ) -> None:
         self.model = model
+        # Optional dedicated embedding model (#112). Embeds and generations
+        # otherwise contend for the same model slot in Ollama's queue, and a
+        # generation-sized model pays generation-sized context-load cost for
+        # what is only a vector lookup. None → use the generation model.
+        self.embed_model = embed_model or model
         # Per-instance LRU cache keyed by sha256 of the input text (#113).
         # Most embed calls during a long run repeat near-identical context
         # strings cycle-to-cycle, so caching cuts Ollama load substantially
@@ -230,10 +249,29 @@ class OllamaProvider(LLMProvider):
         self._embed_cache: "collections.OrderedDict[str, list[float]]" = collections.OrderedDict()
         self.embed_cache_hits: int = 0
         self.embed_cache_misses: int = 0
+        # Optional circuit breaker (#114). None → pre-#114 behaviour: every
+        # call waits out the full request timeout, however saturated the
+        # server is. Generate and embed share one breaker because they
+        # contend for the same server, not the same endpoint.
+        self.circuit_breaker = circuit_breaker
 
     def _embed_cache_key(self, text: str) -> str:
         h = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        return f"{self.model}:{h}"
+        # Keyed on the embedding model, not the generation model: two
+        # providers differing only in embed_model produce different vectors
+        # (and different dimensionalities) for identical text.
+        return f"{self.embed_model}:{h}"
+
+    @property
+    def circuit_state(self) -> str | None:
+        """Breaker state label, or None when no breaker is configured."""
+        return self.circuit_breaker.state if self.circuit_breaker is not None else None
+
+    async def _guarded(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        """Run `func` under the circuit breaker when one is configured."""
+        if self.circuit_breaker is None:
+            return await func(*args, **kwargs)
+        return await self.circuit_breaker.call(func, *args, **kwargs)
 
     @property
     def embed_cache_stats(self) -> dict[str, int]:
@@ -286,7 +324,11 @@ class OllamaProvider(LLMProvider):
             return content
 
     async def generate(self, prompt: str, system: str, temperature: float, max_tokens: int) -> str:
-        return await self.with_backoff(self._generate, prompt, system, temperature, max_tokens)
+        # Breaker sits outside with_backoff so an open circuit short-circuits
+        # the whole retry ladder, not just one attempt of it.
+        return await self._guarded(
+            self.with_backoff, self._generate, prompt, system, temperature, max_tokens
+        )
 
     async def embed(self, text: str) -> list[float]:
         if self._embed_cache_size > 0:
@@ -297,12 +339,14 @@ class OllamaProvider(LLMProvider):
                 self.embed_cache_hits += 1
                 logger.debug(
                     "Ollama embed cache hit (model=%r, hits=%d/misses=%d)",
-                    self.model, self.embed_cache_hits, self.embed_cache_misses,
+                    self.embed_model, self.embed_cache_hits, self.embed_cache_misses,
                 )
                 return list(cached)
             self.embed_cache_misses += 1
 
-        vec = await self._do_embed(text)
+        # Cache hits are served above without reaching this point, so an open
+        # circuit never blocks a lookup that would not have touched the server.
+        vec = await self._guarded(self._do_embed, text)
 
         if self._embed_cache_size > 0:
             self._embed_cache[key] = list(vec)
@@ -317,22 +361,27 @@ class OllamaProvider(LLMProvider):
             raise RuntimeError("ollama Python package not installed")
         sem = self._get_semaphore()
         if sem.locked():
-            logger.debug("Ollama semaphore busy; queuing embed request for model %r", self.model)
+            logger.debug(
+                "Ollama semaphore busy; queuing embed request for model %r", self.embed_model
+            )
         async with sem:
-            logger.debug("Ollama embed started (model=%r)", self.model)
+            logger.debug("Ollama embed started (model=%r)", self.embed_model)
             client = AsyncClient(host=self._resolve_base_url())
             try:
                 resp = await asyncio.wait_for(
-                    client.embed(model=self.model, input=text, keep_alive=self.KEEP_ALIVE),
+                    client.embed(model=self.embed_model, input=text, keep_alive=self.KEEP_ALIVE),
                     timeout=self.EMBED_TIMEOUT,
                 )
             except TimeoutError:
-                logger.warning("Ollama embed timed out after %.0fs (model=%r)", self.EMBED_TIMEOUT, self.model)
+                logger.warning(
+                    "Ollama embed timed out after %.0fs (model=%r)",
+                    self.EMBED_TIMEOUT, self.embed_model,
+                )
                 raise
             emb: Sequence[float] | None = resp.embeddings[0] if resp.embeddings else None
             if not emb:
-                raise RuntimeError(f"Ollama returned no embedding for model {self.model!r}")
-            logger.debug("Ollama embed succeeded (model=%r, dims=%d)", self.model, len(emb))
+                raise RuntimeError(f"Ollama returned no embedding for model {self.embed_model!r}")
+            logger.debug("Ollama embed succeeded (model=%r, dims=%d)", self.embed_model, len(emb))
             return [float(v) for v in emb]
 
     async def _is_ollama_healthy(self) -> bool:
@@ -353,7 +402,14 @@ class OllamaProvider(LLMProvider):
             return False
 
     async def try_ensure_running(self) -> bool:
-        """Start 'ollama serve' if unhealthy; poll up to 30s for it to come up."""
+        """Start 'ollama serve' if unhealthy; poll up to 30s for it to come up.
+
+        Deliberately does not reset the circuit breaker (#114): a saturated
+        server keeps answering /api/tags promptly while generate/embed time
+        out, so treating this probe as recovery would reopen the floodgates
+        on exactly the failure mode the breaker exists to damp. The breaker
+        recovers on its own via the half-open probe once its cooldown lapses.
+        """
         if await self._is_ollama_healthy():
             return True
         logger.warning("Ollama unreachable; attempting auto-start via 'ollama serve'")
@@ -394,12 +450,14 @@ def build_provider(
     model: str,
     *,
     embed_cache_size: int | None = None,
+    embed_model: str | None = None,
+    circuit_breaker: CircuitBreaker | None = None,
 ) -> LLMProvider:
     """Build a concrete LLMProvider.
 
-    ``embed_cache_size`` (optional) is forwarded to OllamaProvider per #113
-    and ignored by other providers. Omit / pass None to use the provider's
-    own default.
+    ``embed_cache_size`` (#113), ``embed_model`` (#112) and ``circuit_breaker``
+    (#114) are all optional and forwarded to OllamaProvider only; other
+    providers ignore them. Omit / pass None to use the provider's own default.
     """
     normalized = provider.lower()
     if normalized == "openai":
@@ -407,9 +465,12 @@ def build_provider(
     if normalized == "anthropic":
         return AnthropicProvider(model)
     if normalized == "ollama":
-        if embed_cache_size is None:
-            return OllamaProvider(model)
-        return OllamaProvider(model, embed_cache_size=embed_cache_size)
+        kwargs: dict[str, Any] = {}
+        if embed_cache_size is not None:
+            kwargs["embed_cache_size"] = embed_cache_size
+        return OllamaProvider(
+            model, embed_model=embed_model, circuit_breaker=circuit_breaker, **kwargs
+        )
     if normalized == "mock":
         # Deterministic fallback — used by the experiment harness (#57) and any
         # configuration that wants to run offline without an LLM round-trip.
