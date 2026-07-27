@@ -285,7 +285,17 @@ python scripts/experiment.py replay-analysis experiments/<name>/<UTC-timestamp>/
 
 **Local-first default:** The framework defaults to `ollama` with `llama3.2:3b`. Pull the model with `ollama pull llama3.2:3b` before first run.
 
+**Dedicated embedding model (#112):** `llm.embed_model` is optional and unset by default, so embeddings use `llm.model`. Running several instances against one Ollama server makes embeds and generations contend for the same model slot; point `embed_model` at a dedicated model to avoid that:
+
+```bash
+ollama pull nomic-embed-text   # then set llm.embed_model: "nomic-embed-text"
+```
+
+Set it **before an instance's first run**. Switching it later changes embedding dimensionality (llama3.2:3b is 3072-dim, nomic-embed-text is 768-dim) and `LongTermMemory.add_memory()` raises on a mismatch against the existing store — an established instance would need its `memory.db` moved aside first. That is why the shipped default is `null` rather than `nomic-embed-text`.
+
 **Provider failure behavior (changed in #46, commit 9649c5d):** Production providers (Ollama / Anthropic / OpenAI) **raise on any failure** — no silent deterministic fallback. The run loop catches per-cycle exceptions, logs a `WARNING` with a consecutive-failure count, and shuts down cleanly after 20 consecutive failures. `DeterministicFallbackMixin` still exists but is used only by `MockProvider` (for tests). `AnthropicProvider.embed` raises `NotImplementedError` — Anthropic embeddings are unsupported, not approximated.
+
+**Circuit breaker (#114):** `llm.circuit_breaker` (enabled in the shipped config) fast-fails Ollama calls after `failure_threshold` consecutive timeout/connection failures, raising `LLMUnavailableError` in <1s for `cooldown_seconds` instead of blocking on another full request timeout. After the cooldown, one probe call is admitted: success closes the circuit, failure re-opens it with a doubled cooldown capped at `max_cooldown_seconds`. Fast-fails still count toward the 20-consecutive-failure shutdown above, so a dead provider is now detected in minutes rather than tens of minutes.
 
 ---
 
@@ -323,7 +333,11 @@ consciousness-sim/
 │   └── paths.py             # CONSCIOUSNESS_HOME resolution + name sanitization
 ├── llm/
 │   ├── provider.py          # LLMProvider ABC + Ollama/Anthropic/OpenAI/Mock impls;
-│   │                        #   OllamaProvider has a per-instance LRU embed cache (#113)
+│   │                        #   OllamaProvider has a per-instance LRU embed cache (#113),
+│   │                        #   an optional dedicated embed model (#112), and an
+│   │                        #   optional circuit breaker (#114)
+│   ├── circuit_breaker.py   # CircuitBreaker + LLMUnavailableError — fast-fails
+│   │                        #   Ollama calls after repeated timeouts (#114)
 │   ├── perception.py        # PerceptionProvider ABC + WikipediaPerception +
 │   │                        #   MockPerception (issue #53 / PR #54)
 │   └── prompts/             # Prompt templates (thought_generation, self_reflection,
@@ -386,11 +400,13 @@ consciousness-sim/
 - `reflection_probability=0.0` disables reflection entirely — HOT-2 and PP-1 boosts do not override an explicit zero.
 - `LongTermMemory` has a compound index on `(embedding_dim, importance_score, timestamp)`; `similarity_search` candidate selection is O(log N), not O(table size).
 - `LongTermMemory` is bounded by `max_rows` (config `memory.long_term_max_rows`, default `DEFAULT_MAX_ROWS = 2000`; 0 disables) (#135). The bound is enforced inside the insert transaction of `add_memory()` and once in `initialize()`, evicting lowest-`importance_score` / oldest rows. Because eviction runs after the insert, `add_memory()` can evict the row it just wrote when that row is the least important in the store — the returned id is then no longer present. Retention is capacity-triggered, not time-triggered: it composes with, but does not replace, `apply_forgetting_curve()`.
-- `IdentityDocument.drift_mood()` applies trigger-driven drift *and* homeostatic reversion to `initial_mood` additively each cycle (#119) — continuously-triggered traits equilibrate at `baseline + drift_rate / homeostasis_rate` rather than saturating at 1.0. `mood.homeostasis_rate` (default 0.1) is optional in the config.
+- `IdentityDocument.drift_mood()` applies trigger-driven drift *and* homeostatic reversion to `initial_mood` additively each cycle (#119) — continuously-triggered traits equilibrate at `baseline + drift_rate / homeostasis_rate` rather than saturating at 1.0. `mood.homeostasis_rate` is optional in the config (absent → `IdentityDocument._DEFAULT_HOMEOSTASIS_RATE`, currently 0.3; the shipped config sets 0.3 explicitly per #134).
 - `AttentionSchema.decay_only()` runs only from the outer loop's failure branch (#120); successful cycles reset salience to 1.0 via `update()`.
 - `MemoryConsolidator.consolidate_once()` returns a `ConsolidationResult` (not a bare int) carrying `stored / events_in / fell_through_to_fallback / elapsed_s / long_term_total / error`. `run_forever` fires `on_consolidation` after every pass — including the failure case (#89). Equality with `int` is preserved on the `stored` count for callers that treated the prior return as a count.
-- `Consciousness.health` is updated on every cycle and snapshotted in `state.json`. `on_health_change` fires only on status *transitions* (ok ↔ degraded ↔ failing), not every failure (#117).
-- `OllamaProvider.embed` results are cached in a per-instance LRU keyed by `"{model}:{sha256(text)}"` with default capacity 256 (#113). `llm.embed_cache_size` (optional) configures the bound; 0 disables.
+- `Consciousness.health` is updated on every cycle and snapshotted in `state.json`. `on_health_change` fires only on status *transitions* (ok ↔ degraded ↔ failing), not every failure (#117). The block also carries `circuit_state` (#114), seeded at construction and re-sampled from the provider on each cycle outcome; `None` means no breaker is configured. Unlike the other health keys it is **not** restored from `state.json`, since a cooldown recorded by a previous process says nothing about this one.
+- `OllamaProvider.embed` results are cached in a per-instance LRU keyed by `"{embed_model}:{sha256(text)}"` with default capacity 256 (#113). `llm.embed_cache_size` (optional) configures the bound; 0 disables. The key tracks the *embedding* model, not the generation model, because two providers differing only in `embed_model` produce different-dimensioned vectors for identical text (#112).
+- `OllamaProvider` embeds with `llm.embed_model` when set, falling back to `llm.model` (#112). Switching `embed_model` on an existing instance changes embedding dimensionality, and `LongTermMemory.add_memory()` raises on a mismatch — set it before an instance's first run or move that instance's `memory.db` aside first.
+- `llm.circuit_breaker` (optional) wraps `OllamaProvider.generate` and `.embed` in a shared `CircuitBreaker` (#114). On the generate path it sits *outside* `with_backoff`, so an open circuit short-circuits the whole retry ladder rather than one attempt of it; `embed` has never had a retry ladder and is wrapped directly. Only transient failures (timeout / connection) trip it; deterministic errors propagate without counting. Cached embeds are still served while the circuit is open, since they never reach the server. `OllamaProvider.try_ensure_running()` deliberately does **not** reset the breaker — a saturated Ollama keeps answering `/api/tags` while generate/embed time out.
 - `scripts/spawn.py` refuses to spawn when a pid file points at a live process; `--force` overrides with a visible warning. Foreground / `--headless` modes record + `atexit`-clean their own pid file (#115).
 - `InnerVoice.scrub_reflection()` runs on every reflection/existential text before `short_term.add()` / `episodic.append()` (#132) — leading LLM meta-preambles and markdown headers are stripped, and text that opens in second person is rejected in favor of a fallback string rather than stored verbatim. `render()` (used for thoughts) and `scrub_reflection()` (used for reflections/existential text) are separate methods with different guarantees — `render()` enforces first-person framing on all input, `scrub_reflection()` only removes scaffolding and leaves already-first-person content untouched.
 
