@@ -169,11 +169,10 @@ class CircuitBreaker:
             raise LLMUnavailableError(
                 f"{self.name} circuit is open (fast-fail); retrying in {max(remaining, 0.0):.0f}s"
             )
-        if self._probe_in_flight:
-            raise LLMUnavailableError(
-                f"{self.name} circuit is half-open; a probe call is already in flight"
-            )
-        # Cooldown elapsed and no probe outstanding — admit exactly one probe.
+        # State is OPEN with the cooldown elapsed, so no probe can be
+        # outstanding — both _open() and _close() clear the flag, and it is
+        # only ever set on a path that leaves the state HALF_OPEN.
+        # Admit exactly one probe.
         self._state = HALF_OPEN
         self._probe_in_flight = True
         logger.info(

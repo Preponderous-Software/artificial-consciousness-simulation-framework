@@ -690,7 +690,9 @@ def test_consciousness_wires_circuit_breaker_from_config(tmp_path, monkeypatch) 
     assert breaker.failure_threshold == 4
     assert breaker.base_cooldown_seconds == 30.0
     assert breaker.max_cooldown_seconds == 90.0
-    assert mind.health["circuit_state"] is None, "state is only sampled on cycle outcomes"
+    # Seeded at construction — run() snapshots state.json before the first
+    # cycle, and a null there would read as "no breaker configured".
+    assert mind.health["circuit_state"] == "closed"
 
 
 def test_consciousness_has_no_breaker_when_section_absent(tmp_path, monkeypatch) -> None:
@@ -702,6 +704,7 @@ def test_consciousness_has_no_breaker_when_section_absent(tmp_path, monkeypatch)
 
     mind = Consciousness(name="Aria", config_path=str(config_path))
     assert mind.provider.circuit_breaker is None
+    assert mind.health["circuit_state"] is None, "null means 'no breaker configured'"
 
 
 def test_health_block_mirrors_circuit_state_on_failure(tmp_path, monkeypatch) -> None:
@@ -753,5 +756,7 @@ def test_health_circuit_state_is_not_restored_from_state_json(tmp_path, monkeypa
 
     asyncio.run(mind.initialize())
     assert mind.health["status"] == "failing", "status is restored (#117)"
-    assert mind.health["circuit_state"] is None, "circuit state must not be restored"
+    # Reflects this process's freshly-constructed breaker, not the "open"
+    # recorded by the previous one.
+    assert mind.health["circuit_state"] == "closed", "circuit state must not be restored"
 

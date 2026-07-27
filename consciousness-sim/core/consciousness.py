@@ -29,8 +29,8 @@ from core.inner_voice import InnerVoice
 from core.reflection import ReflectionEngine
 from core.thought_loop import ThoughtLoop
 from interfaces.discord.webhook import build_sink_from_config as build_discord_sink
-from llm.perception import PerceptionProvider, build_perception_provider
 from llm.circuit_breaker import build_circuit_breaker
+from llm.perception import PerceptionProvider, build_perception_provider
 from llm.provider import build_provider
 from memory.consolidator import ConsolidationResult, MemoryConsolidator
 from memory.episodic import EpisodicMemory
@@ -323,6 +323,10 @@ class Consciousness:
             # cooldown from a previous process says nothing about this one.
             "circuit_state": None,
         }
+        # Seed it now rather than on the first cycle outcome: run() writes
+        # state.json before the first cycle, and a null there would read as
+        # "no breaker configured" when one actually is.
+        self._refresh_circuit_state()
 
         # Optional Discord webhook sink (issue #56). Built after event lists
         # exist so register() can subscribe to them. The section is optional in
