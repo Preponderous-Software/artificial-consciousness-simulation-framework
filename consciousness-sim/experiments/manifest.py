@@ -116,7 +116,6 @@ class ExperimentManifest(BaseModel):
     duration: Duration
     success_criteria: list[SuccessCriterion] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
-    compare_against: str | None = None      # name of a prior run to diff against (Phase 2)
     branch_sha: str | None = None           # captured at run time if absent here
     resume_from: str | None = Field(
         default=None,
