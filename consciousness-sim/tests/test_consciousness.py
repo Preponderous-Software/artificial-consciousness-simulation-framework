@@ -206,3 +206,60 @@ def test_perception_enabled_builds_mock_provider(tmp_path, monkeypatch) -> None:
     # on_perception event channel exists for handlers to subscribe to
     assert hasattr(mind, "on_perception") and mind.on_perception == []
 
+
+def test_rpt_critique_defaults_to_disabled(tmp_path, monkeypatch) -> None:
+    """thought_loop.rpt_critique absent from config → thought_loop.rpt_critique is False (#93)."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    cfg = {
+        "consciousness": {"origin_story": "o", "values": ["v"], "purpose": "p"},
+        "llm": {"provider": "ollama", "model": "llama3"},
+        "thought_loop": {
+            "min_interval_seconds": 0, "max_interval_seconds": 0,
+            "reflection_probability": 0.0, "existential_inquiry_every_n_thoughts": 0,
+        },
+        "memory": {
+            "short_term_capacity": 5, "consolidation_interval_minutes": 5,
+            "forgetting_curve_enabled": False, "importance_decay_rate": 0.01,
+        },
+        "mood": {"initial": {"curiosity": 0.5}, "drift_rate": 0.01},
+        "perception": {
+            "enabled": False, "provider": "mock",
+            "every_n_cycles": 0, "timeout_seconds": 1.0, "cache_last_n": 0,
+        },
+    }
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    mind = Consciousness(name="Aria", config_path=str(cfg_path))
+    assert mind.thought_loop.rpt_critique is False
+    assert mind.thought_loop.critique_prompt_path is not None
+    assert mind.thought_loop.critique_prompt_path.exists()
+
+
+def test_rpt_critique_enabled_propagates_from_config(tmp_path, monkeypatch) -> None:
+    """thought_loop.rpt_critique=true propagates to ThoughtLoop.rpt_critique (#93)."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    cfg = {
+        "consciousness": {"origin_story": "o", "values": ["v"], "purpose": "p"},
+        "llm": {"provider": "ollama", "model": "llama3"},
+        "thought_loop": {
+            "min_interval_seconds": 0, "max_interval_seconds": 0,
+            "reflection_probability": 0.0, "existential_inquiry_every_n_thoughts": 0,
+            "rpt_critique": True,
+        },
+        "memory": {
+            "short_term_capacity": 5, "consolidation_interval_minutes": 5,
+            "forgetting_curve_enabled": False, "importance_decay_rate": 0.01,
+        },
+        "mood": {"initial": {"curiosity": 0.5}, "drift_rate": 0.01},
+        "perception": {
+            "enabled": False, "provider": "mock",
+            "every_n_cycles": 0, "timeout_seconds": 1.0, "cache_last_n": 0,
+        },
+    }
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    mind = Consciousness(name="Aria", config_path=str(cfg_path))
+    assert mind.thought_loop.rpt_critique is True
+

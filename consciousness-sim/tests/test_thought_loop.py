@@ -518,3 +518,95 @@ def test_run_cycle_scrubs_reflection_meta_scaffolding_before_storing() -> None:
             )
 
     asyncio.run(_run())
+
+
+def test_rpt_critique_off_matches_current_behavior() -> None:
+    """rpt_critique defaults to False — the provider must be called exactly once for the
+    thought pass, unchanged from pre-#93 behavior."""
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            provider = MockProvider()
+            captured_generate = AsyncMock(return_value="I notice the pattern repeating.")
+            provider.generate = captured_generate
+            from unittest.mock import MagicMock
+            ltm = MagicMock()
+            ltm.similarity_search = AsyncMock(return_value=[])
+
+            loop = _make_loop(base, provider, reflection_probability=0.0)
+            loop.long_term = ltm
+            assert loop.rpt_critique is False
+
+            result = await loop.run_cycle(thought_count=1)
+
+            assert captured_generate.await_count == 1
+            assert "I notice the pattern repeating." in result.thought
+
+    asyncio.run(_run())
+
+
+def test_rpt_critique_on_calls_provider_twice_and_uses_refined_thought() -> None:
+    """rpt_critique=True adds a second provider.generate call whose output replaces
+    the raw thought before it is rendered (RPT-2 — later stage modulates the earlier one)."""
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            provider = MockProvider()
+            captured_generate = AsyncMock(
+                side_effect=["raw first-pass thought.", "refined second-pass thought."]
+            )
+            provider.generate = captured_generate
+            from unittest.mock import MagicMock
+            ltm = MagicMock()
+            ltm.similarity_search = AsyncMock(return_value=[])
+
+            critique_prompt = base / "critique.txt"
+            critique_prompt.write_text("RAW: {raw_thought}\nCONTEXT: {context}", encoding="utf-8")
+
+            loop = _make_loop(base, provider, reflection_probability=0.0)
+            loop.long_term = ltm
+            loop.rpt_critique = True
+            loop.critique_prompt_path = critique_prompt
+
+            result = await loop.run_cycle(thought_count=1)
+
+            assert captured_generate.await_count == 2
+            assert "refined second-pass thought" in result.thought
+            assert "raw first-pass thought" not in result.thought
+
+    asyncio.run(_run())
+
+
+def test_rpt_critique_failure_falls_back_to_raw_thought_with_warning(caplog) -> None:
+    """A critique-pass failure must not propagate — the raw thought is used instead,
+    logged at WARNING rather than silently swallowed."""
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            provider = MockProvider()
+            captured_generate = AsyncMock(
+                side_effect=["raw thought that survives.", RuntimeError("critique boom")]
+            )
+            provider.generate = captured_generate
+            from unittest.mock import MagicMock
+            ltm = MagicMock()
+            ltm.similarity_search = AsyncMock(return_value=[])
+
+            critique_prompt = base / "critique.txt"
+            critique_prompt.write_text("RAW: {raw_thought}\nCONTEXT: {context}", encoding="utf-8")
+
+            loop = _make_loop(base, provider, reflection_probability=0.0)
+            loop.long_term = ltm
+            loop.rpt_critique = True
+            loop.critique_prompt_path = critique_prompt
+
+            import logging
+            with caplog.at_level(logging.WARNING):
+                result = await loop.run_cycle(thought_count=1)
+
+            assert captured_generate.await_count == 2
+            assert "raw thought that survives" in result.thought
+            assert any("critique" in r.message.lower() for r in caplog.records)
+
+    asyncio.run(_run())
+

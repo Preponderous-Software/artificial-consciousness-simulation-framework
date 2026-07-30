@@ -220,6 +220,7 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 - `thought_loop.reflection_probability`: base chance of reflection per cycle (0.0 disables all reflection including HOT-2/PP-1 boosts)
 - `thought_loop.existential_inquiry_every_n_thoughts`: deterministic existential cadence
 - `thought_loop.perf_log_every_n`: log per-component cycle timing (embed/search/generate/perception ms + prompt_chars + pred_error) every N thoughts at INFO level; 0 = off (default 10)
+- `thought_loop.rpt_critique`: optional, default `false`. RPT-2 (#93): when `true`, adds a second `provider.generate()` pass (`llm/prompts/critique.txt`) that critiques the raw thought against its context and rewrites it before rendering — literal feedback from a later stage modulating the earlier representation. Doubles LLM calls (and roughly doubles per-cycle latency) when enabled; a critique-pass failure falls back to the raw thought, logged at WARNING.
 - `memory.short_term_capacity`: working-memory buffer size
 - `memory.consolidation_interval_minutes`: consolidator loop interval
 - `memory.forgetting_curve_enabled`: toggle long-term decay
@@ -249,13 +250,14 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 3. Every Nth cycle (per `perception.every_n_cycles`): fetch a perception and add it to short-term + episodic
 4. Inject identity anchor + mood + recent stream + perception block into prompt
 5. Generate raw next thought through provider abstraction
-6. Apply `InnerVoice.render()` — registers (`questioning` / `remembering` / `wondering`) framing styled from the raw output before it enters the workspace
-7. **HOT-2:** `MetacognitiveMonitor` scores the rendered thought as `high`/`uncertain`/`noise` based on lexical overlap with recent *thought-kind* items in the workspace buffer; saves thought to short-term buffer (importance 1.0/0.75/0.5 by label) and episodic log
-8. **PP-1:** compute `prediction_error` against prior cycle's predicted theme (continuity prior); update `_predicted_theme` for next cycle; every `perf_log_every_n` cycles log per-component timing at INFO level
-9. Reflection trigger: `effective_prob = base + HOT-2 boost + PP-1 boost` (capped at 1.0; base=0.0 disables entirely)
-10. Periodically trigger existential inquiry (deterministic, every N thoughts)
-11. Update `AttentionSchema` via `update()` on success (sets focus/theme, resets salience to 1.0); on a failed cycle the outer loop calls `decay_only()` instead so salience fades smoothly (#120). Mood is drifted via `IdentityDocument.drift_mood()` — trigger-driven drift plus additive homeostatic reversion (#119). Outer loop appends to journal and emits events to handlers, including `on_health_change` on status transitions (#117).
-12. Background consolidator compresses episodic traces into durable long-term memories and emits one `on_consolidation` event per pass (#89), success or failure
+6. **RPT-2 (optional, `thought_loop.rpt_critique`, default off):** a second `provider.generate()` pass critiques the raw thought against its context and rewrites it, replacing the raw representation (#93); a critique-pass failure falls back to the raw thought, logged at WARNING
+7. Apply `InnerVoice.render()` — registers (`questioning` / `remembering` / `wondering`) framing styled from the raw output before it enters the workspace
+8. **HOT-2:** `MetacognitiveMonitor` scores the rendered thought as `high`/`uncertain`/`noise` based on lexical overlap with recent *thought-kind* items in the workspace buffer; saves thought to short-term buffer (importance 1.0/0.75/0.5 by label) and episodic log
+9. **PP-1:** compute `prediction_error` against prior cycle's predicted theme (continuity prior); update `_predicted_theme` for next cycle; every `perf_log_every_n` cycles log per-component timing at INFO level
+10. Reflection trigger: `effective_prob = base + HOT-2 boost + PP-1 boost` (capped at 1.0; base=0.0 disables entirely)
+11. Periodically trigger existential inquiry (deterministic, every N thoughts)
+12. Update `AttentionSchema` via `update()` on success (sets focus/theme, resets salience to 1.0); on a failed cycle the outer loop calls `decay_only()` instead so salience fades smoothly (#120). Mood is drifted via `IdentityDocument.drift_mood()` — trigger-driven drift plus additive homeostatic reversion (#119). Outer loop appends to journal and emits events to handlers, including `on_health_change` on status transitions (#117).
+13. Background consolidator compresses episodic traces into durable long-term memories and emits one `on_consolidation` event per pass (#89), success or failure
 
 ## Extending the System
 

@@ -286,6 +286,8 @@ class Consciousness:
             thought_temperature=float(llm_cfg.get("temperature", 0.85)),
             thought_max_tokens=int(llm_cfg.get("max_tokens", 220)),
             perf_log_every_n=int(self.config["thought_loop"].get("perf_log_every_n", 10)),
+            rpt_critique=bool(self.config["thought_loop"].get("rpt_critique", False)),
+            critique_prompt_path=root / "llm" / "prompts" / "critique.txt",
         )
         self.consolidator = MemoryConsolidator(
             provider=self.provider,

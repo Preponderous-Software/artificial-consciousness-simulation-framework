@@ -1,0 +1,7 @@
+Here is the raw thought you just produced:
+{raw_thought}
+
+Here is the context you were responding to:
+{context}
+
+Identify one way this thought either misreads or misses something in the context. Then rewrite the thought to address that. Reply ONLY with the rewritten thought, in first person, present tense.

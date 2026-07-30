@@ -760,3 +760,20 @@ def test_health_circuit_state_is_not_restored_from_state_json(tmp_path, monkeypa
     # recorded by the previous one.
     assert mind.health["circuit_state"] == "closed", "circuit state must not be restored"
 
+
+# ---------------------------------------------------------------------------
+# #93 — optional RPT-2 critique-and-refine pass (thought_loop.rpt_critique)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_config_accepts_absent_rpt_critique() -> None:
+    cfg = _minimal_valid_config()
+    assert "rpt_critique" not in cfg["thought_loop"]
+    _validate_config(cfg)  # optional key, defaults to False — must not raise
+
+
+def test_validate_config_accepts_rpt_critique_true() -> None:
+    cfg = _minimal_valid_config()
+    cfg["thought_loop"]["rpt_critique"] = True
+    _validate_config(cfg)  # must not raise
+

@@ -13,7 +13,7 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 | Code | Indicator | Status | Implementation | Gap |
 |------|-----------|--------|----------------|-----|
 | RPT-1 | Input modules generating organized, integrated perceptual representations | ◑ | `llm/perception.py` — `PerceptionProvider` ABC + `WikipediaPerception` injects external-world snippets every N cycles (issue #53); persisted to journal/episodic and surfaced in the prompt under "SOMETHING YOU JUST ENCOUNTERED" | Perception is text-only (no other modalities); a single fetch per cycle is not a continuous stream; no within-modality structure beyond raw text |
-| RPT-2 | Recurrent processing — feedback modulation of earlier representations by later stages | ✗ | None | All generation is a single feedforward LLM pass; no within-cycle recurrent feedback |
+| RPT-2 | Recurrent processing — feedback modulation of earlier representations by later stages | ◑ | `core/thought_loop.py` — optional `thought_loop.rpt_critique` config flag (default `false`); when enabled, `_critique_and_refine()` issues a second `provider.generate()` call (`llm/prompts/critique.txt`) that critiques the raw thought against its context and rewrites it, replacing the raw representation before `InnerVoice.render()` (issue #93) | The "later stage" is the same model issuing a second call, not a distinct higher-cortical-area abstraction; still a two-pass feedforward pipeline rather than true within-cycle recurrence; doubles LLM calls per cycle, so it defaults off |
 
 ---
 
@@ -69,7 +69,7 @@ Capability log tracking implementation status of the 14 Butlin et al. indicator 
 | Status | Count | Indicators |
 |--------|-------|-----------|
 | ✓ Full | 0 | — |
-| ◑ Partial | 11 | RPT-1, GWT-1, GWT-2, GWT-3, HOT-1, HOT-2, HOT-3, HOT-4, PP-1, AE-1, AST-1 |
-| ✗ None | 3 | RPT-2, GWT-4, AE-2 |
+| ◑ Partial | 12 | RPT-1, RPT-2, GWT-1, GWT-2, GWT-3, HOT-1, HOT-2, HOT-3, HOT-4, PP-1, AE-1, AST-1 |
+| ✗ None | 2 | GWT-4, AE-2 |
 
 **Update this file whenever a capability is added, changed, or removed.**
