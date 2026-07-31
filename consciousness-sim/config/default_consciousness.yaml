@@ -50,6 +50,9 @@ thought_loop:
   reflection_probability: 0.15
   existential_inquiry_every_n_thoughts: 75
   perf_log_every_n: 10          # log per-component cycle timing every N thoughts (0 = off)
+  rpt_critique: false           # RPT-2 (#93): optional second LLM pass that critiques
+                                #   and rewrites the raw thought before rendering.
+                                #   Doubles LLM calls per cycle when enabled.
 
 memory:
   short_term_capacity: 20

@@ -10,6 +10,13 @@ all modules are called sequentially by the loop rather than competing. No
 ignition threshold (GNWT). PP-1 partially implemented via continuity-prior
 prediction error (see _PREDICTION_ERROR_BOOST); no model-parameter update
 from errors (full PP would revise the prior over time).
+
+RPT-2 (Lamme 2006): when `rpt_critique` is enabled, `_critique_and_refine()`
+adds an optional second LLM pass — a later stage (critique) that modulates
+the earlier representation (the raw thought) before it is rendered, which is
+literal feedback in the RPT sense (see #93 / INDICATORS.md RPT-2, status ◑).
+Gap: the "later stage" is the same model issuing a second call, not a
+distinct higher-cortical abstraction; still no true within-cycle recurrence.
 """
 
 from __future__ import annotations
@@ -95,6 +102,8 @@ class ThoughtLoop:
         thought_temperature: float = 0.85,
         thought_max_tokens: int = 220,
         perf_log_every_n: int = 10,
+        rpt_critique: bool = False,
+        critique_prompt_path: Path | None = None,
     ) -> None:
         self.provider = provider
         self.identity = identity
@@ -111,6 +120,8 @@ class ThoughtLoop:
         self.thought_temperature = float(thought_temperature)
         self.thought_max_tokens = int(thought_max_tokens)
         self.perf_log_every_n = max(0, int(perf_log_every_n))
+        self.rpt_critique = bool(rpt_critique)
+        self.critique_prompt_path = critique_prompt_path
         self.inner_voice = InnerVoice(identity.name)
         self.monitor = MetacognitiveMonitor()
         self._predicted_theme: str = ""  # PP-1: continuity prior set at end of each cycle
@@ -170,6 +181,12 @@ class ThoughtLoop:
         )
         _generate_ms = (time.monotonic() - _t) * 1000
 
+        _critique_ms = 0.0
+        if self.rpt_critique and self.critique_prompt_path is not None:
+            _t = time.monotonic()
+            raw = await self._critique_and_refine(raw, context)
+            _critique_ms = (time.monotonic() - _t) * 1000
+
         thought = self.inner_voice.render(raw, register=_select_register(raw, bool(related)))
 
         # PP-1: compare actual thought against prior cycle's predicted theme.
@@ -190,9 +207,9 @@ class ThoughtLoop:
         if self.perf_log_every_n > 0 and thought_count % self.perf_log_every_n == 0:
             logging.info(
                 "Cycle %d perf — embed: %.0fms  search: %.0fms  generate: %.0fms"
-                "  perception: %.0fms  prompt_chars: %d  pred_error: %.1f",
+                "  critique: %.0fms  perception: %.0fms  prompt_chars: %d  pred_error: %.1f",
                 thought_count,
-                _embed_ms, _search_ms, _generate_ms, _perception_ms,
+                _embed_ms, _search_ms, _generate_ms, _critique_ms, _perception_ms,
                 len(prompt_text), prediction_error,
             )
 
@@ -249,6 +266,35 @@ class ThoughtLoop:
             metacognitive_label=label,
             prediction_error=prediction_error,
         )
+
+    async def _critique_and_refine(self, raw_thought: str, context: str) -> str:
+        """RPT-2: issue a second LLM pass that critiques and rewrites the raw thought.
+
+        Feedback from this later stage modulates the earlier representation
+        (the raw thought) before it is rendered — see the module docstring's
+        RPT-2 mapping. Any failure (LLM error) falls back to the un-critiqued
+        raw thought, logged at WARNING, mirroring the no-silent-fallback
+        posture of production providers (#46) — the failure is surfaced, not
+        swallowed into deterministic output.
+        """
+        assert self.critique_prompt_path is not None
+        prompt = self.critique_prompt_path.read_text(encoding="utf-8").format(
+            raw_thought=raw_thought,
+            context=context,
+        )
+        try:
+            return await self.provider.generate(
+                prompt=prompt,
+                system=(
+                    "Reply ONLY with the rewritten thought, in first person, present tense. "
+                    "Do not explain your reasoning or add commentary."
+                ),
+                temperature=self.thought_temperature,
+                max_tokens=self.thought_max_tokens,
+            )
+        except Exception:
+            logging.warning("RPT-2 critique pass failed; falling back to raw thought", exc_info=True)
+            return raw_thought
 
     async def _maybe_fetch_perception(self, thought_count: int) -> Perception | None:
         """Fetch a perception every Nth cycle. Failures yield None (logged by provider)."""

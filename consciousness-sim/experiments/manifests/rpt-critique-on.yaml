@@ -1,0 +1,37 @@
+# RPT-2 (#93) empirical A/B — critique-and-refine pass enabled (treatment).
+#
+# Pairs with rpt-critique-off.yaml. Both manifests are identical except for
+# thought_loop.rpt_critique, so any difference in the resulting metrics is
+# attributable to the critique pass rather than to some other config drift.
+# Real-Ollama, wall-clock-bound like ollama-20min-atlas.yaml so the two runs
+# are comparable in scale. Expect roughly double the per-cycle latency (two
+# LLM calls instead of one) and therefore fewer thoughts in the same window.
+
+name: rpt-critique-on
+description: >
+  Treatment run for the RPT-2 critique-and-refine A/B (#93) — default config
+  with thought_loop.rpt_critique enabled, adding a second LLM pass that
+  critiques and rewrites the raw thought before it enters the workspace.
+
+consciousness_name: RptCritiqueOn
+
+config_overrides:
+  thought_loop:
+    rpt_critique: true
+
+duration:
+  minutes: 20
+
+success_criteria:
+  - kind: mood.dimensions_non_degenerate
+    op: ">="
+    value: 2
+  - kind: event_counts.thought
+    op: ">="
+    value: 3
+
+tags:
+  - real-ollama
+  - rpt-critique-ab
+  - rpt-critique-on
+  - llama3.2-3b
