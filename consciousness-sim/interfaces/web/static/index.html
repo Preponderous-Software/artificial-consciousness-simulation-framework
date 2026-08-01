@@ -154,6 +154,13 @@
       outline: 2px solid var(--accent); outline-offset: 2px;
     }
 
+    /* SSE dropped-event indicator (issue #94) — a slow browser tab can miss
+       events with no other visible sign; this surfaces the divergence. */
+    .sse-drop-warning {
+      display: inline-block; margin-top: 12px; margin-left: 8px;
+      color: var(--perceive); font-size: 13px; cursor: help;
+    }
+
     #header-right {
       display: flex; align-items: center; gap: 12px;
       padding: 0 16px; flex-shrink: 0; border-left: 1px solid var(--border);
@@ -447,6 +454,10 @@ async function loadInstances() {
         // Refresh sidebar buttons (Start vs Stop) and reconnect SSE.
         renderStatus(cur);
         connectSSE(currentId);
+      } else {
+        // No running-state change, but the drop count can still have moved —
+        // keep the ⚠ indicator current on every poll.
+        updateSseHealthIndicator(cur);
       }
     }
   } catch (e) {
@@ -704,7 +715,31 @@ function renderStatus(data) {
   }
   stopBtn.style.display  = currentOnline ? "inline-block" : "none";
   startBtn.style.display = currentOnline ? "none" : "inline-block";
+  updateSseHealthIndicator(data);
   tickUptime();
+}
+
+// Shows/hides a ⚠ indicator in the status panel when this instance has
+// dropped SSE events (slow browser tab) — see /instances' sse_drops_total.
+function updateSseHealthIndicator(data) {
+  const grid = $("status-grid");
+  const sidebarStatus = grid && grid.parentElement;
+  if (!sidebarStatus) return;
+  const drops = Number(data && data.sse_drops_total) || 0;
+  let warn = $("sse-drop-warning");
+  if (drops <= 0) {
+    if (warn) warn.remove();
+    return;
+  }
+  if (!warn) {
+    warn = document.createElement("span");
+    warn.id = "sse-drop-warning";
+    warn.className = "sse-drop-warning";
+    warn.setAttribute("aria-hidden", "false");
+    warn.textContent = "⚠";
+    sidebarStatus.appendChild(warn);
+  }
+  warn.title = `${drops} SSE event${drops === 1 ? "" : "s"} dropped — your browser may have missed events`;
 }
 
 function tickUptime() {

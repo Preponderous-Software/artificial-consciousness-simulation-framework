@@ -114,6 +114,10 @@ def test_instances_lists_seeded_instance_with_full_schema(client, consciousness_
     assert inst["running"] is False
     assert inst["streamable"] is False
     assert inst["online"] == inst["running"]
+    # No SSE traffic yet — counters start at zero.
+    assert inst["sse_events_total"] == 0
+    assert inst["sse_drops_total"] == 0
+    assert inst["sse_clients"] == 0
 
 
 def test_instances_separates_id_from_display_name(client, consciousness_home):
@@ -472,6 +476,78 @@ def test_tail_event_lands_in_queue(server, consciousness_home):
     assert queue.qsize() == 1
     item = queue.get_nowait()
     assert item["content"] == "hello"
+
+
+# ---------------------------------------------------------------------------
+# SSE delivery counters (issue #94)
+# ---------------------------------------------------------------------------
+
+def test_tail_event_increments_events_total_on_successful_enqueue(server, consciousness_home):
+    queue = asyncio.Queue(maxsize=10)
+    server._sse_queues["Counted"] = [queue]
+
+    server._on_tail_event("Counted", {"type": "thought", "content": "one"})
+    server._on_tail_event("Counted", {"type": "thought", "content": "two"})
+
+    assert server._sse_events_total["Counted"] == 2
+    assert server._sse_drops_total.get("Counted", 0) == 0
+
+
+def test_tail_event_increments_drops_total_when_queue_full(server, consciousness_home):
+    queue = asyncio.Queue(maxsize=1)
+    queue.put_nowait({"type": "thought", "content": "already-full"})
+    server._sse_queues["Overflowed"] = [queue]
+
+    server._on_tail_event("Overflowed", {"type": "thought", "content": "dropped"})
+
+    assert server._sse_drops_total["Overflowed"] == 1
+    assert server._sse_events_total.get("Overflowed", 0) == 0
+    # The event that filled the queue in the first place is untouched.
+    assert queue.qsize() == 1
+    assert queue.get_nowait()["content"] == "already-full"
+
+
+def test_record_drop_throttles_warning_to_once_per_minute(server, monkeypatch, caplog):
+    clock = {"t": 0.0}
+    monkeypatch.setattr(server.time, "monotonic", lambda: clock["t"])
+
+    with caplog.at_level("WARNING", logger="interfaces.web.server"):
+        server._record_drop("Throttled")
+        clock["t"] = 10.0
+        server._record_drop("Throttled")
+        clock["t"] = 30.0
+        server._record_drop("Throttled")
+
+    assert server._sse_drops_total["Throttled"] == 3
+    warnings = [r for r in caplog.records if "dropped" in r.message]
+    # Only the first call (sentinel -inf) crosses the 60s threshold; the
+    # window resets from that log's timestamp (t=0), so calls at t=10/t=30
+    # are still within it.
+    assert len(warnings) == 1
+    assert "dropped 1 event(s)" in warnings[0].message
+
+    clock["t"] = 61.0
+    with caplog.at_level("WARNING", logger="interfaces.web.server"):
+        server._record_drop("Throttled")
+    warnings = [r for r in caplog.records if "dropped" in r.message]
+    assert len(warnings) == 2
+
+
+def test_instances_reports_sse_counters_and_client_count(client, consciousness_home):
+    c, srv = client
+    _seed_instance(consciousness_home, "Watched")
+
+    queue = asyncio.Queue(maxsize=1)
+    srv._sse_queues["Watched"] = [queue]
+    srv._on_tail_event("Watched", {"type": "thought", "content": "in"})
+    queue.get_nowait()  # drain so a second event can enqueue without filling it
+    srv._on_tail_event("Watched", {"type": "thought", "content": "fills-it"})
+    srv._on_tail_event("Watched", {"type": "thought", "content": "overflow"})
+
+    inst = next(i for i in c.get("/instances").json() if i["id"] == "Watched")
+    assert inst["sse_events_total"] == 2
+    assert inst["sse_drops_total"] == 1
+    assert inst["sse_clients"] == 1
 
 
 def test_journal_tailer_picks_up_appended_lines(consciousness_home):
