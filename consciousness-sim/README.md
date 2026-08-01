@@ -131,6 +131,8 @@ A vanilla-JS SPA renders the thought stream, mood vector, identity, perception b
 
 The dashboard also acts as a **process manager**: the `+ New` tab spawns a fresh agent (`POST /instances`), and each running tab has a `Stop instance` button (`POST /instances/<id>/stop`). Spawn/stop/archive endpoints are localhost-only by default — pass `--allow-remote-spawn` to opt into remote process control (no auth — only behind a trusted proxy). Provider/model fields are restricted to a configurable allowlist surfaced via `GET /providers`.
 
+A slow browser tab can silently miss SSE events without any indication that its view has diverged from reality. `GET /instances` reports `sse_events_total`, `sse_drops_total`, and `sse_clients` per instance (issue #94); the dashboard's status panel shows a ⚠ indicator with a hover tooltip once `sse_drops_total > 0`, and the server logs one throttled `WARNING` per minute while drops are occurring.
+
 ### Perception specialist (PR #54, issue #53)
 
 When enabled (`perception.enabled: true`, default), every Nth thought cycle fetches an external snippet from `perception.provider` (e.g. a random Wikipedia article summary) and injects it into the LLM prompt. Solves the closed-loop attractor problem where, without external input, the LLM samples only from its prior and collapses into a single semantic basin. See the perception block emitted in journal/episodic with kind `perception`.

@@ -19,11 +19,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import shutil
 import signal
 import subprocess
 import sys
+import time
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +71,17 @@ app = FastAPI(
 # clients in stream_events().
 _sse_queues: dict[str, list[asyncio.Queue[dict[str, Any]]]] = {}
 
+# Per-instance SSE delivery counters (issue #94). A slow browser tab can
+# silently miss events for an entire run with no operator-visible signal;
+# these make the divergence between "what happened" and "what the dashboard
+# showed" observable via /instances and the throttled WARNING below.
+_sse_events_total: dict[str, int] = {}
+_sse_drops_total: dict[str, int] = {}
+_drops_since_last_warn: dict[str, int] = {}
+# Sentinel: -inf guarantees the first drop's `now - last >= 60.0` check fires
+# regardless of `time.monotonic()`'s origin (mirrors interfaces/discord/webhook.py).
+_last_drop_warning_at: dict[str, float] = {}
+
 # Provider/model allowlist surfaced to the UI and enforced on POST /instances.
 # Keep this tight — any value here becomes a runnable provider/model on the
 # host. New options should be added intentionally.
@@ -97,9 +110,25 @@ def _on_tail_event(instance_id: str, payload: dict[str, Any]) -> None:
     for q in list(queues):
         try:
             q.put_nowait(payload)
+            _sse_events_total[instance_id] = _sse_events_total.get(instance_id, 0) + 1
         except asyncio.QueueFull:
             # Slow consumer — drop the event rather than back-pressure the tailer.
-            logger.debug("SSE queue full for %s; dropping event", instance_id)
+            _record_drop(instance_id)
+
+
+def _record_drop(instance_id: str) -> None:
+    """Count a dropped SSE event and throttle the warning to once per minute per instance."""
+    _sse_drops_total[instance_id] = _sse_drops_total.get(instance_id, 0) + 1
+    _drops_since_last_warn[instance_id] = _drops_since_last_warn.get(instance_id, 0) + 1
+    now = time.monotonic()
+    last = _last_drop_warning_at.get(instance_id, -math.inf)
+    if now - last >= 60.0:
+        logger.warning(
+            "SSE queue full for %s — dropped %d event(s) in the last minute",
+            instance_id, _drops_since_last_warn[instance_id],
+        )
+        _drops_since_last_warn[instance_id] = 0
+        _last_drop_warning_at[instance_id] = now
 
 
 def _is_localhost(request: Request) -> bool:
@@ -192,6 +221,9 @@ async def list_instances() -> list[dict[str, Any]]:
             "self_concept": identity.get("self_concept", ""),
             "values": identity.get("values", []),
             "started_at": started_at,
+            "sse_events_total": _sse_events_total.get(dir_name, 0),
+            "sse_drops_total": _sse_drops_total.get(dir_name, 0),
+            "sse_clients": len(_sse_queues.get(dir_name, [])),
         })
 
     return result
