@@ -162,9 +162,15 @@ python scripts/experiment.py compare experiments/golden/Rafael experiments/golde
 # Garbage-collect old run dirs (dry-run by default; pass --yes to actually delete)
 python scripts/experiment.py prune --keep-last 5
 python scripts/experiment.py prune --older-than 30 --yes
+
+# CI regression gate: compare a run's metrics.json against the pinned
+# mock-smoke-baseline snapshot (experiments/golden/_smoke_expected.json)
+python scripts/experiment.py check-smoke experiments/mock-smoke-baseline/<UTC-ts>/
 ```
 
 **Claude skills** for narrative analysis (Phase 2 of #57): two slash-command skills live at `.claude/skills/run-experiment/` and `.claude/skills/compare-experiments/`. The CLI produces structured artifacts; the skills add the qualitative-interpretation layer on top — reading sampled thoughts and comparing against the four golden baselines.
+
+**CI integration (issue #87, Phase 3 of #57):** `.github/workflows/experiment-smoke.yml` runs on PRs that touch `core/`, `llm/`, `memory/`, `experiments/`, or `scripts/experiment.py`. It runs the full `pytest` suite, then executes `experiments/manifests/mock-smoke-baseline.yaml` end-to-end with `MockProvider`/`MockPerception` (no Ollama, no network, deterministic), logs a `compare` against `experiments/golden/Echo` for human inspection, and finally runs `check-smoke` to fail the build if the smoke run's metrics drift from the pinned snapshot. Only ratio/equilibrium metrics that stay constant under `MockProvider`'s deterministic output are pinned (word density, final mood, perception influence rate) — raw event counts like `event_counts.thought` overshoot the manifest's target because cycles complete in milliseconds against a 1-second poll loop, so they're checked with the manifest's own `>=` success criterion instead of an exact pin. See `experiments/regression.py` for the comparison logic.
 
 **Manifest fields** (see `experiments/manifest.py` for the full Pydantic schema):
 

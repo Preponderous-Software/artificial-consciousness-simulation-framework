@@ -1,9 +1,10 @@
-"""Experiment harness CLI — `experiment.py {run|status|list|replay-analysis|compare}`.
+"""Experiment harness CLI — `experiment.py {run|status|list|replay-analysis|compare|check-smoke|prune}`.
 
 See `experiments/__init__.py` for the architecture and issue #57 for the
 motivating design. Phase 1+2 of #57 ship `run` (with `--detach`), `status`,
-`list`, `replay-analysis`, and `compare`. The Claude skills under
-`.claude/skills/` provide the narrative layer on top.
+`list`, `replay-analysis`, and `compare`. `check-smoke` (#87, Phase 3 of #57)
+adds a CI regression gate over the mock-smoke-baseline manifest. The Claude
+skills under `.claude/skills/` provide the narrative layer on top.
 
 Examples:
 
@@ -13,6 +14,7 @@ Examples:
     python scripts/experiment.py list
     python scripts/experiment.py replay-analysis experiments/<name>/<UTC-ts>/
     python scripts/experiment.py compare experiments/golden/Rafael/ experiments/golden/Echo/
+    python scripts/experiment.py check-smoke experiments/mock-smoke-baseline/<UTC-ts>/
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from experiments.compare import compare_runs
 from experiments.manifest import ExperimentManifest
 from experiments.metrics import compute_all
 from experiments.prune import prune_runs
+from experiments.regression import check_smoke_regression
 from experiments.report import render_report
 from experiments.runner import (
     EXPERIMENTS_ROOT,
@@ -43,6 +46,8 @@ from experiments.runner import (
     start_detached,
     status as runner_status,
 )
+
+GOLDEN_DIR = ROOT_DIR / "experiments" / "golden"
 
 
 @click.group()
@@ -186,6 +191,33 @@ def cmd_compare(run_a: Path, run_b: Path, output_path: Path | None, k_samples: i
     else:
         output_path.write_text(md, encoding="utf-8")
         click.echo(f"Wrote comparison to {output_path}")
+
+
+@main.command("check-smoke")
+@click.argument("run_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option(
+    "--expected", "expected_path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Golden snapshot to compare against. Defaults to "
+         "experiments/golden/_smoke_expected.json.",
+)
+def cmd_check_smoke(run_dir: Path, expected_path: Path | None) -> None:
+    """CI regression gate (#87): compare a run's metrics.json against the
+    pinned mock-smoke-baseline snapshot. Exits non-zero on drift."""
+    expected_path = expected_path or (GOLDEN_DIR / "_smoke_expected.json")
+    metrics_path = run_dir / "metrics.json"
+    if not metrics_path.exists():
+        raise click.ClickException(f"Missing artifact: {metrics_path}")
+
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    expected = json.loads(expected_path.read_text(encoding="utf-8"))
+    failures = check_smoke_regression(metrics, expected)
+    if failures:
+        click.echo(f"Smoke regression check FAILED against {expected_path}:")
+        for f in failures:
+            click.echo(f"  - {f}")
+        raise SystemExit(1)
+    click.echo(f"Smoke regression check passed against {expected_path} ({len(expected)} field(s) pinned).")
 
 
 @main.command("prune")
