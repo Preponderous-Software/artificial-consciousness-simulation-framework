@@ -1,0 +1,61 @@
+name: experiment-smoke
+
+on:
+  pull_request:
+    paths:
+      - 'consciousness-sim/core/**'
+      - 'consciousness-sim/llm/**'
+      - 'consciousness-sim/memory/**'
+      - 'consciousness-sim/experiments/**'
+      - 'consciousness-sim/scripts/experiment.py'
+      - '.github/workflows/experiment-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    # Actual work (pytest + manifest run + compare + check-smoke) is under a
+    # minute locally; the ceiling mirrors tests.yml's 15-minute buffer for
+    # runner spin-up and a cold pip cache (chromadb et al.), not the expected
+    # wall clock — see the "under 5 minutes" acceptance criterion in #87.
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: consciousness-sim
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            consciousness-sim/requirements.txt
+            consciousness-sim/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run pytest
+        run: python -m pytest tests/ -q
+
+      - name: Run mock-smoke-baseline manifest
+        id: run_manifest
+        run: |
+          python scripts/experiment.py run experiments/manifests/mock-smoke-baseline.yaml \
+            | tee /tmp/smoke-run.log
+          run_dir=$(grep '^Run complete: ' /tmp/smoke-run.log | sed 's/^Run complete: //')
+          test -f "$run_dir/report.md"
+          echo "run_dir=$run_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Compare against golden Echo (informational)
+        run: |
+          python scripts/experiment.py compare \
+            experiments/golden/Echo "${{ steps.run_manifest.outputs.run_dir }}"
+
+      - name: Check smoke regression snapshot
+        run: python scripts/experiment.py check-smoke "${{ steps.run_manifest.outputs.run_dir }}"

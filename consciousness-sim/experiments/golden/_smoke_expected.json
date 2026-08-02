@@ -1,0 +1,9 @@
+{
+  "vocabulary.top_word_density_per_thought": 2.0,
+  "mood.final.curiosity": 0.8666666666666667,
+  "mood.final.wonder": 0.6,
+  "mood.final.melancholy": 0.2,
+  "mood.final.contentment": 0.5,
+  "mood.dimensions_non_degenerate": 4,
+  "perception.influence_rate": 0.0
+}

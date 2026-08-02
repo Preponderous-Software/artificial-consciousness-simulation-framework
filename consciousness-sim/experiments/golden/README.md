@@ -22,6 +22,12 @@ for the original narrative analyses these journals support.
 
 - `journal.jsonl` — append-only event log (thoughts, reflections, perceptions, memory_stored)
 - `state.json` — final identity + mood + amendments snapshot
+- `_smoke_expected.json` (this directory's top level, not per-instance) — pinned
+  metrics snapshot for `experiments/manifests/mock-smoke-baseline.yaml`, used by
+  `scripts/experiment.py check-smoke` (`experiments/regression.py`) as a CI
+  regression gate (#87). Distinct from the four runs above: it isn't a full
+  journal/state pair, just a handful of ratio/equilibrium metric values that
+  MockProvider's deterministic output holds constant across runs.
 
 `episodic.jsonl` is intentionally excluded — the metrics functions don't read it
 and including it ~doubles the size of this directory.
