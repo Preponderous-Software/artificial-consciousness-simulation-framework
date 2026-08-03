@@ -6,9 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Context
 
-This repository implements a **consciousness simulation framework** — an autonomous AI agent that maintains persistent identity, episodic and semantic memory, and recursive self-reflection across an indefinitely running thought loop. Operationally, it targets Gamez's **MC3** level: building an *architecture that is claimed to be a cause or correlate of human consciousness*, not merely behavioural mimicry (MC1), nor phenomenal experience itself (MC4). Whether any particular module achieves MC2 (genuine cognitive correlates) is an empirical question this codebase should treat as open.
-
-**TODO for repo owner:** Confirm which Gamez level(s) are claimed. MC3 is the conservative reading; a stronger claim (MC2, MC4) requires explicit justification against the critiques in §5.
+This repository implements a **consciousness simulation framework** — an autonomous AI agent that maintains persistent identity, episodic and semantic memory, and recursive self-reflection across an indefinitely running thought loop. It targets, and claims, Gamez's **MC3** level: building an *architecture that is claimed to be a cause or correlate of human consciousness*, not merely behavioural mimicry (MC1), nor phenomenal experience itself (MC4). Whether any particular module achieves MC2 (genuine cognitive correlates) is an empirical question this codebase treats as open, not a claim made here. No stronger claim (MC2, MC4) is asserted.
 
 The framework is an experiment in *computational self-modelling*, not a claim to sentience. All outputs must be interpreted accordingly.
 
