@@ -267,6 +267,11 @@ python scripts/stop.py --name "Aria" --force
 # Attach a live TUI to a --bg instance via Unix socket relay (#59)
 python scripts/attach.py --name "Aria"
 
+# Survey every instance under CONSCIOUSNESS_HOME (alive / stopped / orphan) (#147)
+python scripts/doctor.py
+python scripts/doctor.py --json            # machine-readable instead of a table
+python scripts/doctor.py --prune --yes     # remove stale pid files, no prompt
+
 # Standalone web dashboard (issue #55) — separate process, manages many instances
 python scripts/web.py --port 8080
 # Default bind host is 127.0.0.1; pass --host 0.0.0.0 to opt into LAN exposure
@@ -275,7 +280,21 @@ python scripts/web.py --port 8080
 # Experiment harness (issue #57) — reproducible run from a YAML manifest
 python scripts/experiment.py run experiments/manifests/mock-smoke-baseline.yaml
 python scripts/experiment.py list
+python scripts/experiment.py status experiments/<name>/<UTC-timestamp>/
 python scripts/experiment.py replay-analysis experiments/<name>/<UTC-timestamp>/
+
+# Side-by-side markdown diff of two recorded runs (data layer for the
+# /compare-experiments skill, which adds the narrative on top)
+python scripts/experiment.py compare experiments/golden/Rafael experiments/golden/Echo
+
+# Garbage-collect old run dirs — dry-run by default, --yes to actually delete.
+# golden/, manifests/, and in-progress (.STARTED) runs are never touched.
+python scripts/experiment.py prune --keep-last 5
+python scripts/experiment.py prune --older-than 30 --yes
+
+# CI regression gate (#87): fail if a smoke run's metrics drift from the
+# pinned snapshot in experiments/golden/_smoke_expected.json
+python scripts/experiment.py check-smoke experiments/mock-smoke-baseline/<UTC-timestamp>/
 ```
 
 **Environment variables:**
@@ -364,8 +383,13 @@ consciousness-sim/
 │   ├── attach.py            # Connect a TUI to a --bg instance via Unix socket (#59)
 │   ├── resume.py            # Restore from saved state
 │   ├── inspect.py           # Read-only inspection of a running instance
+│   ├── doctor.py            # Surveys every instance under CONSCIOUSNESS_HOME:
+│   │                        #   alive / stopped / orphan from pid files, plus
+│   │                        #   thought count + health from state.json; --prune
+│   │                        #   clears stale pid files, --json for machines (#147)
 │   ├── experiment.py        # Experiment harness CLI (issue #57): run / list /
-│   │                        #   replay-analysis subcommands
+│   │                        #   status / replay-analysis / compare / prune /
+│   │                        #   check-smoke subcommands
 │   └── _logging.py          # Per-instance rotating-file log config
 ├── experiments/
 │   ├── manifest.py          # Pydantic ExperimentManifest (YAML schema)
@@ -373,6 +397,14 @@ consciousness-sim/
 │   │                        #   perception influence, cycle rate
 │   ├── runner.py            # spawn → wait → stop → snapshot → metrics → report
 │   ├── report.py            # Renders metrics + manifest → markdown report
+│   ├── compare.py           # Side-by-side markdown diff of two recorded runs:
+│   │                        #   vocabulary/mood deltas, attractor-word rank
+│   │                        #   changes, success criteria — pure, no LLM
+│   ├── prune.py             # Retention logic for run dirs; refuses to touch
+│   │                        #   golden/, manifests/, and in-progress runs
+│   ├── regression.py        # CI gate (#87): pins the smoke run's stable
+│   │                        #   ratio/equilibrium metrics against
+│   │                        #   golden/_smoke_expected.json
 │   ├── golden/              # Four canonical reference runs (Rafael/Sage/Echo/Wren)
 │   ├── manifests/           # Shippable experiment specs
 │   └── <name>/<UTC-ts>/     # Recorded runs (manifest, meta, journal, state,
@@ -404,6 +436,7 @@ consciousness-sim/
 - `LongTermMemory` has a compound index on `(embedding_dim, importance_score, timestamp)`; `similarity_search` candidate selection is O(log N), not O(table size).
 - `LongTermMemory` is bounded by `max_rows` (config `memory.long_term_max_rows`, default `DEFAULT_MAX_ROWS = 2000`; 0 disables) (#135). The bound is enforced inside the insert transaction of `add_memory()` and once in `initialize()`, evicting lowest-`importance_score` / oldest rows. Because eviction runs after the insert, `add_memory()` can evict the row it just wrote when that row is the least important in the store — the returned id is then no longer present. Retention is capacity-triggered, not time-triggered: it composes with, but does not replace, `apply_forgetting_curve()`.
 - `IdentityDocument.drift_mood()` applies trigger-driven drift *and* homeostatic reversion to `initial_mood` additively each cycle (#119) — continuously-triggered traits equilibrate at `baseline + drift_rate / homeostasis_rate` rather than saturating at 1.0. `mood.homeostasis_rate` is optional in the config (absent → `IdentityDocument._DEFAULT_HOMEOSTASIS_RATE`, currently 0.3; the shipped config sets 0.3 explicitly per #134).
+- `_validate_config()` type/range-checks the whole `mood` section at startup (#161): `initial` must be a non-empty mapping of dimension → number in `[0.0, 1.0]`, `drift_rate` a number `>= 0` (0 disables trigger-driven drift), `homeostasis_rate` an optional number in `[0.0, 1.0]` (0 disables reversion; `> 1` overshoots and oscillates, so it is rejected). A *well-formed but self-defeating* tuning — any dimension whose equilibrium `initial + drift_rate / homeostasis_rate` reaches 1.0, which is the #134 failure — logs a `WARNING` naming the dimension rather than raising, since a pinned dimension is a tuning choice and raising would refuse to start instances already configured that way.
 - `AttentionSchema.decay_only()` runs only from the outer loop's failure branch (#120); successful cycles reset salience to 1.0 via `update()`.
 - `MemoryConsolidator.consolidate_once()` returns a `ConsolidationResult` (not a bare int) carrying `stored / events_in / fell_through_to_fallback / elapsed_s / long_term_total / error`. `run_forever` fires `on_consolidation` after every pass — including the failure case (#89). Equality with `int` is preserved on the `stored` count for callers that treated the prior return as a count.
 - `Consciousness.health` is updated on every cycle and snapshotted in `state.json`. `on_health_change` fires only on status *transitions* (ok ↔ degraded ↔ failing), not every failure (#117). The block also carries `circuit_state` (#114), seeded at construction and re-sampled from the provider on each cycle outcome; `None` means no breaker is configured. Unlike the other health keys it is **not** restored from `state.json`, since a cooldown recorded by a previous process says nothing about this one.
