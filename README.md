@@ -9,3 +9,11 @@ The full project lives in [`./consciousness-sim`](./consciousness-sim) — start
 - **[INDICATORS.md](./INDICATORS.md)** — implementation status of the 14 Butlin et al. consciousness indicators
 
 This is research code, not production infrastructure. It treats questions about machine sentience carefully and avoids claims beyond observable functional behavior.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for dev setup, running the test suite, and PR conventions.
+
+## License
+
+[MIT](./LICENSE)

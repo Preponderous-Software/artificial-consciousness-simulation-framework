@@ -263,6 +263,9 @@ python scripts/spawn.py --name "Aria" --force
 # Stop a background instance cleanly (SIGTERM, 5s grace window)
 python scripts/stop.py --name "Aria"
 
+# Skip the grace window and send SIGKILL immediately
+python scripts/stop.py --name "Aria" --force
+
 # Attach a live TUI to a --bg instance via Unix socket relay (#59)
 python scripts/attach.py --name "Aria"
 
@@ -358,7 +361,8 @@ consciousness-sim/
 │   │                        #   + sinks; foreground / --bg / --headless;
 │   │                        #   refuses duplicate-name spawn (--force override) (#115)
 │   ├── web.py               # Standalone dashboard launcher (issue #55)
-│   ├── stop.py              # Send SIGTERM to a --bg instance (5s grace)
+│   ├── stop.py              # Send SIGTERM to a --bg instance (5s grace);
+│   │                        #   --force sends SIGKILL immediately instead
 │   ├── attach.py            # Connect a TUI to a --bg instance via Unix socket (#59)
 │   ├── resume.py            # Restore from saved state
 │   ├── inspect.py           # Read-only inspection of a running instance
@@ -384,10 +388,11 @@ consciousness-sim/
 2. `provider.embed(context)` → query vector → `long_term.similarity_search()` → related memories
 3. Every `perception.every_n_cycles` cycles (default 3): `perception_provider.fetch()` → optional `Perception`; lingers in short-term + episodic so subsequent cycles can reference it (PR #54)
 4. Identity anchor (includes `AttentionSchema` state per AST-1) + mood + memories + context + perception block → prompt → `provider.generate()` → raw thought
-5. `inner_voice.render()` → styled thought → `MetacognitiveMonitor.score()` → importance-adjusted `short_term.add()` + `episodic.append()`; prediction error computed against prior cycle's `_predicted_theme`; `_predicted_theme` updated for next cycle
-6. Reflection trigger: `effective_prob = min(1.0, base + HOT-2 boost + PP-1 boost)` — fires only if `reflection_probability > 0.0`; → `reflection_engine.shallow/deep_reflection()` → `inner_voice.scrub_reflection()` strips leading meta-preambles/markdown headers and rejects second-person instructional drift (#132) before `short_term.add()` + `episodic.append()`; existential inquiry every N cycles (same scrub applied); `AttentionSchema.update()` (informed by cycle outcome: perception/existential/reflection/memory/introspection)
-7. `consciousness.py` outer loop: `journal.append()` + events emitted via `Consciousness._emit()` to registered handlers (CLI, observer, web SSE, Discord sink if configured)
-8. Background: `MemoryConsolidator.consolidate_once()` every N minutes — episodic → LLM summary → long-term embeddings
+5. **RPT-2 (optional, `thought_loop.rpt_critique`, default off):** a second `provider.generate()` pass (`llm/prompts/critique.txt`) critiques the raw thought against its context and rewrites it, replacing the raw representation (#93) — literal feedback from a later stage modulating the earlier representation; a critique-pass failure falls back to the raw thought, logged at WARNING
+6. `inner_voice.render()` → styled thought → `MetacognitiveMonitor.score()` → importance-adjusted `short_term.add()` + `episodic.append()`; prediction error computed against prior cycle's `_predicted_theme`; `_predicted_theme` updated for next cycle
+7. Reflection trigger: `effective_prob = min(1.0, base + HOT-2 boost + PP-1 boost)` — fires only if `reflection_probability > 0.0`; → `reflection_engine.shallow/deep_reflection()` → `inner_voice.scrub_reflection()` strips leading meta-preambles/markdown headers and rejects second-person instructional drift (#132) before `short_term.add()` + `episodic.append()`; existential inquiry every N cycles (same scrub applied); `AttentionSchema.update()` (informed by cycle outcome: perception/existential/reflection/memory/introspection)
+8. `consciousness.py` outer loop: `journal.append()` + events emitted via `Consciousness._emit()` to registered handlers (CLI, observer, web SSE, Discord sink if configured)
+9. Background: `MemoryConsolidator.consolidate_once()` every N minutes — episodic → LLM summary → long-term embeddings
 
 **Key invariants:**
 - `_emit()` never propagates handler exceptions — each handler is isolated in `try/except`.
