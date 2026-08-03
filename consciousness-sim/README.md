@@ -50,6 +50,9 @@ ollama pull llama3.2:3b
 python scripts/spawn.py --name "Test"
 ```
 
+Or run [`./setup.sh`](../setup.sh) from the repo root to automate installing Ollama,
+pulling a model sized to your available memory, and installing Python dependencies.
+
 By default the framework is configured for a **local open-source model via Ollama** (`provider: ollama`, `model: llama3.2:3b`).
 Cloud providers (`openai`, `anthropic`) remain optional overrides.
 
