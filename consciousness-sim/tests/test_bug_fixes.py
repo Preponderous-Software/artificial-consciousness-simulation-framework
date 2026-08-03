@@ -866,6 +866,18 @@ def test_validate_config_raises_on_empty_initial_mood() -> None:
         _validate_config(cfg)
 
 
+def test_validate_config_raises_when_mood_is_a_sequence() -> None:
+    """A `mood:` written as a YAML list slips past the required-key loop.
+
+    `"initial" in ["initial", "drift_rate"]` is True, so the presence check
+    passes and the mapping guard in _validate_mood_config is what catches it.
+    """
+    cfg = _minimal_valid_config()
+    cfg["mood"] = ["initial", "drift_rate"]
+    with pytest.raises(ValueError, match="'mood' must be a mapping"):
+        _validate_config(cfg)
+
+
 def test_validate_config_warns_when_a_mood_dimension_would_saturate(caplog) -> None:
     """The #134 tuning failure: 0.05/0.1 = 0.5 is not < 1 - 0.7."""
     cfg = _minimal_valid_config()

@@ -196,20 +196,28 @@ def _is_number(value: Any) -> bool:
 
 
 def _validate_mood_config(mood_cfg: Any) -> None:
-    """Raise on a malformed mood section; warn on a saturating tuning (#161)."""
+    """Raise on a malformed mood section; warn on a saturating tuning (#161).
+
+    Precondition: the required-key loop in `_validate_config` has already run,
+    so `initial` and `drift_rate` are known present and are indexed directly
+    here. A `mood` section written as a sequence can still reach this function
+    — `"initial" in ["initial", "drift_rate"]` satisfies that loop — which is
+    why the mapping check below is not redundant.
+    """
     if not isinstance(mood_cfg, dict):
         raise ValueError(f"Config 'mood' must be a mapping, got {mood_cfg!r}")
 
     initial = mood_cfg["initial"]
     if not isinstance(initial, dict) or not initial:
         raise ValueError(
-            f"Config 'mood.initial' must be a non-empty mapping of trait name to a "
+            f"Config 'mood.initial' must be a non-empty mapping of dimension name to a "
             f"number in [0.0, 1.0], got {initial!r}"
         )
-    for trait, value in initial.items():
+    for dimension, value in initial.items():
         if not _is_number(value) or not 0.0 <= float(value) <= 1.0:
             raise ValueError(
-                f"Config 'mood.initial.{trait}' must be a number in [0.0, 1.0], got {value!r}"
+                f"Config 'mood.initial.{dimension}' must be a number in [0.0, 1.0], "
+                f"got {value!r}"
             )
 
     drift_rate = mood_cfg["drift_rate"]
@@ -264,14 +272,14 @@ def _warn_on_mood_saturation(
         return
 
     offset = drift_rate / rate
-    for trait, value in initial.items():
+    for dimension, value in initial.items():
         equilibrium = float(value) + offset
         if equilibrium >= 1.0:
             logging.warning(
                 "Config mood dimension '%s' equilibrates at %.2f (initial %.2f + "
                 "drift_rate/homeostasis_rate %.2f) and will be clipped at the 1.0 ceiling; "
                 "lower 'mood.drift_rate' or raise 'mood.homeostasis_rate' (see #134).",
-                trait, equilibrium, float(value), offset,
+                dimension, equilibrium, float(value), offset,
             )
 
 

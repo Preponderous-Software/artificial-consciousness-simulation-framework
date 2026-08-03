@@ -240,8 +240,6 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 - `mood.initial`: starting affect vector — a non-empty mapping of dimension name to a number in `[0.0, 1.0]`
 - `mood.drift_rate`: per-thought drift magnitude. Must be `>= 0`; 0 disables trigger-driven drift entirely
 - `mood.homeostasis_rate`: optional. Per-cycle pull toward `mood.initial` applied additively alongside trigger-driven drift (#119). Default 0.3 when absent; must be in `[0.0, 1.0]`, where 0 disables reversion and a rate above 1 would overshoot the baseline every cycle. Continuously-triggered traits equilibrate at `initial + drift_rate / homeostasis_rate`, so this rate must keep that equilibrium below 1.0 for every trait's baseline — at the defaults, `drift_rate=0.05` and `homeostasis_rate=0.3` keep curiosity's equilibrium at ~0.87 instead of saturating (#134).
-
-The whole `mood` section is type/range-checked by `_validate_config()` at startup (#161) — a malformed rate raises before any subsystem is built, rather than from the running loop. A well-formed tuning whose equilibrium still reaches the 1.0 ceiling logs a startup `WARNING` naming each affected dimension instead of raising.
 - `perception.enabled`: opt in to the perception specialist (PR #54)
 - `perception.provider`: `wikipedia | mock` — source of external stimulus
 - `perception.every_n_cycles`: fetch cadence (default 3)
@@ -255,6 +253,8 @@ The whole `mood` section is type/range-checked by `_validate_config()` at startu
 - `discord.rate_limit.max_per_minute`: outbound rate cap (default 25; Discord allows ~30/min sustained)
 - `discord.truncate_chars`: max embed description length (default 1800; Discord cap 4096)
 - `discord.include_perception_url`: default `true`. Let Discord auto-unfurl a perception event's source URL instead of stripping it from the embed.
+
+`_validate_config()` type/range-checks these keys at startup, so a malformed value raises before any subsystem is built rather than from the running loop. That covers the whole `mood` section as of #161; a `mood` tuning that is well-formed but whose equilibrium still reaches the 1.0 ceiling logs a startup `WARNING` naming each affected dimension instead of raising.
 
 ## How a Thought Cycle Works
 
