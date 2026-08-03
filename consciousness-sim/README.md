@@ -69,6 +69,7 @@ For local test tooling:
 ```bash
 pip install -r requirements-dev.txt
 pytest -q tests
+mypy .   # optional static type check; lenient config (`ignore_missing_imports`) — not wired into CI yet
 ```
 
 ### Running modes
