@@ -109,7 +109,7 @@ class WikipediaPerception(PerceptionProvider):
     API_URL = "https://en.wikipedia.org/api/rest_v1/page/random/summary"
     USER_AGENT = (
         "consciousness-sim/0.1 "
-        "(https://github.com/dmccoystephenson/artificial-consciousness-simulation-framework)"
+        "(https://github.com/Preponderous-Software/artificial-consciousness-simulation-framework)"
     )
 
     def __init__(self, timeout_seconds: float = 10.0, cache_last_n: int = 5) -> None:

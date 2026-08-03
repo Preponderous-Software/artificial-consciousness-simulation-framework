@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     # Actual work (pytest + manifest run + compare + check-smoke) is under a
     # minute locally; the ceiling mirrors tests.yml's 15-minute buffer for
-    # runner spin-up and a cold pip cache (chromadb et al.), not the expected
+    # runner spin-up and a cold pip cache, not the expected
     # wall clock — see the "under 5 minutes" acceptance criterion in #87.
     timeout-minutes: 15
     defaults:

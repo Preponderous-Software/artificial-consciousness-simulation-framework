@@ -137,7 +137,7 @@ def test_runner_wall_clock_cap_terminates_long_run(tmp_path: Path, monkeypatch) 
     # Mock provider is fast; use a very tight cap to be sure we hit it.
     #
     # The cap must clear the child's `import scripts.spawn`-equivalent startup
-    # cost (fastapi/anthropic/openai/chromadb/numpy imports), not just the
+    # cost (fastapi/anthropic/openai/numpy imports), not just the
     # thought rate — on a slow host that import alone can exceed 3s, which
     # SIGTERMs the child before Consciousness is ever constructed and the
     # test never reaches the assertion below (#145).
