@@ -237,9 +237,11 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 - `memory.forgetting_curve_enabled`: toggle long-term decay
 - `memory.importance_decay_rate`: decay amount per consolidation pass
 - `memory.long_term_max_rows`: optional. Row cap on the long-term SQLite store (#135). When an insert takes the store above the cap, the lowest-`importance_score` rows (oldest first on a tie) are deleted so the count returns to the cap; the cap is also applied once when the store is opened. Default 2000 when absent; 0 disables the bound (unbounded growth). At llama3.2:3b's 3072-dim embeddings a row costs ~40 KB, so 2000 rows plateaus `memory.db` at roughly 80 MB.
-- `mood.initial`: starting emotional vector
-- `mood.drift_rate`: per-thought emotional drift magnitude
-- `mood.homeostasis_rate`: optional. Per-cycle pull toward `mood.initial` applied additively alongside trigger-driven drift (#119). Default 0.3 when absent. Continuously-triggered traits equilibrate at `initial + drift_rate / homeostasis_rate`, so this rate must keep that equilibrium below 1.0 for every trait's baseline — at the defaults, `drift_rate=0.05` and `homeostasis_rate=0.3` keep curiosity's equilibrium at ~0.87 instead of saturating (#134).
+- `mood.initial`: starting affect vector — a non-empty mapping of dimension name to a number in `[0.0, 1.0]`
+- `mood.drift_rate`: per-thought drift magnitude. Must be `>= 0`; 0 disables trigger-driven drift entirely
+- `mood.homeostasis_rate`: optional. Per-cycle pull toward `mood.initial` applied additively alongside trigger-driven drift (#119). Default 0.3 when absent; must be in `[0.0, 1.0]`, where 0 disables reversion and a rate above 1 would overshoot the baseline every cycle. Continuously-triggered traits equilibrate at `initial + drift_rate / homeostasis_rate`, so this rate must keep that equilibrium below 1.0 for every trait's baseline — at the defaults, `drift_rate=0.05` and `homeostasis_rate=0.3` keep curiosity's equilibrium at ~0.87 instead of saturating (#134).
+
+The whole `mood` section is type/range-checked by `_validate_config()` at startup (#161) — a malformed rate raises before any subsystem is built, rather than from the running loop. A well-formed tuning whose equilibrium still reaches the 1.0 ceiling logs a startup `WARNING` naming each affected dimension instead of raising.
 - `perception.enabled`: opt in to the perception specialist (PR #54)
 - `perception.provider`: `wikipedia | mock` — source of external stimulus
 - `perception.every_n_cycles`: fetch cadence (default 3)

@@ -777,3 +777,147 @@ def test_validate_config_accepts_rpt_critique_true() -> None:
     cfg["thought_loop"]["rpt_critique"] = True
     _validate_config(cfg)  # must not raise
 
+
+# ---------------------------------------------------------------------------
+# #161 — mood section validated at startup, saturating tuning warned about
+# ---------------------------------------------------------------------------
+
+
+def test_validate_config_accepts_absent_homeostasis_rate() -> None:
+    cfg = _minimal_valid_config()
+    assert "homeostasis_rate" not in cfg["mood"]
+    _validate_config(cfg)  # optional key — falls back to drift_mood's default
+
+
+def test_validate_config_accepts_zero_homeostasis_rate(caplog) -> None:
+    cfg = _minimal_valid_config()
+    cfg["mood"]["homeostasis_rate"] = 0
+    with caplog.at_level(logging.WARNING):
+        _validate_config(cfg)  # 0 = reversion disabled, explicitly allowed
+    assert "homeostatic reversion is disabled" in caplog.text
+
+
+def test_validate_config_raises_on_non_numeric_drift_rate() -> None:
+    """A typo'd drift_rate must fail at startup, not from the running loop.
+
+    Pre-#161 the first float() of this value happened inside Consciousness.run(),
+    after every subsystem was built and the consolidator task was scheduled.
+    """
+    cfg = _minimal_valid_config()
+    cfg["mood"]["drift_rate"] = "0.o5"
+    with pytest.raises(ValueError, match="mood.drift_rate"):
+        _validate_config(cfg)
+
+
+def test_validate_config_raises_on_negative_drift_rate() -> None:
+    cfg = _minimal_valid_config()
+    cfg["mood"]["drift_rate"] = -0.05
+    with pytest.raises(ValueError, match="mood.drift_rate"):
+        _validate_config(cfg)
+
+
+def test_validate_config_accepts_zero_drift_rate() -> None:
+    cfg = _minimal_valid_config()
+    cfg["mood"]["drift_rate"] = 0
+    _validate_config(cfg)  # 0 = trigger-driven drift disabled
+
+
+def test_validate_config_rejects_boolean_drift_rate() -> None:
+    """YAML `yes`/`on`/`true` must not become a drift_rate of 1.0."""
+    cfg = _minimal_valid_config()
+    cfg["mood"]["drift_rate"] = True
+    with pytest.raises(ValueError, match="mood.drift_rate"):
+        _validate_config(cfg)
+
+
+def test_validate_config_raises_on_non_numeric_homeostasis_rate() -> None:
+    cfg = _minimal_valid_config()
+    cfg["mood"]["homeostasis_rate"] = "fast"
+    with pytest.raises(ValueError, match="mood.homeostasis_rate"):
+        _validate_config(cfg)
+
+
+def test_validate_config_raises_on_homeostasis_rate_above_one() -> None:
+    """Rates > 1 overshoot the baseline each cycle and oscillate."""
+    cfg = _minimal_valid_config()
+    cfg["mood"]["homeostasis_rate"] = 1.5
+    with pytest.raises(ValueError, match="mood.homeostasis_rate"):
+        _validate_config(cfg)
+
+
+def test_validate_config_raises_on_out_of_range_initial_mood() -> None:
+    cfg = _minimal_valid_config()
+    cfg["mood"]["initial"] = dict(curiosity=0.5, wonder=1.4)
+    with pytest.raises(ValueError, match="mood.initial.wonder"):
+        _validate_config(cfg)
+
+
+def test_validate_config_raises_on_non_numeric_initial_mood() -> None:
+    cfg = _minimal_valid_config()
+    cfg["mood"]["initial"] = dict(curiosity="high")
+    with pytest.raises(ValueError, match="mood.initial.curiosity"):
+        _validate_config(cfg)
+
+
+def test_validate_config_raises_on_empty_initial_mood() -> None:
+    cfg = _minimal_valid_config()
+    cfg["mood"]["initial"] = {}
+    with pytest.raises(ValueError, match="mood.initial"):
+        _validate_config(cfg)
+
+
+def test_validate_config_warns_when_a_mood_dimension_would_saturate(caplog) -> None:
+    """The #134 tuning failure: 0.05/0.1 = 0.5 is not < 1 - 0.7."""
+    cfg = _minimal_valid_config()
+    cfg["mood"]["initial"] = dict(curiosity=0.7, melancholy=0.2)
+    cfg["mood"]["drift_rate"] = 0.05
+    cfg["mood"]["homeostasis_rate"] = 0.1
+    with caplog.at_level(logging.WARNING):
+        _validate_config(cfg)  # warns, does not raise
+    assert "curiosity" in caplog.text
+    assert "1.0 ceiling" in caplog.text
+    # melancholy equilibrates at 0.2 + 0.5 = 0.7, safely below the ceiling.
+    assert "melancholy" not in caplog.text
+
+
+def test_validate_config_does_not_warn_on_a_converging_mood_tuning(caplog) -> None:
+    cfg = _minimal_valid_config()
+    cfg["mood"]["initial"] = dict(curiosity=0.7)
+    cfg["mood"]["drift_rate"] = 0.05
+    cfg["mood"]["homeostasis_rate"] = 0.3
+    with caplog.at_level(logging.WARNING):
+        _validate_config(cfg)
+    assert caplog.text == ""
+
+
+def test_validate_config_does_not_warn_when_drift_is_disabled(caplog) -> None:
+    """drift_rate 0 means nothing climbs, whatever the homeostasis rate is."""
+    cfg = _minimal_valid_config()
+    cfg["mood"]["drift_rate"] = 0
+    cfg["mood"]["homeostasis_rate"] = 0
+    with caplog.at_level(logging.WARNING):
+        _validate_config(cfg)
+    assert caplog.text == ""
+
+
+def test_default_config_yaml_mood_tuning_is_valid_and_converges(caplog) -> None:
+    """The shipped config must pass validation without a saturation warning."""
+    config_path = Path(__file__).resolve().parents[1] / "config" / "default_consciousness.yaml"
+    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    with caplog.at_level(logging.WARNING):
+        _validate_config(cfg)
+    assert caplog.text == ""
+
+
+def test_saturation_warning_default_rate_matches_identity_default() -> None:
+    """The absent-key fallback must track IdentityDocument, not a copy of it."""
+    from core.consciousness import _warn_on_mood_saturation
+    from core.identity import IdentityDocument
+
+    rate = IdentityDocument._DEFAULT_HOMEOSTASIS_RATE
+    # Chosen so the equilibrium lands just above the ceiling at that exact rate.
+    drift = rate * 0.31
+    with mock.patch.object(logging, "warning") as warn:
+        _warn_on_mood_saturation(dict(curiosity=0.7), drift, None)
+    assert warn.call_count == 1
+

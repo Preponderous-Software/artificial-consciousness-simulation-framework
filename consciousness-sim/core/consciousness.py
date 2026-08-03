@@ -113,7 +113,8 @@ def _validate_config(config: dict[str, Any]) -> None:
 
     Missing required keys raise KeyError; present-but-invalid optional values
     raise ValueError, so a typo in an optional knob fails at startup rather
-    than at the subsystem that eventually reads it.
+    than at the subsystem that eventually reads it. A well-formed but
+    self-defeating mood tuning logs a WARNING instead of raising (#161).
     """
     for section, keys in _REQUIRED_CONFIG_KEYS.items():
         if section not in config:
@@ -176,6 +177,102 @@ def _validate_config(config: dict[str, Any]) -> None:
                     raise ValueError(
                         f"Config 'llm.circuit_breaker.{key}' must be a number > 0, got {value!r}"
                     )
+
+    # mood (#161). Validated here rather than at first use: `mood.drift_rate`
+    # and `mood.homeostasis_rate` are not read until run(), long after every
+    # subsystem is constructed, so a typo would otherwise surface from a live
+    # loop instead of at startup.
+    _validate_mood_config(config["mood"])
+
+
+def _is_number(value: Any) -> bool:
+    """True for real numeric config values.
+
+    Bools are excluded for the same reason as in the validators above: YAML 1.1
+    parses `yes`/`on`/`true` as True, and float(True) == 1.0 would silently
+    accept a nonsense rate.
+    """
+    return not isinstance(value, bool) and isinstance(value, (int, float))
+
+
+def _validate_mood_config(mood_cfg: Any) -> None:
+    """Raise on a malformed mood section; warn on a saturating tuning (#161)."""
+    if not isinstance(mood_cfg, dict):
+        raise ValueError(f"Config 'mood' must be a mapping, got {mood_cfg!r}")
+
+    initial = mood_cfg["initial"]
+    if not isinstance(initial, dict) or not initial:
+        raise ValueError(
+            f"Config 'mood.initial' must be a non-empty mapping of trait name to a "
+            f"number in [0.0, 1.0], got {initial!r}"
+        )
+    for trait, value in initial.items():
+        if not _is_number(value) or not 0.0 <= float(value) <= 1.0:
+            raise ValueError(
+                f"Config 'mood.initial.{trait}' must be a number in [0.0, 1.0], got {value!r}"
+            )
+
+    drift_rate = mood_cfg["drift_rate"]
+    if not _is_number(drift_rate) or float(drift_rate) < 0.0:
+        raise ValueError(
+            f"Config 'mood.drift_rate' must be a number >= 0 (0 disables trigger-driven "
+            f"drift), got {drift_rate!r}"
+        )
+
+    # Optional (#119). Absent → IdentityDocument._DEFAULT_HOMEOSTASIS_RATE.
+    # Rates above 1.0 overshoot the baseline every cycle and oscillate instead
+    # of converging, so they are rejected rather than warned about.
+    homeostasis_rate = mood_cfg.get("homeostasis_rate")
+    if homeostasis_rate is not None:
+        if not _is_number(homeostasis_rate) or not 0.0 <= float(homeostasis_rate) <= 1.0:
+            raise ValueError(
+                f"Config 'mood.homeostasis_rate' must be a number in [0.0, 1.0] "
+                f"(0 disables homeostatic reversion), got {homeostasis_rate!r}"
+            )
+
+    _warn_on_mood_saturation(initial, float(drift_rate), homeostasis_rate)
+
+
+def _warn_on_mood_saturation(
+    initial: dict[str, Any], drift_rate: float, homeostasis_rate: float | None
+) -> None:
+    """Log a WARNING for each mood dimension whose equilibrium hits the 1.0 ceiling.
+
+    `IdentityDocument.drift_mood` settles a continuously-triggered dimension at
+    ``initial + drift_rate / homeostasis_rate`` (#119). When that value is >= 1.0
+    the dimension is clipped at the ceiling anyway — the tuning failure #134 found
+    in the shipped config, which nothing detected at the time. Warned rather than
+    raised: a pinned dimension is a tuning choice, not a malformed config, and
+    raising would refuse to start instances whose configs are tuned that way today.
+    """
+    if drift_rate == 0.0:
+        return  # No trigger-driven drift, so nothing climbs toward the ceiling.
+
+    if homeostasis_rate is None:
+        # Single source of truth for the fallback — drift_mood reads the same
+        # class attribute when the caller passes None.
+        rate = IdentityDocument._DEFAULT_HOMEOSTASIS_RATE
+    else:
+        rate = float(homeostasis_rate)
+
+    if rate == 0.0:
+        logging.warning(
+            "Config 'mood.homeostasis_rate' is 0 — homeostatic reversion is disabled, so "
+            "every continuously-triggered mood dimension will climb to the 1.0 ceiling "
+            "(the pre-#119 behaviour)."
+        )
+        return
+
+    offset = drift_rate / rate
+    for trait, value in initial.items():
+        equilibrium = float(value) + offset
+        if equilibrium >= 1.0:
+            logging.warning(
+                "Config mood dimension '%s' equilibrates at %.2f (initial %.2f + "
+                "drift_rate/homeostasis_rate %.2f) and will be clipped at the 1.0 ceiling; "
+                "lower 'mood.drift_rate' or raise 'mood.homeostasis_rate' (see #134).",
+                trait, equilibrium, float(value), offset,
+            )
 
 
 _ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")

@@ -81,7 +81,9 @@ mood:
   # or the highest-baseline trait will still saturate at 1.0 (#134 — at
   # 0.1 this held false for curiosity's 0.7 baseline: 0.05/0.1 = 0.5 is not
   # < 0.3). At 0.3, curiosity's equilibrium is ~0.87, safely below the
-  # ceiling for every default trait.
+  # ceiling for every default trait. `_validate_config()` checks this at
+  # startup and logs a WARNING naming any dimension that would still be
+  # clipped at 1.0 (#161); it does not refuse to start.
   homeostasis_rate: 0.3
 
 perception:
