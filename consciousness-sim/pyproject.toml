@@ -22,8 +22,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=9.0.0"]
+dev = ["pytest>=9.0.0", "mypy>=1.14.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["core*", "llm*", "memory*", "persistence*", "interfaces*"]
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+explicit_package_bases = true
+exclude = ["\\.venv/", "tests/"]
+
+[[tool.mypy.overrides]]
+module = "yaml.*"
+ignore_missing_imports = true
