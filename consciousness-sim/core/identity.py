@@ -18,6 +18,26 @@ from dataclasses import asdict, dataclass, field
 from typing import ClassVar
 
 
+def _as_str_list(value: object) -> list[str]:
+    """Narrow a loosely-typed persisted-state value to a list of strings.
+
+    ``state.json`` is read back as ``dict[str, object]``, so every field has to
+    be narrowed before use. A value of the wrong shape yields an empty list
+    rather than raising, matching how ``attention_schema`` is already handled
+    in ``IdentityDocument.from_dict``.
+    """
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value]
+    return []
+
+
+def _as_float_map(value: object) -> dict[str, float]:
+    """Narrow a loosely-typed persisted-state value to a name -> float mapping."""
+    if isinstance(value, dict):
+        return {str(k): float(v) for k, v in value.items()}
+    return {}
+
+
 @dataclass(slots=True)
 class AttentionSchema:
     """Dynamic model of what the agent is currently attending to.
@@ -190,13 +210,11 @@ class IdentityDocument:
 
     @classmethod
     def from_dict(cls, payload: dict[str, object]) -> "IdentityDocument":
-        mood = {k: float(v) for k, v in dict(payload.get("mood", {})).items()}
+        mood = _as_float_map(payload.get("mood", {}))
         # Legacy states saved before issue #62 lack initial_mood; left empty
         # here so the orchestrator can populate it from config on load
         # (see Consciousness.initialize).
-        initial_mood = {
-            k: float(v) for k, v in dict(payload.get("initial_mood", {})).items()
-        }
+        initial_mood = _as_float_map(payload.get("initial_mood", {}))
         attn_raw = payload.get("attention_schema", {})
         attn_data = dict(attn_raw) if isinstance(attn_raw, dict) else {}
         attention_schema = AttentionSchema(
@@ -208,11 +226,11 @@ class IdentityDocument:
         return cls(
             name=str(payload.get("name", "unnamed")),
             origin_story=str(payload.get("origin_story", "")),
-            values=[str(v) for v in payload.get("values", [])],
+            values=_as_str_list(payload.get("values", [])),
             purpose=str(payload.get("purpose", "")),
             self_concept=str(payload.get("self_concept", "")),
-            personality_traits=[str(v) for v in payload.get("personality_traits", [])],
-            amendments=[str(v) for v in payload.get("amendments", [])],
+            personality_traits=_as_str_list(payload.get("personality_traits", [])),
+            amendments=_as_str_list(payload.get("amendments", [])),
             mood=mood,
             initial_mood=initial_mood,
             attention_schema=attention_schema,

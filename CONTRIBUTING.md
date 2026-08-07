@@ -29,10 +29,13 @@ automate model install + Python dependency setup.
 ```bash
 cd consciousness-sim
 pytest -q tests
+mypy .
 ```
 
-CI (`.github/workflows/`) runs the same suite plus an experiment smoke test against a
-mock LLM provider, so it works the same for a fork with no external credentials.
+CI (`.github/workflows/`) runs both of the above plus an experiment smoke test against a
+mock LLM provider, so it works the same for a fork with no external credentials. `mypy`
+is a blocking step, so a type error fails the build; its settings live in
+`pyproject.toml`'s `[tool.mypy]` section and `tests/` is excluded.
 
 ## Branch and commit conventions
 

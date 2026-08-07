@@ -24,13 +24,17 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # import-time cycle avoided; only needed for type checking
+    from core.consciousness import Consciousness
 
 logger = logging.getLogger(__name__)
 
 
 class EventRelay:
-    def __init__(self, consciousness: object, sock_path: Path) -> None:
-        self._mind = consciousness  # type: ignore[assignment]
+    def __init__(self, consciousness: Consciousness, sock_path: Path) -> None:
+        self._mind = consciousness
         self._sock_path = sock_path
         self._clients: list[asyncio.StreamWriter] = []
         self._recent_thoughts: list[str] = []
