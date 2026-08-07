@@ -194,6 +194,10 @@ class LongTermMemory:
                     float(importance_score),
                 ),
             )
+            # SQLite always sets lastrowid after a successful INSERT; the type
+            # is Optional, so the absence is surfaced rather than coerced.
+            if cursor.lastrowid is None:
+                raise RuntimeError("SQLite returned no rowid for the inserted memory")
             new_id = int(cursor.lastrowid)
             evicted = await self._evict_over_bound(db)
             await db.commit()
