@@ -36,12 +36,19 @@ def _as_int(value: object, default: int) -> int:
     """Narrow a loosely-typed event-payload value to an int for display.
 
     Event payloads are ``dict[str, object]``, so counts have to be narrowed
-    before rendering; anything non-numeric falls back to ``default`` rather
-    than raising inside a display handler.
+    before rendering. Everything ``int()`` already accepted is still accepted;
+    values that would previously have raised fall back to ``default`` instead,
+    because a raise here is swallowed by ``_emit()`` and would silently freeze
+    the displayed counter. ``bool`` is excluded deliberately — rendering a
+    long-term count of 1 because a payload carried a flag is worse than
+    keeping the previous value.
     """
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         return default
-    return int(value)
+    try:
+        return int(value)
+    except ValueError:
+        return default
 
 
 class ConsciousnessCLI:

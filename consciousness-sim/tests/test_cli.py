@@ -28,20 +28,22 @@ def _cli() -> ConsciousnessCLI:
     return ConsciousnessCLI(_FakeMind())
 
 
-def test_as_int_passes_through_numeric_values() -> None:
+def test_as_int_accepts_everything_int_already_accepted() -> None:
     assert _as_int(7, 0) == 7
     assert _as_int(7.9, 0) == 7
+    assert _as_int("12", 0) == 12
 
 
-def test_as_int_falls_back_on_non_numeric_values() -> None:
-    assert _as_int("12", 3) == 3
+def test_as_int_falls_back_where_int_would_have_raised() -> None:
     assert _as_int(None, 3) == 3
     assert _as_int({"n": 1}, 3) == 3
+    assert _as_int("twelve", 3) == 3
 
 
 def test_as_int_treats_bool_as_non_numeric() -> None:
-    """`True` is an int subclass; reporting a long-term count of 1 because a
-    payload carried a flag would be worse than keeping the default."""
+    """`True` is an int subclass, so `int(True)` used to render as 1; reporting
+    a long-term count of 1 because a payload carried a flag is worse than
+    keeping the previous value."""
     assert _as_int(True, 5) == 5
 
 
@@ -59,9 +61,11 @@ def test_on_initialized_reads_short_term_contents() -> None:
     assert cli.long_term_count == 4
 
 
-def test_on_initialized_ignores_malformed_short_term() -> None:
+def test_on_initialized_ignores_non_iterable_short_term() -> None:
+    """A non-iterable `short_term` used to raise TypeError inside the handler,
+    where `_emit()` swallows it and the count silently never updates."""
     cli = _cli()
-    asyncio.run(cli._on_initialized({"short_term": "not-a-list", "long_term_count": 2}))
+    asyncio.run(cli._on_initialized({"short_term": 5, "long_term_count": 2}))
     assert cli.thoughts == []
     assert cli.long_term_count == 2
 
