@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "consciousness-sim"
-version = "0.1.0"
+version = "0.2.0.dev20260808"
 description = "Experimental AI consciousness simulation framework"
 readme = "README.md"
 requires-python = ">=3.11"
