@@ -196,7 +196,10 @@ class AnthropicProvider(LLMProvider):
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = "".join(chunk.text for chunk in resp.content if getattr(chunk, "text", None))
+        # Discriminate on the block's `type` tag rather than probing for a
+        # `text` attribute: only text blocks carry generated prose, and the
+        # tag is what narrows the SDK's content-block union.
+        text = "".join(block.text for block in resp.content if block.type == "text")
         if not text.strip():
             raise RuntimeError("Anthropic returned empty content")
         return text.strip()

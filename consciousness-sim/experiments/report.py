@@ -7,6 +7,7 @@ so we don't add a Jinja2 dependency.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from experiments.manifest import ExperimentManifest, SuccessCriterion, evaluate_success_criterion
@@ -19,8 +20,13 @@ def _fmt_mood(mood: dict[str, float]) -> str:
     return ", ".join(parts)
 
 
-def _fmt_table(rows: list[tuple[str, ...]], headers: list[str]) -> str:
-    """Render a simple GitHub-flavored markdown table."""
+def _fmt_table(rows: Sequence[Sequence[object]], headers: Sequence[str]) -> str:
+    """Render a simple GitHub-flavored markdown table.
+
+    Cells are stringified here, so callers may pass rows of any element type
+    (ranks are ints, criteria marks are strs); the parameter is a covariant
+    ``Sequence`` rather than an invariant ``list`` so those rows type-check.
+    """
     out = ["| " + " | ".join(headers) + " |",
            "|" + "|".join("---" for _ in headers) + "|"]
     for row in rows:

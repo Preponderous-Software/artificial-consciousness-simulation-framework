@@ -32,6 +32,27 @@ from rich.table import Table
 from core.consciousness import Consciousness
 
 
+def _as_int(value: object, default: int) -> int:
+    """Narrow a loosely-typed event-payload value to an int for display.
+
+    Event payloads are ``dict[str, object]``, so counts have to be narrowed
+    before rendering. Everything ``int()`` already accepted is still accepted;
+    values that would previously have raised fall back to ``default`` instead,
+    because a raise here is swallowed by ``_emit()`` and would silently freeze
+    the displayed counter. ``bool`` is excluded deliberately — rendering a
+    long-term count of 1 because a payload carried a flag is worse than
+    keeping the previous value.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return default
+    try:
+        return int(value)
+    except (ValueError, OverflowError):
+        # OverflowError covers the infinities, which `json.loads` produces by
+        # default; ValueError covers NaN and non-numeric strings.
+        return default
+
+
 class ConsciousnessCLI:
     """Live dashboard with thought stream, mood, and control shortcuts."""
 
@@ -51,18 +72,22 @@ class ConsciousnessCLI:
         self.consciousness.on_reflection.append(self._on_reflection)
 
     async def _on_initialized(self, payload: dict[str, object]) -> None:
-        for item in payload.get("short_term", []):
-            if isinstance(item, dict):
-                self.thoughts.append(str(item.get("content", "")))
+        short_term = payload.get("short_term", [])
+        if isinstance(short_term, (list, tuple)):
+            for item in short_term:
+                if isinstance(item, dict):
+                    self.thoughts.append(str(item.get("content", "")))
         self.thoughts = self.thoughts[-20:]
-        self.long_term_count = int(payload.get("long_term_count", 0))
+        self.long_term_count = _as_int(payload.get("long_term_count", 0), 0)
 
     async def _on_thought(self, payload: dict[str, object]) -> None:
         self.thoughts.append(str(payload.get("content", "")))
         self.thoughts = self.thoughts[-20:]
 
     async def _on_memory(self, payload: dict[str, object]) -> None:
-        self.long_term_count = int(payload.get("long_term_count", self.long_term_count))
+        self.long_term_count = _as_int(
+            payload.get("long_term_count", self.long_term_count), self.long_term_count
+        )
         content = str(payload.get("content", ""))
         if content:
             self.memories.append(content)

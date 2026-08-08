@@ -462,3 +462,50 @@ def test_attention_schema_failure_then_success_focus_updates_normally() -> None:
     assert schema.focus == "memory"
     assert schema.theme == "river"
     assert schema.salience == 1.0
+
+
+# --- #11 loose-payload narrowing in from_dict ------------------------------
+
+
+def test_from_dict_malformed_mood_falls_back_to_empty() -> None:
+    """A corrupt state.json whose `mood` is not a mapping must not crash the
+    restore path; the orchestrator repopulates mood from config when empty.
+    Mirrors the narrowing already applied to `attention_schema`."""
+    restored = IdentityDocument.from_dict(
+        {"name": "Corrupt", "mood": "not-a-mapping", "initial_mood": 7}
+    )
+    assert restored.mood == {}
+    assert restored.initial_mood == {}
+    assert restored.name == "Corrupt"
+
+
+def test_from_dict_malformed_string_lists_fall_back_to_empty() -> None:
+    """`values`/`personality_traits`/`amendments` stored as non-sequences are
+    dropped rather than raising a TypeError during restore."""
+    restored = IdentityDocument.from_dict(
+        {
+            "name": "Corrupt",
+            "values": 42,
+            "personality_traits": None,
+            "amendments": 1.5,
+        }
+    )
+    assert restored.values == []
+    assert restored.personality_traits == []
+    assert restored.amendments == []
+
+
+def test_from_dict_coerces_well_formed_sequences_and_mappings() -> None:
+    """Well-formed payloads keep their existing coercion behavior: sequences
+    become lists of str, and numeric mood values become floats."""
+    restored = IdentityDocument.from_dict(
+        {
+            "name": "Aria",
+            "values": ("curiosity", 3),
+            "amendments": ["grew"],
+            "mood": {"curiosity": 1, "wonder": "0.25"},
+        }
+    )
+    assert restored.values == ["curiosity", "3"]
+    assert restored.amendments == ["grew"]
+    assert restored.mood == {"curiosity": 1.0, "wonder": 0.25}

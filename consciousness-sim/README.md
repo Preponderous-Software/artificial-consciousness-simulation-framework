@@ -69,8 +69,12 @@ For local test tooling:
 ```bash
 pip install -r requirements-dev.txt
 pytest -q tests
-mypy .   # optional static type check; lenient config (`ignore_missing_imports`) — not wired into CI yet
+mypy .   # static type check; lenient config (`ignore_missing_imports`), `tests/` excluded
 ```
+
+Both commands are blocking steps of the `tests` workflow, so a type error fails CI
+the same way a failing test does (issue #11). Settings live in `pyproject.toml`'s
+`[tool.mypy]` section.
 
 ### Running modes
 

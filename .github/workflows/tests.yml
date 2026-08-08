@@ -36,3 +36,8 @@ jobs:
 
       - name: Run pytest
         run: python -m pytest tests/ -q
+
+      # Blocking static type gate (issue #11). Settings live in
+      # pyproject.toml's [tool.mypy]; `tests/` and `.venv/` are excluded there.
+      - name: Run mypy
+        run: python -m mypy .
