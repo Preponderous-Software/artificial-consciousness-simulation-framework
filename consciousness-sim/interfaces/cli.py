@@ -47,7 +47,9 @@ def _as_int(value: object, default: int) -> int:
         return default
     try:
         return int(value)
-    except ValueError:
+    except (ValueError, OverflowError):
+        # OverflowError covers the infinities, which `json.loads` produces by
+        # default; ValueError covers NaN and non-numeric strings.
         return default
 
 

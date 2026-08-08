@@ -40,6 +40,16 @@ def test_as_int_falls_back_where_int_would_have_raised() -> None:
     assert _as_int("twelve", 3) == 3
 
 
+def test_as_int_falls_back_on_non_finite_floats() -> None:
+    """`json.loads` reconstructs Infinity/NaN by default, and `int()` rejects
+    both — the infinities with OverflowError rather than ValueError. Either
+    escaping this helper would be swallowed by `_emit()` and freeze the
+    displayed counter, which is what the narrowing exists to prevent."""
+    assert _as_int(float("inf"), 3) == 3
+    assert _as_int(float("-inf"), 3) == 3
+    assert _as_int(float("nan"), 3) == 3
+
+
 def test_as_int_treats_bool_as_non_numeric() -> None:
     """`True` is an int subclass, so `int(True)` used to render as 1; reporting
     a long-term count of 1 because a payload carried a flag is worse than
