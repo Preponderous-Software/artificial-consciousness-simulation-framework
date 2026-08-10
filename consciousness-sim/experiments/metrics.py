@@ -58,7 +58,8 @@ def load_journal(journal_path: Path) -> list[dict[str, Any]]:
 
 
 def load_state(state_path: Path) -> dict[str, Any]:
-    return json.loads(Path(state_path).read_text(encoding="utf-8"))
+    state: dict[str, Any] = json.loads(Path(state_path).read_text(encoding="utf-8"))
+    return state
 
 
 def _content_tokens(text: str, min_word_len: int = _MIN_WORD_LEN) -> list[str]:

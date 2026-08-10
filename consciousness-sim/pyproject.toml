@@ -33,6 +33,10 @@ include = ["core*", "llm*", "memory*", "persistence*", "interfaces*"]
 
 [tool.mypy]
 python_version = "3.11"
+# Strict checking of first-party code (issue #11). `ignore_missing_imports`
+# stays on so a checkout without every optional third-party package installed
+# still type-checks; strictness applies to this project's own annotations.
+strict = true
 ignore_missing_imports = true
 explicit_package_bases = true
 exclude = ["\\.venv/", "tests/"]

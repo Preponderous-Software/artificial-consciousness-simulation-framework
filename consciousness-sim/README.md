@@ -69,12 +69,13 @@ For local test tooling:
 ```bash
 pip install -r requirements-dev.txt
 pytest -q tests
-mypy .   # static type check; lenient config (`ignore_missing_imports`), `tests/` excluded
+mypy .   # static type check; strict on first-party code, `tests/` excluded
 ```
 
 Both commands are blocking steps of the `tests` workflow, so a type error fails CI
 the same way a failing test does (issue #11). Settings live in `pyproject.toml`'s
-`[tool.mypy]` section.
+`[tool.mypy]` section: `strict = true`, with `ignore_missing_imports = true` retained
+so a checkout missing an optional third-party package still type-checks.
 
 ### Running modes
 

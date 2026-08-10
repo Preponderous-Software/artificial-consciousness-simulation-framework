@@ -57,7 +57,8 @@ def load_run(run_dir: Path, label: str | None = None) -> RunRef:
     def _read_json(p: Path) -> dict[str, Any]:
         if not p.exists():
             return {}
-        return json.loads(p.read_text(encoding="utf-8"))
+        loaded: dict[str, Any] = json.loads(p.read_text(encoding="utf-8"))
+        return loaded
 
     manifest = _read_yaml(run_dir / "manifest.yaml")
     meta = _read_yaml(run_dir / "meta.yaml")
@@ -285,8 +286,10 @@ def render_comparison(a: RunRef, b: RunRef, k_samples: int = 3) -> str:
         from experiments.manifest import SuccessCriterion, evaluate_success_criterion
         lines += ["## Success criteria status", ""]
 
-        def _eval(crit_list, metrics):
-            evals = []
+        def _eval(
+            crit_list: list[Any], metrics: dict[str, Any]
+        ) -> list[tuple[SuccessCriterion, bool, float | None]]:
+            evals: list[tuple[SuccessCriterion, bool, float | None]] = []
             for raw in crit_list:
                 try:
                     c = SuccessCriterion.model_validate(raw)

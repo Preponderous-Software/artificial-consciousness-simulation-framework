@@ -21,6 +21,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +173,7 @@ class WikipediaPerception(PerceptionProvider):
             self._recent_titles.pop(0)
 
 
-def build_perception_provider(provider: str, **kwargs) -> PerceptionProvider:
+def build_perception_provider(provider: str, **kwargs: Any) -> PerceptionProvider:
     """Construct a perception provider by name. Mirrors `build_provider` for LLMs."""
     normalized = provider.lower()
     if normalized == "wikipedia":

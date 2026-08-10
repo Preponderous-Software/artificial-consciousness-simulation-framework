@@ -35,7 +35,9 @@ mypy .
 CI (`.github/workflows/`) runs both of the above plus an experiment smoke test against a
 mock LLM provider, so it works the same for a fork with no external credentials. `mypy`
 is a blocking step, so a type error fails the build; its settings live in
-`pyproject.toml`'s `[tool.mypy]` section and `tests/` is excluded.
+`pyproject.toml`'s `[tool.mypy]` section, which runs `strict = true` over first-party
+code with `tests/` excluded. New code therefore needs full annotations on every
+function it defines.
 
 ## Branch and commit conventions
 

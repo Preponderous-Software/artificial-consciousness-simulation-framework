@@ -30,6 +30,7 @@ import termios
 import threading
 import tty
 from datetime import datetime, timezone
+from typing import Any
 
 import click
 from rich.console import Console
@@ -101,7 +102,7 @@ class AttachCLI:
         table.add_row(left, right)
         return table
 
-    def _apply_event(self, event: dict) -> None:
+    def _apply_event(self, event: dict[str, Any]) -> None:
         t = event.get("type")
         if t == "snapshot":
             self.name = str(event.get("name", self.name))
@@ -127,7 +128,7 @@ class AttachCLI:
                 self.memories.append(content)
                 self.memories = self.memories[-8:]
 
-    async def _send(self, msg: dict) -> None:
+    async def _send(self, msg: dict[str, Any]) -> None:
         try:
             self._writer.write((json.dumps(msg) + "\n").encode())
             await self._writer.drain()

@@ -26,7 +26,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def _lifespan(app: FastAPI):
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_tailer().start()
     logger.info("Web dashboard ready (standalone mode, journal tail active)")
     try:
