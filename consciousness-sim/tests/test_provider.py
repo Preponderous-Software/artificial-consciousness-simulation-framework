@@ -570,7 +570,9 @@ def test_with_backoff_rejects_a_non_positive_retry_budget() -> None:
     """
     provider = MockProvider()
 
-    async def _never_called() -> str:  # pragma: no cover - must not be invoked
+    # Asserts rather than returns: reaching the body at all would mean the
+    # zero-length retry loop ran an attempt it had no budget for.
+    async def _never_called() -> str:
         raise AssertionError("func must not be invoked with a zero retry budget")
 
     with pytest.raises(ValueError, match="retries >= 1"):
