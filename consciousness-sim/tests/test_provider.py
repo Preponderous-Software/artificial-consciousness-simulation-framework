@@ -558,3 +558,22 @@ def test_try_ensure_running_does_not_reset_an_open_breaker(monkeypatch) -> None:
     with patch.object(OllamaProvider, "_is_ollama_healthy", new=AsyncMock(return_value=True)):
         assert asyncio.run(provider.try_ensure_running()) is True
     assert provider.circuit_state == "open"
+
+
+def test_with_backoff_rejects_a_non_positive_retry_budget() -> None:
+    """A retry budget below 1 skips the loop body entirely.
+
+    Before the return type was tightened, that path fell off the end of the
+    function and handed callers `None` where a generated string was declared —
+    a type error that surfaced as an AttributeError several frames later. It
+    now fails at the call site instead.
+    """
+    provider = MockProvider()
+
+    # Asserts rather than returns: reaching the body at all would mean the
+    # zero-length retry loop ran an attempt it had no budget for.
+    async def _never_called() -> str:
+        raise AssertionError("func must not be invoked with a zero retry budget")
+
+    with pytest.raises(ValueError, match="retries >= 1"):
+        asyncio.run(provider.with_backoff(_never_called, retries=0))

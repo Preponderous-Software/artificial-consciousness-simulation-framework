@@ -21,12 +21,17 @@ import re
 import subprocess
 import urllib.parse
 from abc import ABC, abstractmethod
-from typing import Any, Sequence
+from typing import Any, Awaitable, Callable, Sequence, TypeVar
 
 from llm.circuit_breaker import CircuitBreaker, LLMUnavailableError
 
 logger = logging.getLogger(__name__)
 MAX_FALLBACK_PURPOSE_LENGTH = 120
+
+# Return type of a wrapped provider call, so retry/breaker wrappers preserve
+# the concrete type of what they wrap (str for generate, list[float] for embed)
+# instead of erasing it to Any.
+T = TypeVar("T")
 
 
 class LLMProvider(ABC):
@@ -44,7 +49,9 @@ class LLMProvider(ABC):
         """Check provider health and attempt recovery if needed. Returns True if healthy."""
         return True
 
-    async def with_backoff(self, func: Any, *args: Any, retries: int = 5, **kwargs: Any) -> Any:
+    async def with_backoff(
+        self, func: Callable[..., Awaitable[T]], *args: Any, retries: int = 5, **kwargs: Any
+    ) -> T:
         delay = 1.0
         for attempt in range(retries):
             try:
@@ -59,6 +66,9 @@ class LLMProvider(ABC):
                 logger.warning("Transient LLM provider error: %s", exc)
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 30.0)
+        # Only reachable when retries < 1, which would otherwise return None
+        # from a function declared to return T.
+        raise ValueError(f"with_backoff requires retries >= 1, got {retries}")
 
     @staticmethod
     def _is_retryable_error(exc: Exception) -> bool:
@@ -270,7 +280,9 @@ class OllamaProvider(LLMProvider):
         """Breaker state label, or None when no breaker is configured."""
         return self.circuit_breaker.state if self.circuit_breaker is not None else None
 
-    async def _guarded(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+    async def _guarded(
+        self, func: Callable[..., Awaitable[T]], *args: Any, **kwargs: Any
+    ) -> T:
         """Run `func` under the circuit breaker when one is configured."""
         if self.circuit_breaker is None:
             return await func(*args, **kwargs)

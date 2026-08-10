@@ -225,7 +225,7 @@ All commands run from `consciousness-sim/`:
 pip install -r requirements.txt
 
 # Install dev/test dependencies
-pip install -r requirements-dev.txt   # adds pytest
+pip install -r requirements-dev.txt   # adds pytest + mypy
 
 # Run a named consciousness instance (Ollama/local by default)
 python scripts/spawn.py --name "Aria"
@@ -247,6 +247,12 @@ python -m pytest tests/test_bug_fixes.py -v
 
 # Run a single test by name
 python -m pytest tests/test_bug_fixes.py::test_validate_config_raises_on_missing_top_level_section -v
+
+# Static type check — blocking in CI alongside pytest, so a type error fails
+# the build the same way a failing test does. Settings live in pyproject.toml's
+# [tool.mypy] section: strict = true, with `tests/` and `.venv/` excluded and
+# `ignore_missing_imports = true` for third-party packages without stubs.
+mypy .
 
 # Inspect a running consciousness (separate terminal)
 python scripts/inspect.py --name "Aria"

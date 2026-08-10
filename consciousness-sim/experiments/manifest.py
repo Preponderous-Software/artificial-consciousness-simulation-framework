@@ -143,7 +143,8 @@ class ExperimentManifest(BaseModel):
 
     def to_yaml(self) -> str:
         """Serialize back to YAML — used by the runner to freeze the spec next to the run."""
-        return yaml.safe_dump(self.model_dump(mode="json"), sort_keys=False)
+        dumped: str = yaml.safe_dump(self.model_dump(mode="json"), sort_keys=False)
+        return dumped
 
 
 def evaluate_success_criterion(

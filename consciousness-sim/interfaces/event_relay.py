@@ -24,7 +24,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # import-time cycle avoided; only needed for type checking
     from core.consciousness import Consciousness
@@ -45,29 +45,29 @@ class EventRelay:
         self._mind.on_memory_stored.append(self._on_memory_stored)
         self._mind.on_perception.append(self._on_perception)
 
-    async def _on_thought(self, payload: dict) -> None:
+    async def _on_thought(self, payload: dict[str, Any]) -> None:
         content = str(payload.get("content", ""))
         self._recent_thoughts.append(content)
         self._recent_thoughts = self._recent_thoughts[-20:]
         await self._broadcast(payload)
 
-    async def _on_reflection(self, payload: dict) -> None:
+    async def _on_reflection(self, payload: dict[str, Any]) -> None:
         content = str(payload.get("content", ""))
         self._recent_thoughts.append(f"[reflection] {content}")
         self._recent_thoughts = self._recent_thoughts[-20:]
         await self._broadcast(payload)
 
-    async def _on_memory_stored(self, payload: dict) -> None:
+    async def _on_memory_stored(self, payload: dict[str, Any]) -> None:
         content = str(payload.get("content", ""))
         if content:
             self._recent_memories.append(content)
             self._recent_memories = self._recent_memories[-8:]
         await self._broadcast(payload)
 
-    async def _on_perception(self, payload: dict) -> None:
+    async def _on_perception(self, payload: dict[str, Any]) -> None:
         await self._broadcast(payload)
 
-    async def _broadcast(self, payload: dict) -> None:
+    async def _broadcast(self, payload: dict[str, Any]) -> None:
         if not self._clients:
             return
         line = (json.dumps(payload) + "\n").encode()
@@ -82,7 +82,7 @@ class EventRelay:
             if w in self._clients:
                 self._clients.remove(w)
 
-    async def _snapshot(self) -> dict:
+    async def _snapshot(self) -> dict[str, Any]:
         lt_count = await self._mind.long_term.count()
         return {
             "type": "snapshot",

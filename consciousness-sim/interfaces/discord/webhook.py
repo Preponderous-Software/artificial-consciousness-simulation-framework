@@ -175,7 +175,9 @@ class DiscordWebhookSink:
                 logger.warning("Discord sink: no on_%s channel on mind — skipping", event_type)
                 continue
 
-            async def _handler(payload: dict[str, Any], _self=self) -> None:
+            async def _handler(
+                payload: dict[str, Any], _self: "DiscordWebhookSink" = self
+            ) -> None:
                 await _self._post(payload)
 
             channel.append(_handler)

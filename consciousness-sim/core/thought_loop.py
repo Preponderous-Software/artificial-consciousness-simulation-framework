@@ -52,7 +52,8 @@ _THEME_STOPWORDS = frozenset({
 
 def _extract_theme(text: str) -> str:
     """Return the first content word (5+ chars, not a stopword) from text."""
-    for word in re.findall(r"[a-z]{5,}", text.lower()):
+    words: list[str] = re.findall(r"[a-z]{5,}", text.lower())
+    for word in words:
         if word not in _THEME_STOPWORDS:
             return word
     return ""
