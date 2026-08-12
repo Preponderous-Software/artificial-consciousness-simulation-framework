@@ -33,9 +33,16 @@ from typing import Any
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from interfaces.web._deps import reraise_if_web_extra_missing
+
+try:
+    from fastapi import FastAPI, HTTPException, Request
+    from fastapi.responses import StreamingResponse
+    from fastapi.staticfiles import StaticFiles
+except ModuleNotFoundError as exc:  # FastAPI ships in the optional 'web' extra
+    reraise_if_web_extra_missing(exc)
+    raise
+
 from pydantic import BaseModel, Field
 
 from interfaces.web.journal_tail import JournalTailer
@@ -469,7 +476,11 @@ async def start(port: int, host: str = "127.0.0.1", allow_remote_spawn: bool = F
     content AND the spawn/stop control plane with no authentication.
     Binding to 0.0.0.0 should be an explicit opt-in.
     """
-    import uvicorn
+    try:
+        import uvicorn
+    except ModuleNotFoundError as exc:  # uvicorn ships in the optional 'web' extra
+        reraise_if_web_extra_missing(exc)
+        raise
 
     global _allow_remote_spawn
     _allow_remote_spawn = bool(allow_remote_spawn)

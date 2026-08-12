@@ -23,6 +23,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=9.0.0", "mypy>=1.14.0"]
+# `interfaces.web.server` is packaged (see packages.find below) but imports
+# FastAPI/uvicorn, which the core simulation never needs. Keeping them in an
+# extra leaves `pip install consciousness-sim` free of a web stack; the guard
+# in `interfaces/web/_deps.py` names this extra when the import fails (#169).
+web = ["fastapi>=0.110.0", "uvicorn>=0.29.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
