@@ -282,6 +282,9 @@ python scripts/doctor.py --prune --yes     # remove stale pid files, no prompt
 python scripts/web.py --port 8080
 # Default bind host is 127.0.0.1; pass --host 0.0.0.0 to opt into LAN exposure
 # Pass --allow-remote-spawn to permit non-localhost POST /instances (no auth — opt-in)
+# fastapi/uvicorn are not core dependencies: requirements.txt installs both, so a
+# dev checkout needs nothing extra, but a pip-installed copy needs the 'web' extra
+# (pip install 'consciousness-sim[web]') — see interfaces/web/_deps.py (#169)
 
 # Experiment harness (issue #57) — reproducible run from a YAML manifest
 python scripts/experiment.py run experiments/manifests/mock-smoke-baseline.yaml
@@ -376,6 +379,8 @@ consciousness-sim/
 │   ├── web/                 # Standalone FastAPI + SSE dashboard (PR #52, #55)
 │   │   ├── server.py        #   process manager (spawn/stop/archive), SSE stream
 │   │   ├── journal_tail.py  #   polling journal tailer feeding live events
+│   │   ├── _deps.py         #   optional-dependency guard: reports the 'web'
+│   │   │                    #   extra when fastapi/uvicorn are absent (#169)
 │   │   └── static/index.html
 │   └── discord/             # DiscordWebhookSink — embed posts per event (PR #65)
 │       └── webhook.py
