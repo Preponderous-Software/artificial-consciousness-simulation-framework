@@ -136,6 +136,16 @@ python scripts/inspect.py --name Aria --limit 50
 python scripts/web.py --port 8080
 ```
 
+FastAPI and uvicorn are **not** core dependencies — the simulation itself never
+imports them. `requirements.txt` installs both, so a development checkout needs
+nothing extra, but installing the distribution directly requires the `web`
+extra (issue #169); without it, importing `interfaces.web.server` raises a
+`ModuleNotFoundError` naming the extra to install:
+
+```bash
+pip install 'consciousness-sim[web]'
+```
+
 A vanilla-JS SPA renders the thought stream, mood vector, identity, perception bubbles, and instance picker live. Open `http://localhost:8080/#/Aria` (or any other instance name) to view a specific agent; the URL hash is bookmarkable.
 
 The dashboard also acts as a **process manager**: the `+ New` tab spawns a fresh agent (`POST /instances`), and each running tab has a `Stop instance` button (`POST /instances/<id>/stop`). Spawn/stop/archive endpoints are localhost-only by default — pass `--allow-remote-spawn` to opt into remote process control (no auth — only behind a trusted proxy). Provider/model fields are restricted to a configurable allowlist surfaced via `GET /providers`.
