@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from core.identity import AttentionSchema, IdentityDocument
 from persistence.paths import sanitize_consciousness_name
 from persistence.state_manager import StateManager
@@ -409,6 +411,86 @@ def test_drift_mood_default_homeostasis_keeps_high_baseline_trait_below_ceiling(
         f"default homeostasis_rate; got {ident.mood['curiosity']}"
     )
     assert 0.85 <= ident.mood["curiosity"] <= 0.9
+
+
+# --- #21 caller-supplied (semantic) trigger strengths ----------------------
+
+
+def test_drift_mood_without_strengths_keeps_the_lexical_behaviour() -> None:
+    """The default path is unchanged: a lexical hit drifts, a miss does not."""
+    ident = _ident_with_initial({"melancholy": 0.5})
+    ident.drift_mood("a sense of loss", drift_rate=0.1, homeostasis_rate=0.0)
+    assert ident.mood["melancholy"] == pytest.approx(0.6)
+
+    other = _ident_with_initial({"melancholy": 0.5})
+    other.drift_mood("everything she built is gone now", drift_rate=0.1, homeostasis_rate=0.0)
+    assert other.mood["melancholy"] == pytest.approx(0.5)
+
+
+def test_drift_mood_uses_supplied_strengths_and_ignores_the_text() -> None:
+    """The #21 fix: drift follows the supplied strengths, not the vocabulary.
+
+    The text lexically hits 'wonder' and lexically misses melancholy entirely,
+    so the pre-#21 code path produces exactly the opposite of this assertion.
+    """
+    ident = _ident_with_initial({"melancholy": 0.5, "wonder": 0.5})
+    ident.drift_mood(
+        "the mystery of it is marvelous",
+        drift_rate=0.1,
+        homeostasis_rate=0.0,
+        trigger_strengths={"melancholy": 1.0, "wonder": 0.0},
+    )
+    assert ident.mood["melancholy"] == pytest.approx(0.6)
+    assert ident.mood["wonder"] == pytest.approx(0.5)
+
+
+def test_drift_mood_scales_the_delta_by_strength() -> None:
+    ident = _ident_with_initial({"melancholy": 0.5})
+    ident.drift_mood(
+        "", drift_rate=0.1, homeostasis_rate=0.0, trigger_strengths={"melancholy": 0.25}
+    )
+    assert ident.mood["melancholy"] == pytest.approx(0.525)
+
+
+def test_drift_mood_still_reverts_dimensions_absent_from_the_strengths() -> None:
+    """An unanchored dimension keeps its homeostatic pull instead of freezing."""
+    ident = _ident_with_initial({"melancholy": 0.5, "contentment": 0.5})
+    ident.mood["contentment"] = 0.9
+    ident.drift_mood(
+        "text", drift_rate=0.1, homeostasis_rate=0.5, trigger_strengths={"melancholy": 1.0}
+    )
+    assert ident.mood["contentment"] == pytest.approx(0.7)
+
+
+def test_drift_mood_clamps_out_of_range_strengths() -> None:
+    """A strength outside [0, 1] must not amplify or invert the drift rate."""
+    ident = _ident_with_initial({"melancholy": 0.5, "wonder": 0.5})
+    ident.drift_mood(
+        "",
+        drift_rate=0.1,
+        homeostasis_rate=0.0,
+        trigger_strengths={"melancholy": 5.0, "wonder": -3.0},
+    )
+    assert ident.mood["melancholy"] == pytest.approx(0.6)
+    assert ident.mood["wonder"] == pytest.approx(0.5)
+
+
+def test_drift_mood_equilibrium_is_bounded_by_the_lexical_worst_case() -> None:
+    """A partial strength must equilibrate below the all-lexical-hits plateau."""
+    ident = _ident_with_initial({"curiosity": 0.7})
+    for _ in range(500):
+        ident.drift_mood("", drift_rate=0.05, trigger_strengths={"curiosity": 0.5})
+    # 0.7 + 0.5 * 0.05 / 0.3 ≈ 0.783, below the strength-1.0 plateau of ~0.867.
+    assert ident.mood["curiosity"] == pytest.approx(0.783, abs=0.01)
+
+
+def test_drift_mood_with_a_strength_for_an_unknown_dimension_adds_it() -> None:
+    """A configured anchor for a dimension not yet in mood seeds it from 0.5."""
+    ident = _ident_with_initial({"curiosity": 0.5})
+    ident.drift_mood(
+        "", drift_rate=0.1, homeostasis_rate=0.0, trigger_strengths={"resolve": 1.0}
+    )
+    assert ident.mood["resolve"] == pytest.approx(0.6)
 
 
 # --- #120 AttentionSchema.decay_only --------------------------------------

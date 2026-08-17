@@ -85,6 +85,31 @@ mood:
   # startup and logs a WARNING naming any dimension that would still be
   # clipped at 1.0 (#161); it does not refuse to start.
   homeostasis_rate: 0.3
+  # Optional embedding-based mood drift (#21). Disabled by default for two
+  # reasons: it costs one extra `provider.embed()` call per cycle, and it
+  # changes the affect trajectory that the recorded golden runs were measured
+  # against. When disabled, mood-relevant content is detected by the lexical
+  # substring lists in `IdentityDocument._MOOD_TRIGGERS`, so a thought whose
+  # affective content shares no vocabulary with those lists moves mood by
+  # nothing at all.
+  #
+  # When enabled, the cycle's thought (plus any perception text) is embedded
+  # once and compared by cosine similarity against the pre-embedded anchor
+  # phrases below. A dimension drifts by `drift_rate * strength`, where
+  # strength ramps linearly from 0 at `threshold` to 1 at a perfect match — so
+  # the equilibrium bound documented above becomes
+  # `initial + strength * drift_rate / homeostasis_rate`, i.e. the lexical
+  # tuning stays a worst case rather than becoming a looser one. Anchor
+  # phrases are embedded once per process, not per cycle. An embed failure
+  # logs a WARNING and falls back to the lexical triggers for that cycle.
+  semantic:
+    enabled: false
+    threshold: 0.45   # cosine similarity below which a dimension does not drift; [0.0, 1.0)
+    # null → the built-in DEFAULT_ANCHORS in core/mood_semantics.py. Override
+    # with a mapping of dimension name to a non-empty list of phrases; every
+    # dimension in `initial` that has no anchors here can only revert toward
+    # its baseline, and startup logs a WARNING naming it.
+    anchors: null
 
 perception:
   # External-stimulus specialist that breaks the closed-loop attractor

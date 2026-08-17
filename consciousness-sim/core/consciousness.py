@@ -26,12 +26,13 @@ import yaml
 
 from core.identity import IdentityDocument
 from core.inner_voice import InnerVoice
+from core.mood_semantics import DEFAULT_ANCHORS, DEFAULT_THRESHOLD, SemanticMoodScorer
 from core.reflection import ReflectionEngine
 from core.thought_loop import ThoughtLoop
 from interfaces.discord.webhook import build_sink_from_config as build_discord_sink
 from llm.circuit_breaker import build_circuit_breaker
 from llm.perception import PerceptionProvider, build_perception_provider
-from llm.provider import build_provider
+from llm.provider import LLMProvider, build_provider
 from memory.consolidator import ConsolidationResult, MemoryConsolidator
 from memory.episodic import EpisodicMemory
 from memory.long_term import DEFAULT_MAX_ROWS, LongTermMemory
@@ -238,7 +239,76 @@ def _validate_mood_config(mood_cfg: Any) -> None:
                 f"(0 disables homeostatic reversion), got {homeostasis_rate!r}"
             )
 
+    _validate_mood_semantic_config(mood_cfg.get("semantic"), initial)
     _warn_on_mood_saturation(initial, float(drift_rate), homeostasis_rate)
+
+
+def _validate_mood_semantic_config(semantic_cfg: Any, initial: dict[str, Any]) -> None:
+    """Raise on a malformed `mood.semantic` block; warn on unanchored dimensions (#21).
+
+    Optional throughout. Absent / null / `enabled: false` → mood drift keeps
+    using the lexical triggers in `IdentityDocument._MOOD_TRIGGERS`, which is
+    the pre-#21 behaviour.
+    """
+    if semantic_cfg is None:
+        return
+    if not isinstance(semantic_cfg, dict):
+        raise ValueError(
+            f"Config 'mood.semantic' must be a mapping or null, got {semantic_cfg!r}"
+        )
+
+    enabled = semantic_cfg.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError(
+            f"Config 'mood.semantic.enabled' must be a boolean, got {enabled!r}"
+        )
+
+    threshold = semantic_cfg.get("threshold")
+    if threshold is not None:
+        # Rejected at 1.0 rather than clamped: the strength ramp divides by
+        # (1 - threshold), so 1.0 is not a stricter setting but an undefined one.
+        if not _is_number(threshold) or not 0.0 <= float(threshold) < 1.0:
+            raise ValueError(
+                f"Config 'mood.semantic.threshold' must be a number in [0.0, 1.0), "
+                f"got {threshold!r}"
+            )
+
+    anchors = semantic_cfg.get("anchors")
+    if anchors is not None:
+        if not isinstance(anchors, dict) or not anchors:
+            raise ValueError(
+                f"Config 'mood.semantic.anchors' must be a non-empty mapping of dimension "
+                f"name to a list of phrases, or null (null = built-in defaults), "
+                f"got {anchors!r}"
+            )
+        for dimension, phrases in anchors.items():
+            if not isinstance(phrases, list) or not phrases:
+                raise ValueError(
+                    f"Config 'mood.semantic.anchors.{dimension}' must be a non-empty list "
+                    f"of phrases, got {phrases!r}"
+                )
+            for phrase in phrases:
+                if not isinstance(phrase, str) or not phrase.strip():
+                    raise ValueError(
+                        f"Config 'mood.semantic.anchors.{dimension}' entries must be "
+                        f"non-empty strings, got {phrase!r}"
+                    )
+
+    if not enabled:
+        return
+
+    anchored = set(anchors) if anchors is not None else set(DEFAULT_ANCHORS)
+    unanchored = sorted(set(initial) - anchored)
+    if unanchored:
+        # Warned, not raised: an unanchored dimension is still reverted toward
+        # its baseline by drift_mood, so the instance runs — it just has a
+        # dimension that no thought can ever push away from that baseline.
+        logging.warning(
+            "Config 'mood.semantic' is enabled but dimension(s) %s in 'mood.initial' have "
+            "no anchor phrases; they will only ever revert toward their baseline. Add them "
+            "to 'mood.semantic.anchors' or drop them from 'mood.initial'.",
+            ", ".join(repr(d) for d in unanchored),
+        )
 
 
 def _warn_on_mood_saturation(
@@ -281,6 +351,26 @@ def _warn_on_mood_saturation(
                 "lower 'mood.drift_rate' or raise 'mood.homeostasis_rate' (see #134).",
                 dimension, equilibrium, float(value), offset,
             )
+
+
+def _build_mood_scorer(
+    mood_cfg: dict[str, Any], provider: LLMProvider
+) -> SemanticMoodScorer | None:
+    """Build a SemanticMoodScorer from `mood.semantic`, or None when disabled (#21).
+
+    Precondition: `_validate_mood_semantic_config` has already run, so any
+    values present here are known well-formed.
+    """
+    semantic_cfg = mood_cfg.get("semantic")
+    if not isinstance(semantic_cfg, dict) or not semantic_cfg.get("enabled", False):
+        return None
+    anchors = semantic_cfg.get("anchors")
+    threshold = semantic_cfg.get("threshold")
+    return SemanticMoodScorer(
+        provider=provider,
+        anchors=anchors if isinstance(anchors, dict) else None,
+        threshold=DEFAULT_THRESHOLD if threshold is None else float(threshold),
+    )
 
 
 _ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -345,6 +435,10 @@ class Consciousness:
             mood={k: float(v) for k, v in self.config["mood"]["initial"].items()},
             initial_mood={k: float(v) for k, v in self.config["mood"]["initial"].items()},
         )
+
+        # Optional embedding-based mood-trigger scorer (#21). Absent /
+        # `enabled: false` → drift_mood keeps using its lexical triggers.
+        self.mood_scorer = _build_mood_scorer(self.config["mood"], self.provider)
 
         self.short_term = ShortTermMemory(capacity=int(mem_cfg["short_term_capacity"]))
         self.episodic = EpisodicMemory(base / "episodic.jsonl")
@@ -474,6 +568,29 @@ class Consciousness:
         every other provider leaves the field None.
         """
         self.health["circuit_state"] = getattr(self.provider, "circuit_state", None)
+
+    async def _score_mood_triggers(self, text: str) -> dict[str, float] | None:
+        """Return embedding-derived mood trigger strengths, or None (#21).
+
+        None means "no semantic scoring for this cycle", which `drift_mood`
+        reads as an instruction to fall back to its lexical triggers. That
+        happens when the feature is disabled, and also when the extra embed
+        call fails: the thought itself has already been generated, so aborting
+        the cycle over an affect-modulation detail would discard real work. The
+        degradation is logged at WARNING rather than swallowed — unlike a
+        provider silently returning deterministic text (#46), nothing here
+        fabricates model output.
+        """
+        if self.mood_scorer is None:
+            return None
+        try:
+            return await self.mood_scorer.score(text)
+        except Exception as exc:
+            logging.warning(
+                "Semantic mood scoring failed (%s); using lexical mood triggers this cycle",
+                exc,
+            )
+            return None
 
     async def _record_failure(self, exc: BaseException, consecutive_failures: int) -> None:
         """Update self.health on a failed thought cycle and emit on_health_change
@@ -713,7 +830,10 @@ class Consciousness:
                 drift_text = cycle.thought
                 if cycle.perception is not None:
                     drift_text = f"{cycle.thought} {cycle.perception.content}"
-                self.identity.drift_mood(drift_text, drift_rate, homeostasis_rate)
+                trigger_strengths = await self._score_mood_triggers(drift_text)
+                self.identity.drift_mood(
+                    drift_text, drift_rate, homeostasis_rate, trigger_strengths
+                )
 
                 if cycle.perception is not None:
                     p = cycle.perception

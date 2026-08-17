@@ -846,3 +846,67 @@ def test_status_for_failures_thresholds() -> None:
     assert _C._status_for_failures(10) == "failing"
     assert _C._status_for_failures(19) == "failing"
     assert _C._status_for_failures(20) == "failing"
+
+
+# ---------------------------------------------------------------------------
+# #21 — semantic mood scoring reaches drift_mood through the run loop
+# ---------------------------------------------------------------------------
+
+
+def _make_mind_with_semantic_mood(tmp_path: Path, monkeypatch) -> Consciousness:
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    cfg = _minimal_config()
+    cfg["mood"]["initial"] = {"melancholy": 0.5}
+    cfg["mood"]["drift_rate"] = 0.1
+    cfg["mood"]["homeostasis_rate"] = 0.0
+    cfg["mood"]["semantic"] = {"enabled": True, "anchors": {"melancholy": ["a sense of loss"]}}
+    cfg_path = tmp_path / "cfg-semantic.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return Consciousness(name="Aria", config_path=str(cfg_path))
+
+
+def _one_cycle(mind: Consciousness, thought: str):
+    """Drive exactly one synthetic cycle producing ``thought``."""
+    from core.thought_loop import ThoughtCycleResult
+
+    async def _cycle(n: int) -> ThoughtCycleResult:
+        mind._stop_event.set()
+        return ThoughtCycleResult(thought=thought, reflection=None, existential=None)
+
+    mind.thought_loop.run_cycle = _cycle
+
+    async def _run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    asyncio.run(_run())
+
+
+def test_run_loop_drifts_mood_from_semantic_score_not_vocabulary(tmp_path, monkeypatch) -> None:
+    """A thought with no melancholy vocabulary still moves melancholy (#21).
+
+    Pre-#21 the same thought produced no drift at all, because none of the
+    `_MOOD_TRIGGERS` substrings appear in it.
+    """
+    mind = _make_mind_with_semantic_mood(tmp_path, monkeypatch)
+    assert mind.mood_scorer is not None
+    mind.mood_scorer.score = AsyncMock(return_value={"melancholy": 1.0})
+
+    thought = "everything she built is gone now"
+    assert not any(t in thought for t in ("loss", "grief", "sad", "alone", "empty"))
+    _one_cycle(mind, thought)
+
+    mind.mood_scorer.score.assert_awaited_once_with(thought)
+    assert mind.identity.mood["melancholy"] == pytest.approx(0.6)
+
+
+def test_run_loop_falls_back_to_lexical_drift_when_scoring_fails(tmp_path, monkeypatch) -> None:
+    """A scorer failure must not cost the cycle its mood update entirely."""
+    mind = _make_mind_with_semantic_mood(tmp_path, monkeypatch)
+    assert mind.mood_scorer is not None
+    mind.mood_scorer.score = AsyncMock(side_effect=RuntimeError("embed exploded"))
+
+    _one_cycle(mind, "a sense of loss settles over the room")
+
+    # Lexical trigger 'loss' fired, so the drift is the pre-#21 full step.
+    assert mind.identity.mood["melancholy"] == pytest.approx(0.6)

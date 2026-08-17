@@ -933,3 +933,189 @@ def test_saturation_warning_default_rate_matches_identity_default() -> None:
         _warn_on_mood_saturation(dict(curiosity=0.7), drift, None)
     assert warn.call_count == 1
 
+
+# ---------------------------------------------------------------------------
+# #21 — optional embedding-based mood drift
+# ---------------------------------------------------------------------------
+
+
+def test_validate_config_accepts_absent_mood_semantic_block() -> None:
+    cfg = _minimal_valid_config()
+    assert "semantic" not in cfg["mood"]
+    _validate_config(cfg)  # optional block — lexical triggers stay in force
+
+
+def test_validate_config_accepts_null_mood_semantic_block() -> None:
+    cfg = _minimal_valid_config()
+    cfg["mood"]["semantic"] = None
+    _validate_config(cfg)
+
+
+def test_validate_config_raises_on_non_mapping_mood_semantic() -> None:
+    cfg = _minimal_valid_config()
+    cfg["mood"]["semantic"] = ["enabled"]
+    with pytest.raises(ValueError, match="mood.semantic"):
+        _validate_config(cfg)
+
+
+def test_validate_config_raises_on_non_boolean_semantic_enabled() -> None:
+    cfg = _minimal_valid_config()
+    cfg["mood"]["semantic"] = {"enabled": "yes"}
+    with pytest.raises(ValueError, match="mood.semantic.enabled"):
+        _validate_config(cfg)
+
+
+def test_validate_config_raises_on_out_of_range_semantic_threshold() -> None:
+    for bad in (1.0, 1.5, -0.1, "high"):
+        cfg = _minimal_valid_config()
+        cfg["mood"]["semantic"] = {"enabled": False, "threshold": bad}
+        with pytest.raises(ValueError, match="mood.semantic.threshold"):
+            _validate_config(cfg)
+
+
+def test_validate_config_raises_on_malformed_semantic_anchors() -> None:
+    malformed = [
+        {},
+        ["curiosity"],
+        {"curiosity": []},
+        {"curiosity": "a phrase"},
+        {"curiosity": [""]},
+        {"curiosity": [3]},
+    ]
+    for bad in malformed:
+        cfg = _minimal_valid_config()
+        cfg["mood"]["semantic"] = {"enabled": False, "anchors": bad}
+        with pytest.raises(ValueError, match="mood.semantic.anchors"):
+            _validate_config(cfg)
+
+
+def test_validate_config_accepts_well_formed_semantic_anchors(caplog) -> None:
+    cfg = _minimal_valid_config()
+    cfg["mood"]["semantic"] = {
+        "enabled": True,
+        "threshold": 0.5,
+        "anchors": {"curiosity": ["an open question"]},
+    }
+    with caplog.at_level(logging.WARNING):
+        _validate_config(cfg)
+    assert caplog.text == ""
+
+
+def test_validate_config_warns_when_an_enabled_dimension_has_no_anchors(caplog) -> None:
+    """An unanchored dimension can only revert — surfaced, not silently ignored."""
+    cfg = _minimal_valid_config()
+    cfg["mood"]["initial"] = {"curiosity": 0.5, "resolve": 0.5}
+    cfg["mood"]["semantic"] = {"enabled": True, "anchors": {"curiosity": ["an open question"]}}
+    with caplog.at_level(logging.WARNING):
+        _validate_config(cfg)
+    assert "resolve" in caplog.text
+    assert "curiosity" not in caplog.text
+
+
+def test_validate_config_does_not_warn_about_unanchored_dimensions_when_disabled(caplog) -> None:
+    cfg = _minimal_valid_config()
+    cfg["mood"]["initial"] = {"curiosity": 0.5, "resolve": 0.5}
+    cfg["mood"]["semantic"] = {"enabled": False, "anchors": {"curiosity": ["an open question"]}}
+    with caplog.at_level(logging.WARNING):
+        _validate_config(cfg)
+    assert caplog.text == ""
+
+
+def test_validate_config_checks_default_anchors_when_anchors_are_null(caplog) -> None:
+    """anchors: null means the built-in DEFAULT_ANCHORS, not 'no anchors'."""
+    from core.mood_semantics import DEFAULT_ANCHORS
+
+    cfg = _minimal_valid_config()
+    cfg["mood"]["initial"] = {k: 0.5 for k in DEFAULT_ANCHORS}
+    cfg["mood"]["semantic"] = {"enabled": True, "anchors": None}
+    with caplog.at_level(logging.WARNING):
+        _validate_config(cfg)
+    assert caplog.text == ""
+
+
+def _config_with_mood_semantic(tmp_path, semantic) -> Path:
+    cfg = _minimal_valid_config()
+    if semantic is not None:
+        cfg["mood"]["semantic"] = semantic
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return path
+
+
+def test_mood_scorer_is_absent_when_semantic_is_disabled(tmp_path, monkeypatch) -> None:
+    from core.consciousness import Consciousness
+
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    for semantic in (None, {"enabled": False}):
+        path = _config_with_mood_semantic(tmp_path, semantic)
+        mind = Consciousness(name="Aria", config_path=str(path))
+        assert mind.mood_scorer is None
+
+
+def test_mood_scorer_is_built_from_config_when_enabled(tmp_path, monkeypatch) -> None:
+    from core.consciousness import Consciousness
+    from core.mood_semantics import SemanticMoodScorer
+
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    path = _config_with_mood_semantic(
+        tmp_path,
+        {"enabled": True, "threshold": 0.6, "anchors": {"curiosity": ["an open question"]}},
+    )
+    mind = Consciousness(name="Aria", config_path=str(path))
+    assert isinstance(mind.mood_scorer, SemanticMoodScorer)
+    assert mind.mood_scorer.threshold == 0.6
+    assert mind.mood_scorer.anchors == {"curiosity": ("an open question",)}
+    # The scorer must embed through the same provider the rest of the run uses,
+    # so it inherits the embed cache (#113) and circuit breaker (#114).
+    assert mind.mood_scorer._provider is mind.provider
+
+
+def test_mood_scorer_defaults_threshold_and_anchors_when_omitted(tmp_path, monkeypatch) -> None:
+    from core.consciousness import Consciousness
+    from core.mood_semantics import DEFAULT_ANCHORS, DEFAULT_THRESHOLD
+
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    path = _config_with_mood_semantic(tmp_path, {"enabled": True})
+    mind = Consciousness(name="Aria", config_path=str(path))
+    assert mind.mood_scorer is not None
+    assert mind.mood_scorer.threshold == DEFAULT_THRESHOLD
+    assert set(mind.mood_scorer.anchors) == set(DEFAULT_ANCHORS)
+
+
+def test_score_mood_triggers_returns_none_without_a_scorer(tmp_path, monkeypatch) -> None:
+    from core.consciousness import Consciousness
+
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    path = _config_with_mood_semantic(tmp_path, None)
+    mind = Consciousness(name="Aria", config_path=str(path))
+    assert asyncio.run(mind._score_mood_triggers("a thought")) is None
+
+
+def test_score_mood_triggers_falls_back_to_lexical_on_embed_failure(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    """An embed failure degrades to lexical triggers, loudly — the thought
+    itself has already been generated, so the cycle is not discarded."""
+    from core.consciousness import Consciousness
+
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    path = _config_with_mood_semantic(tmp_path, {"enabled": True})
+    mind = Consciousness(name="Aria", config_path=str(path))
+    assert mind.mood_scorer is not None
+    mind.mood_scorer.score = AsyncMock(side_effect=RuntimeError("embed exploded"))
+    with caplog.at_level(logging.WARNING):
+        assert asyncio.run(mind._score_mood_triggers("a thought")) is None
+    assert "embed exploded" in caplog.text
+    assert "lexical mood triggers" in caplog.text
+
+
+def test_score_mood_triggers_returns_the_scorer_output(tmp_path, monkeypatch) -> None:
+    from core.consciousness import Consciousness
+
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    path = _config_with_mood_semantic(tmp_path, {"enabled": True})
+    mind = Consciousness(name="Aria", config_path=str(path))
+    assert mind.mood_scorer is not None
+    mind.mood_scorer.score = AsyncMock(return_value={"curiosity": 0.5})
+    assert asyncio.run(mind._score_mood_triggers("a thought")) == {"curiosity": 0.5}
+

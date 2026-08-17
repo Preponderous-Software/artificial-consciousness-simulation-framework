@@ -5,7 +5,8 @@ is the system's self-model, combining a static anchor (name, values, purpose)
 with a dynamic self-concept updated by reflection. Partially implements
 AST (self-model enabling self-attribution) and HOT-1 (generative top-down
 self-representation). Mood drift partially implements AE-1 (affect-modulated
-agency).
+agency); its per-dimension trigger strengths are lexical by default and may be
+supplied instead by `core/mood_semantics.SemanticMoodScorer` (#21).
 AttentionSchema advances AST-1: a dynamic data structure representing current
 focus and salience, updated every cycle and fed back into the identity anchor
 prompt. Gap: focus is derived from event type, not a learned allocation model;
@@ -186,22 +187,44 @@ class IdentityDocument:
         text: str,
         drift_rate: float,
         homeostasis_rate: float | None = None,
+        trigger_strengths: dict[str, float] | None = None,
     ) -> None:
         """Update mood by combining trigger-driven drift with homeostatic reversion.
 
         Both terms apply every cycle (#119): a triggered trait gets
-        ``+drift_rate`` *and* a reversion of ``(baseline - current) *
+        ``+drift_rate * strength`` *and* a reversion of ``(baseline - current) *
         homeostasis_rate``. The equilibrium for a continuously-triggered
-        trait is ``baseline + drift_rate / homeostasis_rate`` (clipped to
-        [0, 1]), so saturation at 1.0 only happens when the bias is large
-        enough to overwhelm the homeostatic pull.
+        trait is ``baseline + strength * drift_rate / homeostasis_rate``
+        (clipped to [0, 1]), so saturation at 1.0 only happens when the bias is
+        large enough to overwhelm the homeostatic pull.
+
+        ``trigger_strengths`` (#21) supplies per-dimension strengths in [0, 1]
+        computed elsewhere — see ``core/mood_semantics.SemanticMoodScorer``,
+        which derives them from embedding similarity instead of the lexical
+        substring match in ``_MOOD_TRIGGERS``. When it is None the lexical
+        triggers run and every match contributes a strength of exactly 1.0,
+        which is the pre-#21 behaviour. When it is supplied, ``text`` is not
+        inspected at all, and the dimension set is the union of the supplied
+        keys with the dimensions already present in ``mood`` — so a configured
+        dimension with no anchors of its own still receives its homeostatic
+        reversion rather than freezing at its current value.
         """
         rate = self._DEFAULT_HOMEOSTASIS_RATE if homeostasis_rate is None else homeostasis_rate
-        lowered = text.lower()
-        for key, triggers in self._MOOD_TRIGGERS.items():
+        if trigger_strengths is None:
+            lowered = text.lower()
+            strengths = {
+                key: (1.0 if any(t in lowered for t in triggers) else 0.0)
+                for key, triggers in self._MOOD_TRIGGERS.items()
+            }
+        else:
+            keys = list(dict.fromkeys([*trigger_strengths, *self.mood]))
+            strengths = {
+                key: min(1.0, max(0.0, float(trigger_strengths.get(key, 0.0)))) for key in keys
+            }
+        for key, strength in strengths.items():
             current = self.mood.get(key, 0.5)
             baseline = self.initial_mood.get(key, current)
-            trigger_delta = drift_rate if any(t in lowered for t in triggers) else 0.0
+            trigger_delta = drift_rate * strength
             reversion_delta = (baseline - current) * rate
             self.mood[key] = float(min(1.0, max(0.0, current + trigger_delta + reversion_delta)))
 
