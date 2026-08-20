@@ -59,10 +59,12 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _check_point(dotted: str, actual: Any, exp_value: float, epsilon: float) -> str | None:
+def _check_point(dotted: str, actual: Any, exp_value: Any, epsilon: float) -> str | None:
+    # `exp_value` is rendered rather than the float it is compared as, so an
+    # integer pin still reports as `4` and not `4.0`.
     if not _is_number(actual):
         return f"{dotted}: expected numeric {exp_value!r}, got {actual!r}"
-    delta = float(actual) - exp_value
+    delta = float(actual) - float(exp_value)
     if abs(delta) > epsilon:
         return f"{dotted}: expected {exp_value!r}, got {actual!r} (delta={delta:.6g})"
     return None
@@ -116,7 +118,7 @@ def check_smoke_regression(
         if isinstance(exp_value, dict):
             failure = _check_range(dotted, actual, exp_value, epsilon)
         elif _is_number(exp_value):
-            failure = _check_point(dotted, actual, float(exp_value), epsilon)
+            failure = _check_point(dotted, actual, exp_value, epsilon)
         elif actual != exp_value:
             failure = f"{dotted}: expected {exp_value!r}, got {actual!r}"
         else:

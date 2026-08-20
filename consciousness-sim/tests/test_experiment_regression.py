@@ -1,6 +1,8 @@
 """Unit tests for experiments/regression.py (#87, range pins added in #173).
 
-Pure function over two dicts. No subprocesses, no network, no filesystem.
+Pure function over two dicts. No subprocesses and no network; the only
+filesystem read is the shipped golden snapshot itself, which the last four
+tests assert against directly.
 """
 
 from __future__ import annotations
@@ -90,6 +92,9 @@ def test_integer_dimension_count_mismatch_is_reported() -> None:
 
     assert len(failures) == 1
     assert "mood.dimensions_non_degenerate" in failures[0]
+    # An integer pin renders as `4`, not `4.0` — the comparison widens to float
+    # but the message reports the pin as written.
+    assert "expected 4," in failures[0]
 
 
 def test_multiple_failures_are_all_reported() -> None:
