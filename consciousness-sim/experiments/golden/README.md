@@ -26,8 +26,14 @@ for the original narrative analyses these journals support.
   metrics snapshot for `experiments/manifests/mock-smoke-baseline.yaml`, used by
   `scripts/experiment.py check-smoke` (`experiments/regression.py`) as a CI
   regression gate (#87). Distinct from the four runs above: it isn't a full
-  journal/state pair, just a handful of ratio/equilibrium metric values that
-  MockProvider's deterministic output holds constant across runs.
+  journal/state pair, just a handful of metric values that MockProvider's
+  deterministic output makes predictable across runs. Each entry is either a
+  **point pin** (a bare number, matched within `1e-6`) or a **range pin** (an
+  object carrying `min` and/or `max`, plus an optional `note` since JSON has no
+  comments). Range pins exist for metrics that only approach a stable value
+  asymptotically — `mood.final.curiosity` climbs toward its equilibrium and
+  never reaches it in finitely many cycles, so a point pin at that equilibrium
+  passed on fast CI runners and failed on slower hosts (#173).
 
 `episodic.jsonl` is intentionally excluded — the metrics functions don't read it
 and including it ~doubles the size of this directory.
