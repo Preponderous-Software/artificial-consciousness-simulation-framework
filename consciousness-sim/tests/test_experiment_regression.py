@@ -10,7 +10,9 @@ from pathlib import Path
 
 from experiments.regression import check_smoke_regression
 
-GOLDEN_SNAPSHOT = Path(__file__).resolve().parents[1] / "experiments" / "golden" / "_smoke_expected.json"
+GOLDEN_SNAPSHOT = (
+    Path(__file__).resolve().parents[1] / "experiments" / "golden" / "_smoke_expected.json"
+)
 
 # Equilibrium of the continuously-triggered curiosity dimension:
 # initial + drift_rate / homeostasis_rate = 0.7 + 0.05 / 0.3 (#173).
