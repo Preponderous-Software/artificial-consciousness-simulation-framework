@@ -1,6 +1,10 @@
 {
   "vocabulary.top_word_density_per_thought": 2.0,
-  "mood.final.curiosity": 0.8666666666666667,
+  "mood.final.curiosity": {
+    "min": 0.8470585,
+    "max": 0.8666666666666667,
+    "note": "Range pin, not a point pin (#173). MockProvider's text always contains the configured value 'curiosity', so the curiosity trigger fires on every cycle and the dimension climbs geometrically from its 0.7 baseline toward the equilibrium initial + drift_rate/homeostasis_rate = 0.7 + 0.05/0.3 = 0.8666..., which it reaches only asymptotically. max is that equilibrium; min is the value after exactly six triggered cycles, which is the floor the manifest's own 'event_counts.thought >= 6' criterion guarantees. A run that completes hundreds of cycles lands at the top of the band; a slow host that completes seven lands near the bottom. Both are correct."
+  },
   "mood.final.wonder": 0.6,
   "mood.final.melancholy": 0.2,
   "mood.final.contentment": 0.5,
