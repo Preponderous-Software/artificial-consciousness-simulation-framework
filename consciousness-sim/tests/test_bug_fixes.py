@@ -388,6 +388,73 @@ def test_journal_returns_empty_when_all_lines_corrupted(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Issue #175 — a line that is valid JSON but not a JSON object is corruption
+# too: dict()/**splat coercion raises on it, so it must be skipped, not
+# propagated. Guards the "JSONL readers skip corrupted lines" invariant.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad_line", ["123", '"a bare string"', "[1, 2]", "null", "true"])
+def test_journal_skips_non_object_lines(tmp_path, caplog, bad_line) -> None:
+    path = tmp_path / "journal.jsonl"
+    before = json.dumps({"timestamp": "2026-01-01T00:00:00+00:00", "type": "thought", "content": "before"})
+    after = json.dumps({"timestamp": "2026-01-01T00:00:01+00:00", "type": "thought", "content": "after"})
+    path.write_text(f"{before}\n{bad_line}\n{after}\n", encoding="utf-8")
+
+    journal = Journal(path)
+
+    with caplog.at_level(logging.WARNING):
+        entries = asyncio.run(journal.recent())
+
+    assert [e["content"] for e in entries] == ["before", "after"]
+    assert any("non-object" in r.message.lower() for r in caplog.records)
+
+
+def test_journal_does_not_coerce_string_pair_array_into_an_event(tmp_path) -> None:
+    """dict(["ab", "cd"]) succeeds and yields {"a": "b", "c": "d"} — a silent
+    corruption that produced a bogus event rather than skipping the line."""
+    path = tmp_path / "journal.jsonl"
+    good = json.dumps({"timestamp": "2026-01-01T00:00:00+00:00", "type": "thought", "content": "kept"})
+    path.write_text(good + '\n["ab", "cd"]\n', encoding="utf-8")
+
+    journal = Journal(path)
+    entries = asyncio.run(journal.recent())
+
+    assert [e["content"] for e in entries] == ["kept"]
+
+
+@pytest.mark.parametrize("bad_line", ["123", '"a bare string"', "[1, 2]", "null"])
+def test_episodic_skips_non_object_lines(tmp_path, caplog, bad_line) -> None:
+    path = tmp_path / "episodic.jsonl"
+    before = json.dumps({"timestamp": "2026-01-01T00:00:00+00:00", "kind": "thought", "content": "before"})
+    after = json.dumps({"timestamp": "2026-01-01T00:00:01+00:00", "kind": "thought", "content": "after"})
+    path.write_text(f"{before}\n{bad_line}\n{after}\n", encoding="utf-8")
+
+    mem = EpisodicMemory(path)
+
+    with caplog.at_level(logging.WARNING):
+        events = asyncio.run(mem.recent())
+
+    assert [e.content for e in events] == ["before", "after"]
+    assert any("non-object" in r.message.lower() for r in caplog.records)
+
+
+def test_episodic_skips_object_lines_with_wrong_schema(tmp_path, caplog) -> None:
+    """An object whose keys do not match EpisodicEvent raises TypeError from the
+    constructor — also corruption, and also skipped rather than propagated."""
+    path = tmp_path / "episodic.jsonl"
+    good = json.dumps({"timestamp": "2026-01-01T00:00:00+00:00", "kind": "thought", "content": "kept"})
+    path.write_text(good + '\n{"unexpected": "shape"}\n', encoding="utf-8")
+
+    mem = EpisodicMemory(path)
+
+    with caplog.at_level(logging.WARNING):
+        events = asyncio.run(mem.recent())
+
+    assert [e.content for e in events] == ["kept"]
+    assert any("malformed" in r.message.lower() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
 # Journal.recent() — bounded memory + correct tail semantics (#108)
 # ---------------------------------------------------------------------------
 

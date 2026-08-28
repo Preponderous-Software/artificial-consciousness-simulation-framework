@@ -113,6 +113,23 @@ def test_sample_thoughts_handles_short_journal(tmp_path: Path) -> None:
     assert samples == ["one", "two"]
 
 
+@pytest.mark.parametrize("bad_line", ["123", '"a bare string"', "[1, 2]", "null"])
+def test_sample_thoughts_skips_non_object_lines(tmp_path: Path, bad_line: str) -> None:
+    """A line that parses but is not an object has no .get() — skipping it keeps
+    one bad line from aborting a diff of an archived run (#175)."""
+    rd = tmp_path / "corrupt"
+    rd.mkdir()
+    (rd / "journal.jsonl").write_text(
+        '{"timestamp": "2026-01-01T00:00:00+00:00", "type": "thought", "content": "one"}\n'
+        f"{bad_line}\n"
+        '{"timestamp": "2026-01-01T00:01:00+00:00", "type": "thought", "content": "two"}\n'
+    )
+    (rd / "state.json").write_text('{"identity": {"mood": {}}, "thought_count": 2}')
+    (rd / "metrics.json").write_text('{"event_counts": {"thought": 2}}')
+    run = load_run(rd)
+    assert sample_thoughts(run, k=5) == ["one", "two"]
+
+
 # ---------------------------------------------------------------------------
 # render_comparison — produces the expected markdown sections
 # ---------------------------------------------------------------------------

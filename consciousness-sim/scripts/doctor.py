@@ -86,6 +86,11 @@ def _last_journal_timestamp(journal_path: Path) -> str | None:
                     row = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                # Valid JSON that is not an object has no .get(). Skipping it
+                # keeps the survey running on the instance most likely to be
+                # unhealthy, which is exactly the one doctor exists to report.
+                if not isinstance(row, dict):
+                    continue
                 ts = row.get("timestamp")
                 if isinstance(ts, str):
                     last = ts

@@ -30,6 +30,7 @@ from experiments.metrics import (
     cycle_rate_trajectory,
     event_type_counts,
     identity_shifts_per_reflection,
+    load_journal,
     mood_collapse_score,
     mood_dimensions_non_degenerate,
     perception_influence_rate,
@@ -395,3 +396,26 @@ def test_golden_top_word_density_ordering() -> None:
     assert rafael > sage > 0.85, f"Rafael={rafael} should exceed Sage={sage}"
     assert echo < sage, f"Echo={echo} should be below Sage={sage}"
     assert wren < sage, f"Wren={wren} should be below Sage={sage}"
+
+
+# ---------------------------------------------------------------------------
+# load_journal — non-object lines are corruption (#175)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad_line", ["123", '"a bare string"', "[1, 2]", "null", "true"])
+def test_load_journal_skips_non_object_lines(tmp_path: Path, bad_line: str) -> None:
+    """A line that parses but is not an object has no .get(), so leaving it in
+    the event list made every downstream metric raise AttributeError."""
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text(
+        '{"timestamp": "2026-01-01T00:00:00+00:00", "type": "thought", "content": "kept"}\n'
+        f"{bad_line}\n"
+        '{"timestamp": "2026-01-01T00:00:01+00:00", "type": "reflection", "content": "also kept"}\n',
+        encoding="utf-8",
+    )
+
+    events = load_journal(journal)
+
+    assert [e["content"] for e in events] == ["kept", "also kept"]
+    # The metrics that consume load_journal must survive the same file.
+    assert event_type_counts(events) == {"thought": 1, "reflection": 1}

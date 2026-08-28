@@ -16,6 +16,7 @@ from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(slots=True)
@@ -78,9 +79,22 @@ class EpisodicMemory:
                     if not line:
                         continue
                     try:
-                        rows.append(EpisodicEvent(**json.loads(line)))
+                        payload = json.loads(line)
                     except json.JSONDecodeError:
                         logging.warning("EpisodicMemory: skipping corrupted line: %r", line)
+                        continue
+                    # A bare scalar or array parses cleanly but cannot be
+                    # splatted into EpisodicEvent, and an object with the wrong
+                    # keys raises TypeError from the constructor — both are
+                    # corruption and are skipped rather than propagated.
+                    if not isinstance(payload, dict):
+                        logging.warning("EpisodicMemory: skipping non-object line: %r", line)
+                        continue
+                    fields: dict[str, Any] = payload
+                    try:
+                        rows.append(EpisodicEvent(**fields))
+                    except TypeError:
+                        logging.warning("EpisodicMemory: skipping malformed line: %r", line)
             return list(rows)
 
         self._cache = await asyncio.to_thread(_read)

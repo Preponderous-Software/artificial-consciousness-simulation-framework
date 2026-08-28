@@ -50,10 +50,16 @@ def load_journal(journal_path: Path) -> list[dict[str, Any]]:
             if not line:
                 continue
             try:
-                events.append(json.loads(line))
+                payload = json.loads(line)
             except json.JSONDecodeError:
                 # Match the runtime's "skip corrupted lines" invariant.
                 continue
+            # A bare scalar or array parses cleanly but has no .get(), so every
+            # downstream metric would raise AttributeError on it. Skipping keeps
+            # the same invariant for lines that are valid JSON but not events.
+            if not isinstance(payload, dict):
+                continue
+            events.append(payload)
     return events
 
 

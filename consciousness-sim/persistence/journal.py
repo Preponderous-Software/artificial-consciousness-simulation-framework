@@ -62,9 +62,19 @@ class Journal:
                     if not line:
                         continue
                     try:
-                        rows.append(dict(json.loads(line)))
+                        payload = json.loads(line)
                     except json.JSONDecodeError:
                         logging.warning("Journal: skipping corrupted line: %r", line)
+                        continue
+                    # A bare scalar or array parses cleanly but is not an event.
+                    # dict() would raise on it (or, for a list of two-character
+                    # strings, silently coerce into a bogus event), so the shape
+                    # is checked explicitly — same guard as journal_tail.py.
+                    if not isinstance(payload, dict):
+                        logging.warning("Journal: skipping non-object line: %r", line)
+                        continue
+                    event: dict[str, str] = payload
+                    rows.append(event)
             return list(rows)
 
         return await asyncio.to_thread(_read)

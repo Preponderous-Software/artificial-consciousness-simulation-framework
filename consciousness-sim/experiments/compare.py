@@ -177,6 +177,10 @@ def sample_thoughts(run: RunRef, k: int = 3) -> list[str]:
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            # Valid JSON that is not an object has no .get() — skip it rather
+            # than raise, so one bad line cannot abort a recorded-run diff.
+            if not isinstance(event, dict):
+                continue
             if event.get("type") == "thought":
                 thoughts.append(event.get("content", ""))
     n = len(thoughts)
