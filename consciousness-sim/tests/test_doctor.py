@@ -254,3 +254,26 @@ def test_prune_respects_declined_confirmation(tmp_path, monkeypatch) -> None:
 
     assert pruned == []
     assert (orphan_dir / "pid").exists()
+
+
+# --- journal scan: non-object lines are corruption (#175) ------------------
+
+
+def test_collect_instances_survives_non_object_journal_lines(tmp_path) -> None:
+    """A line that parses but is not an object has no .get(). Doctor's whole
+    purpose is reporting on unhealthy instances, so it must skip such a line
+    rather than crash on the instance most likely to have one."""
+    root = tmp_path
+    agent_dir = root / "Corrupt"
+    agent_dir.mkdir()
+    _write_state(agent_dir, name="Corrupt", thought_count=7)
+    good = json.dumps({"timestamp": "2026-07-27T00:00:00+00:00", "type": "thought", "content": "hello"})
+    (agent_dir / "journal.jsonl").write_text(
+        f"{good}\n123\n[1, 2]\nnull\n\"a bare string\"\nNOT JSON\n",
+        encoding="utf-8",
+    )
+
+    instances = {i.name: i for i in collect_instances(root)}
+
+    assert instances["Corrupt"].thought_count == 7
+    assert instances["Corrupt"].last_cycle == "2026-07-27T00:00:00+00:00"
