@@ -6,6 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from core.consciousness import Consciousness
@@ -107,6 +108,46 @@ def test_state_manager_load_recovers_from_corrupt_file(tmp_path, monkeypatch) ->
         corrupt_path = sm.path.with_suffix(".json.corrupt")
         assert corrupt_path.exists(), "corrupt file should be preserved for inspection"
         assert not sm.path.exists(), "original corrupt path should be gone"
+
+    asyncio.run(_run())
+
+
+@pytest.mark.parametrize("document", ["[1, 2]", "123", '"a bare string"', "null", "true", "[]"])
+def test_state_manager_load_quarantines_non_object_document(tmp_path, monkeypatch, document) -> None:
+    """A state.json whose top level is an array, scalar, or null parses cleanly
+    but is not a snapshot. It must take the same quarantine path as undecodable
+    JSON — otherwise dict() coercion raises before the rename and every
+    subsequent start fails on the same file (#176)."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+
+    async def _run() -> None:
+        sm = StateManager("Aria")
+        sm.path.write_text(document, encoding="utf-8")
+
+        result = await sm.load()
+
+        assert result is None
+        assert sm.path.with_suffix(".json.corrupt").exists(), (
+            "non-object document should be quarantined for inspection"
+        )
+        assert not sm.path.exists(), "original bad path should be gone"
+
+    asyncio.run(_run())
+
+
+def test_state_manager_load_survives_a_restart_after_a_non_object_document(
+    tmp_path, monkeypatch
+) -> None:
+    """The point of the quarantine: the *second* start finds no state.json and
+    begins fresh, rather than tripping over the same file forever (#176)."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+
+    async def _run() -> None:
+        sm = StateManager("Aria")
+        sm.path.write_text("[1, 2]", encoding="utf-8")
+        assert await sm.load() is None
+        # Second process, same directory.
+        assert await StateManager("Aria").load() is None
 
     asyncio.run(_run())
 

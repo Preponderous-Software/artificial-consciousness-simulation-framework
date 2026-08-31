@@ -64,7 +64,18 @@ def load_journal(journal_path: Path) -> list[dict[str, Any]]:
 
 
 def load_state(state_path: Path) -> dict[str, Any]:
-    state: dict[str, Any] = json.loads(Path(state_path).read_text(encoding="utf-8"))
+    parsed = json.loads(Path(state_path).read_text(encoding="utf-8"))
+    # The annotation promises a mapping, and every consumer calls .get() on it.
+    # A top-level array/scalar/null parses cleanly, so without this check the
+    # failure surfaces as an AttributeError inside a metric function far from
+    # the file that caused it. json.JSONDecodeError already propagates from the
+    # line above, so a non-object document is reported the same way rather than
+    # being coerced into an empty mapping that would fabricate zeroed metrics.
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            f"{state_path}: expected a JSON object, got {type(parsed).__name__}"
+        )
+    state: dict[str, Any] = parsed
     return state
 
 

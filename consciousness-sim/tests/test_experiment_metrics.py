@@ -31,6 +31,7 @@ from experiments.metrics import (
     event_type_counts,
     identity_shifts_per_reflection,
     load_journal,
+    load_state,
     mood_collapse_score,
     mood_dimensions_non_degenerate,
     perception_influence_rate,
@@ -419,3 +420,26 @@ def test_load_journal_skips_non_object_lines(tmp_path: Path, bad_line: str) -> N
     assert [e["content"] for e in events] == ["kept", "also kept"]
     # The metrics that consume load_journal must survive the same file.
     assert event_type_counts(events) == {"thought": 1, "reflection": 1}
+
+
+# ---------------------------------------------------------------------------
+# load_state — a non-object document is reported, not coerced (#176)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("document", ["[1, 2]", "123", '"a bare string"', "null", "true"])
+def test_load_state_rejects_non_object_document(tmp_path: Path, document: str) -> None:
+    """The return annotation promises a mapping and every consumer calls .get()
+    on it. Reporting the offending path here beats an AttributeError raised
+    inside a metric function far from the file that caused it."""
+    state_path = tmp_path / "state.json"
+    state_path.write_text(document, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="expected a JSON object"):
+        load_state(state_path)
+
+
+def test_load_state_returns_the_mapping_for_a_valid_document(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text('{"thought_count": 3, "identity": {"mood": {}}}', encoding="utf-8")
+
+    assert load_state(state_path)["thought_count"] == 3

@@ -137,6 +137,23 @@ def test_instances_skips_directories_without_state_json(client, consciousness_ho
     assert c.get("/instances").json() == []
 
 
+@pytest.mark.parametrize("document", ["[1, 2]", "123", '"a bare string"', "null", "true"])
+def test_instances_skips_non_object_state_json(client, consciousness_home, document):
+    """A top-level array/scalar/null parses cleanly but has no .get(), so one
+    such file made the whole listing 500 instead of hiding the one unreadable
+    instance — the same degradation an undecodable state.json already gets."""
+    c, _ = client
+    _seed_instance(consciousness_home, "Healthy")
+    bad = consciousness_home / "BadState"
+    bad.mkdir()
+    (bad / "state.json").write_text(document)
+
+    r = c.get("/instances")
+
+    assert r.status_code == 200
+    assert {i["id"] for i in r.json()} == {"Healthy"}
+
+
 def test_instances_skips_dot_archive_directory(client, consciousness_home):
     """`.archive` shouldn't appear in the listing — it's a dot-dir."""
     c, _ = client

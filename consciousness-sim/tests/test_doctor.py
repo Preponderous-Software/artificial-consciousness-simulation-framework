@@ -15,6 +15,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 # Make scripts/ importable the same way spawn.py's tests do.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
@@ -277,3 +279,30 @@ def test_collect_instances_survives_non_object_journal_lines(tmp_path) -> None:
 
     assert instances["Corrupt"].thought_count == 7
     assert instances["Corrupt"].last_cycle == "2026-07-27T00:00:00+00:00"
+
+
+# --- state.json scan: non-object documents are corruption (#176) -----------
+
+
+@pytest.mark.parametrize("document", ["[1, 2]", "123", '"a bare string"', "null", "true"])
+def test_collect_instances_survives_non_object_state_json(tmp_path, document) -> None:
+    """dict() raises on a top-level array/scalar/null, and neither TypeError nor
+    ValueError is in _read_state's guarded tuple — so one such file aborted the
+    whole survey instead of reporting the instance with an unreadable snapshot."""
+    root = tmp_path
+    healthy_dir = root / "Healthy"
+    healthy_dir.mkdir()
+    _write_state(healthy_dir, name="Healthy", thought_count=4)
+
+    bad_dir = root / "BadState"
+    bad_dir.mkdir()
+    (bad_dir / "state.json").write_text(document, encoding="utf-8")
+
+    instances = {i.name: i for i in collect_instances(root)}
+
+    assert instances["Healthy"].thought_count == 4
+    # The unreadable instance is still reported, with the same placeholders a
+    # missing state.json produces.
+    assert instances["BadState"].thought_count == "—"
+    assert instances["BadState"].display_name == "BadState"
+    assert instances["BadState"].health == "—"
