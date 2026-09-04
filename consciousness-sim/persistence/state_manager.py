@@ -54,16 +54,28 @@ class StateManager:
                 # so by the time we get here for the except branch the handle is
                 # already closed — rename() must happen after that: Windows raises
                 # PermissionError when renaming a file that is still open.
-                try:
-                    return dict(json.loads(self.path.read_text(encoding="utf-8")))
-                except json.JSONDecodeError as exc:
+                def _quarantine(reason: str) -> None:
                     logger.warning(
                         "state.json is corrupt (%s) — starting fresh; "
                         "corrupt file moved to %s.corrupt",
-                        exc,
+                        reason,
                         self.path,
                     )
                     self.path.rename(self.path.with_suffix(".json.corrupt"))
+
+                try:
+                    parsed = json.loads(self.path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError as exc:
+                    _quarantine(str(exc))
                     return None
+                # A document whose top level is an array, scalar, or null parses
+                # cleanly but is not a state snapshot: dict() coercion raises on
+                # it, which would escape before the quarantine above and leave
+                # the bad file in place for every subsequent start to trip over.
+                if not isinstance(parsed, dict):
+                    _quarantine(f"top level is {type(parsed).__name__}, not an object")
+                    return None
+                state: dict[str, Any] = parsed
+                return state
 
             return await asyncio.to_thread(_read)

@@ -66,9 +66,16 @@ def _read_state(state_path: Path) -> dict[str, Any] | None:
     if not state_path.exists():
         return None
     try:
-        return dict(json.loads(state_path.read_text(encoding="utf-8")))
+        parsed = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    # Valid JSON that is not an object is corruption too, and dict() raises on
+    # it. Doctor's whole purpose is surveying unhealthy instances, so report the
+    # instance with an unreadable snapshot rather than aborting the survey.
+    if not isinstance(parsed, dict):
+        return None
+    state: dict[str, Any] = parsed
+    return state
 
 
 def _last_journal_timestamp(journal_path: Path) -> str | None:

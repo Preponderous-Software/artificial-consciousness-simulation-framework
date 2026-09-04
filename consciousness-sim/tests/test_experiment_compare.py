@@ -50,6 +50,25 @@ def test_load_run_raises_on_nonexistent(tmp_path: Path) -> None:
         load_run(tmp_path / "definitely-not-there")
 
 
+@pytest.mark.parametrize("artifact", ["metrics.json", "state.json"])
+@pytest.mark.parametrize("document", ["[1, 2]", "123", "null"])
+def test_load_run_reports_a_non_object_artifact(tmp_path: Path, artifact: str, document: str) -> None:
+    """A missing artifact already yields {}; one whose top level is an array,
+    scalar, or null is a different condition — the file exists and is wrong, so
+    name it rather than rendering a run with no mood and no metrics (#176)."""
+    rd = tmp_path / "run"
+    rd.mkdir()
+    (rd / "journal.jsonl").write_text(
+        '{"timestamp": "2026-01-01T00:00:00+00:00", "type": "thought", "content": "one"}\n'
+    )
+    (rd / "state.json").write_text('{"identity": {"mood": {}}, "thought_count": 1}')
+    (rd / "metrics.json").write_text('{"event_counts": {"thought": 1}}')
+    (rd / artifact).write_text(document)
+
+    with pytest.raises(ValueError, match="expected a JSON object"):
+        load_run(rd)
+
+
 # ---------------------------------------------------------------------------
 # compute_diff — the headline math against the golden Rafael / Echo pair
 # ---------------------------------------------------------------------------

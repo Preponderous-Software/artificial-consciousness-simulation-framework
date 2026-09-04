@@ -191,6 +191,12 @@ async def list_instances() -> list[dict[str, Any]]:
             state = json.loads(state_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
+        # A top-level array/scalar/null parses cleanly but has no .get(), so it
+        # is corruption for this reader's purposes — skip the instance the same
+        # way an undecodable snapshot is skipped rather than failing the listing
+        # for every other instance.
+        if not isinstance(state, dict):
+            continue
 
         identity = state.get("identity", {})
         dir_name = d.name

@@ -98,8 +98,17 @@ def _consciousness_dir(name: str) -> Path:
 
 def _read_thought_count(state_path: Path) -> int:
     try:
-        return int(json.loads(state_path.read_text())["thought_count"])
-    except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+        state = json.loads(state_path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return 0
+    # Subscripting a top-level array/scalar/null raises TypeError, which the
+    # guard below deliberately does not catch — treat a non-object document as
+    # "no recorded count" rather than aborting the run's bookkeeping.
+    if not isinstance(state, dict):
+        return 0
+    try:
+        return int(state["thought_count"])
+    except (KeyError, TypeError, ValueError):
         return 0
 
 

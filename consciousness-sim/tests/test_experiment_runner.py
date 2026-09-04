@@ -14,6 +14,7 @@ import yaml
 
 from experiments.manifest import ExperimentManifest
 from experiments.runner import (
+    _read_thought_count,
     run_experiment,
     run_experiment_replicated,
     start_detached,
@@ -414,3 +415,36 @@ def test_metrics_json_carries_schema_version(tmp_path: Path, monkeypatch) -> Non
     # And meta.yaml carries the manifest schema version
     meta = yaml.safe_load((run_dir / "meta.yaml").read_text())
     assert meta.get("manifest_schema_version") == 1
+
+
+# ---------------------------------------------------------------------------
+# _read_thought_count — every unreadable state.json degrades to 0 (#176)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        "[1, 2]",                       # subscripting a list raises TypeError
+        "123",                          # int is not subscriptable
+        '"a bare string"',              # str indices must be integers
+        "null",
+        "NOT JSON",                     # already guarded, pinned as a sibling
+        '{"thought_count": [1]}',       # object, but int() of a list raises
+    ],
+)
+def test_read_thought_count_returns_zero_for_unreadable_state(tmp_path: Path, document: str) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text(document, encoding="utf-8")
+
+    assert _read_thought_count(state_path) == 0
+
+
+def test_read_thought_count_returns_zero_when_state_is_missing(tmp_path: Path) -> None:
+    assert _read_thought_count(tmp_path / "definitely-not-there.json") == 0
+
+
+def test_read_thought_count_reads_a_valid_state(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text('{"thought_count": 42}', encoding="utf-8")
+
+    assert _read_thought_count(state_path) == 42

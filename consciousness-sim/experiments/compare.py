@@ -57,7 +57,17 @@ def load_run(run_dir: Path, label: str | None = None) -> RunRef:
     def _read_json(p: Path) -> dict[str, Any]:
         if not p.exists():
             return {}
-        loaded: dict[str, Any] = json.loads(p.read_text(encoding="utf-8"))
+        parsed = json.loads(p.read_text(encoding="utf-8"))
+        # A missing file already yields {}; a file whose top level is an array,
+        # scalar, or null is a different condition — the artifact exists and is
+        # wrong. Reporting it here names the offending path, where returning {}
+        # would silently route metrics.json into the recompute-from-journal
+        # fallback and render state.json as a run with no mood at all.
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"{p}: expected a JSON object, got {type(parsed).__name__}"
+            )
+        loaded: dict[str, Any] = parsed
         return loaded
 
     manifest = _read_yaml(run_dir / "manifest.yaml")
