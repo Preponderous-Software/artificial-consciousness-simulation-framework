@@ -7,6 +7,9 @@ Covers:
   to SIGKILL when the process ignores SIGTERM.
 - the --force path, which sends SIGKILL immediately and skips the poll.
 - pid-file cleanup on every exit path that reaches the process.
+- the two inputs #179 turned from tracebacks into exit-1 messages: a
+  malformed pid file (non-numeric, empty, zero, or negative) and a pid that
+  exists but cannot be signalled from this account (``PermissionError``).
 
 No real signals are sent: ``os.kill`` is replaced with a recorder that
 simulates the target process, and ``time.sleep`` is a no-op so the grace
@@ -35,18 +38,25 @@ class _FakeProcess:
     """Stand-in for ``os.kill`` that records every signal sent to ``pid``.
 
     Signal 0 (the liveness probe) raises ``ProcessLookupError`` once the
-    process is dead. Any other signal is recorded; the process dies after
-    ``dies_after`` real signals, or never when ``dies_after`` is ``None``.
+    process is dead, or ``PermissionError`` when ``foreign`` simulates a
+    process owned by another account. Any other signal is recorded; the
+    process dies after ``dies_after`` real signals, or never when
+    ``dies_after`` is ``None``.
     """
 
-    def __init__(self, pid: int, *, alive: bool = True, dies_after: int | None = 1) -> None:
+    def __init__(
+        self, pid: int, *, alive: bool = True, dies_after: int | None = 1, foreign: bool = False
+    ) -> None:
         self.pid = pid
         self.alive = alive
         self.dies_after = dies_after
+        self.foreign = foreign
         self.sent: list[int] = []
 
     def __call__(self, pid: int, sig: int) -> None:
         assert pid == self.pid, f"signal sent to unexpected pid {pid}"
+        if self.foreign:
+            raise PermissionError
         if sig == 0:
             if not self.alive:
                 raise ProcessLookupError
@@ -201,15 +211,20 @@ def test_stop_force_sends_sigkill_without_polling(monkeypatch, tmp_path) -> None
     assert not pid_path.exists()
 
 
-# --- malformed pid file (characterization) ----------------------------------
+# --- malformed pid file (#179) ----------------------------------------------
 
 
-def test_stop_malformed_pid_file_raises_value_error(monkeypatch, tmp_path) -> None:
-    """Characterizes current behaviour: unlike spawn.py's _read_pid, stop.py
-    parses the pid with a bare int() and a non-numeric file escapes as an
-    uncaught ValueError rather than a clean error message. The file is left
-    in place. Tracked as #179; when that is fixed, this test should flip to
-    assert the friendly exit path instead."""
+def _assert_malformed_exit(result, pid_path: Path, fake: _FakeProcess) -> None:
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert f"PID file for 'Aria' is malformed ({pid_path})" in result.output
+    assert pid_path.exists(), "a malformed file is left for the user to inspect"
+    assert fake.sent == []
+
+
+def test_stop_malformed_pid_file_exits_1_with_message(monkeypatch, tmp_path) -> None:
+    """A non-numeric pid file used to escape as an uncaught ValueError (#179).
+    It now exits 1 with a message naming the path and leaves the file alone."""
     monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
     fake = _FakeProcess(pid=4242)
     _install_fake(monkeypatch, fake)
@@ -217,7 +232,66 @@ def test_stop_malformed_pid_file_raises_value_error(monkeypatch, tmp_path) -> No
 
     result = CliRunner().invoke(stop_main, ["--name", "Aria"])
 
-    assert result.exit_code != 0
-    assert isinstance(result.exception, ValueError)
+    _assert_malformed_exit(result, pid_path, fake)
+
+
+def test_stop_empty_pid_file_exits_1_with_message(monkeypatch, tmp_path) -> None:
+    """An interrupted write (`echo > pid`) leaves an empty file — the case the
+    issue calls out — and int('') is the same ValueError as non-numeric text."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    fake = _FakeProcess(pid=4242)
+    _install_fake(monkeypatch, fake)
+    pid_path = _write_pid(tmp_path, "Aria", "")
+
+    result = CliRunner().invoke(stop_main, ["--name", "Aria"])
+
+    _assert_malformed_exit(result, pid_path, fake)
+
+
+def test_stop_zero_pid_file_is_treated_as_malformed(monkeypatch, tmp_path) -> None:
+    """int('0') parses, but os.kill(0, SIGTERM) would signal the caller's whole
+    process group — so a zero pid must never reach the probe or the send."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    fake = _FakeProcess(pid=0)
+    _install_fake(monkeypatch, fake)
+    pid_path = _write_pid(tmp_path, "Aria", 0)
+
+    result = CliRunner().invoke(stop_main, ["--name", "Aria"])
+
+    _assert_malformed_exit(result, pid_path, fake)
+
+
+def test_stop_negative_pid_file_is_treated_as_malformed(monkeypatch, tmp_path) -> None:
+    """Negative values address process groups too; same guard as spawn.py's
+    _is_alive(pid <= 0)."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    fake = _FakeProcess(pid=-1)
+    _install_fake(monkeypatch, fake)
+    pid_path = _write_pid(tmp_path, "Aria", -1)
+
+    result = CliRunner().invoke(stop_main, ["--name", "Aria"])
+
+    _assert_malformed_exit(result, pid_path, fake)
+
+
+# --- pid owned by another account (#179) ------------------------------------
+
+
+def test_stop_unsignallable_pid_exits_1_and_keeps_pid_file(monkeypatch, tmp_path) -> None:
+    """A PermissionError on the liveness probe used to escape as a traceback
+    (#179). It is now reported as running-but-not-signallable: exit 1, no
+    signal sent, pid file left in place (the process is real, just not ours)."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    fake = _FakeProcess(pid=4242, foreign=True)
+    sleeps = _install_fake(monkeypatch, fake)
+    pid_path = _write_pid(tmp_path, "Aria", 4242)
+
+    result = CliRunner().invoke(stop_main, ["--name", "Aria"])
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "Process 4242 for 'Aria' is running but cannot be signalled from this account" in result.output
+    assert str(pid_path) in result.output
     assert pid_path.exists()
     assert fake.sent == []
+    assert sleeps == [], "no grace-window poll when the process was never signalled"
