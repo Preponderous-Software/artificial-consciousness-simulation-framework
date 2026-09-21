@@ -99,7 +99,8 @@ python scripts/spawn.py --name Aria --bg --force
 python scripts/web.py --port 8080
 # Default bind is 127.0.0.1; opt into LAN with --host 0.0.0.0
 
-# Stop a --bg instance (SIGTERM, 5s grace window)
+# Stop a --bg instance (SIGTERM, 5s grace window). A stale pid file is removed;
+# a malformed one, or a pid owned by another user, exits 1 with a message (#179).
 python scripts/stop.py --name Aria
 
 # Skip the grace window and send SIGKILL immediately
