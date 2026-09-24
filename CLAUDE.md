@@ -310,6 +310,7 @@ python scripts/experiment.py check-smoke experiments/mock-smoke-baseline/<UTC-ti
 - `CONSCIOUSNESS_HOME` — override persistence root (default: `~/.consciousness/`)
 - `OLLAMA_BASE_URL` / `OLLAMA_HOST` — point at a non-default Ollama endpoint
 - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` — required only for cloud providers
+- `TRACE_USAGE_REPORTING=off` / `DO_NOT_TRACK=1` — turn usage reporting off (it is on by default; `usage_reporting.enabled: false` in `$CONSCIOUSNESS_HOME/settings.json` also does). `tests/conftest.py` sets the former for every test
 - Config values support `${VAR}` substitution at load time (`core/consciousness.py:_expand_env_vars`) — used to keep secrets like webhook URLs out of the YAML
 
 **Local-first default:** The framework defaults to `ollama` with `llama3.2:3b`. Pull the model with `ollama pull llama3.2:3b` before first run.
@@ -385,8 +386,12 @@ consciousness-sim/
 │   │   ├── _deps.py         #   optional-dependency guard: reports the 'web'
 │   │   │                    #   extra when fastapi/uvicorn are absent (#169)
 │   │   └── static/index.html
-│   └── discord/             # DiscordWebhookSink — embed posts per event (PR #65)
-│       └── webhook.py
+│   ├── discord/             # DiscordWebhookSink — embed posts per event (PR #65)
+│   │   └── webhook.py
+│   ├── usage_reporting.py   # trace usage reporting: settings.json block in the
+│   │                        #   persistence root + first-run notice; startup
+│   │                        #   (spawn/resume/web) and experiment-started events
+│   └── trace_client.py      # Vendored trace-client-python 0.2.0 (unmodified)
 ├── scripts/
 │   ├── spawn.py             # Entry point: build mind + optional perception
 │   │                        #   + sinks; foreground / --bg / --headless;

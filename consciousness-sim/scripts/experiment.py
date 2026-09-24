@@ -46,6 +46,7 @@ from experiments.runner import (
     start_detached,
     status as runner_status,
 )
+from interfaces.usage_reporting import report_experiment_started, start_usage_reporting
 
 GOLDEN_DIR = ROOT_DIR / "experiments" / "golden"
 
@@ -77,6 +78,7 @@ def cmd_run(manifest_path: Path, max_wall_clock_minutes: float, detach: bool) ->
     if manifest.replicates and manifest.replicates > 1:
         click.echo(f"  replicates:    {manifest.replicates}")
     click.echo(f"  tags:          {manifest.tags or '(none)'}")
+    report_experiment_started(start_usage_reporting(log=click.echo))
 
     if detach:
         run_dir = start_detached(

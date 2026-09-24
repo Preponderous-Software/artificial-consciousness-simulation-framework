@@ -298,6 +298,29 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 - **New memory backend**: replace/extend `memory/long_term.py` interface while keeping `similarity_search` + `add_memory`
 - **New reflection strategy**: add methods in `core/reflection.py` and wire triggers in `core/thought_loop.py`
 
+## Usage reporting
+
+Usage reporting is on by default: the framework sends its name (`artificial-consciousness-simulation-framework`) and its version from `pyproject.toml` to [trace](https://github.com/Stephenson-Software/trace) at `https://trace.danielstephenson.dev`, as a `startup` event when `scripts/spawn.py`, `scripts/resume.py` or `scripts/web.py` starts (tagged `command` = `spawn` / `resume` / `web`; the dashboard's is also tagged `service=true`) and an `experiment-started` event when `scripts/experiment.py run` begins a manifest. Nothing about you, your machine, your IP address, instance names, configuration, providers, models, thoughts, journals or any other content is sent. The report is made from a background thread, never blocks the run, and is dropped silently if the service is unreachable. A `spawn.py --bg` launch is counted once, by the background process.
+
+The first launch writes a `settings.json` in the persistence root (`~/.consciousness/`, or `$CONSCIOUSNESS_HOME`) and prints a one-line notice. To turn reporting off, any one of these is enough:
+
+- `"usage_reporting": {"enabled": false}` in that `settings.json`:
+
+  ```json
+  {
+    "usage_reporting": {
+      "enabled": false
+    }
+  }
+  ```
+
+- the environment variable `TRACE_USAGE_REPORTING=off` (also `false`, `0`, `no`), which turns off every program that reports to trace
+- the environment variable `DO_NOT_TRACK=1` (see [consoledonottrack.com](https://consoledonottrack.com))
+
+The environment variables win over `settings.json`. The `endpoint` and `key` entries in the same block select where reports go and the key they are sent with. The client is `interfaces/trace_client.py`, vendored from [trace-client-python](https://github.com/Stephenson-Software/trace-client-python); the settings handling is in `interfaces/usage_reporting.py`. The test suite (`tests/conftest.py`) and both CI workflows run with `TRACE_USAGE_REPORTING=off`.
+
+Details: https://github.com/Stephenson-Software/trace#usage-reporting
+
 ## Ethical Note
 
 This repository is an experiment in computational self-modeling. It treats questions about machine sentience carefully and avoids claims beyond observable behavior. Use outputs responsibly and avoid anthropomorphic overreach.

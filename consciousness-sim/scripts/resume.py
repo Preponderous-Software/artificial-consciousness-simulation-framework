@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 
 from core.consciousness import Consciousness
 from interfaces.cli import ConsciousnessCLI
+from interfaces.usage_reporting import report_startup, start_usage_reporting
 from scripts._logging import configure_logging
 
 
@@ -33,6 +34,7 @@ from scripts._logging import configure_logging
 @click.option("--log-level", default="WARNING", show_default=True, help="Log level (DEBUG/INFO/WARNING/ERROR)")
 def main(name: str, log_level: str) -> None:
     load_dotenv()
+    report_startup(start_usage_reporting(log=click.echo), "resume")
     log_path = configure_logging(name, log_level)
     logging.info("Resume started — logs: %s", log_path)
     config_path = Path(__file__).resolve().parents[1] / "config" / "default_consciousness.yaml"

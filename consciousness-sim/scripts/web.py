@@ -24,6 +24,8 @@ import logging
 import click
 from dotenv import load_dotenv
 
+from interfaces.usage_reporting import report_startup, start_usage_reporting
+
 
 @click.command()
 @click.option("--port", default=8080, show_default=True, type=int, help="Port to bind")
@@ -44,6 +46,9 @@ from dotenv import load_dotenv
 @click.option("--log-level", default="INFO", show_default=True, help="Log level")
 def main(port: int, host: str, allow_remote_spawn: bool, log_level: str) -> None:
     load_dotenv()
+    # The dashboard is a long-running process the user hosts, so its startup
+    # is tagged service=true (trace's operator page hides those by default).
+    report_startup(start_usage_reporting(log=click.echo), "web", service=True)
     logging.basicConfig(
         level=getattr(logging, log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
