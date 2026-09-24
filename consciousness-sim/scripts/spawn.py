@@ -32,6 +32,7 @@ from dotenv import load_dotenv
 
 from core.consciousness import Consciousness
 from interfaces.cli import ConsciousnessCLI
+from interfaces.usage_reporting import report_startup, start_usage_reporting
 from persistence.paths import consciousness_dir
 from scripts._logging import configure_logging
 
@@ -175,6 +176,12 @@ def main(
     if not internal_invocation:
         _check_duplicate_pid(name, force=force)
 
+    # Read (or on the first launch write, with a one-line notice) the usage
+    # reporting settings before `--bg` detaches, so the notice reaches the
+    # terminal rather than run.log. The startup event itself is sent below by
+    # the process that runs the instance, so a `--bg` spawn counts once.
+    usage = start_usage_reporting(log=click.echo)
+
     if bg:
         import subprocess
 
@@ -209,6 +216,7 @@ def main(
 
     log_path = configure_logging(name, log_level)
     logging.info("Spawn started — logs: %s", log_path)
+    report_startup(usage, "spawn")
 
     # Foreground/--headless modes also record a pid file so future spawns
     # can detect duplicates. Cleaned up on graceful exit; --bg's parent

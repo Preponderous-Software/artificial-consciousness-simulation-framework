@@ -21,6 +21,10 @@ jobs:
     # runner spin-up and a cold pip cache, not the expected
     # wall clock — see the "under 5 minutes" acceptance criterion in #87.
     timeout-minutes: 15
+    # A CI run is not a person using the framework: keep the entry points
+    # (experiment.py run in particular) from reporting to the real trace service.
+    env:
+      TRACE_USAGE_REPORTING: "off"
     defaults:
       run:
         working-directory: consciousness-sim

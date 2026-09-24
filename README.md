@@ -10,6 +10,12 @@ The full project lives in [`./consciousness-sim`](./consciousness-sim) — start
 
 This is research code, not production infrastructure. It treats questions about machine sentience carefully and avoids claims beyond observable functional behavior.
 
+## Usage reporting
+
+Usage reporting is on by default: the entry-point scripts send the program's name, its version and a `startup` or `experiment-started` event to [trace](https://github.com/Stephenson-Software/trace) — nothing about you, your machine, your instances or their content. Turn it off with `"usage_reporting": {"enabled": false}` in `~/.consciousness/settings.json` (or `$CONSCIOUSNESS_HOME/settings.json`), or with `TRACE_USAGE_REPORTING=off` or `DO_NOT_TRACK=1` in the environment. See [consciousness-sim/README.md](./consciousness-sim/README.md#usage-reporting) for exactly what is sent.
+
+Details: https://github.com/Stephenson-Software/trace#usage-reporting
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for dev setup, running the test suite, and PR conventions.
