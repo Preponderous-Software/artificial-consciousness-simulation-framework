@@ -81,6 +81,108 @@ def test_initialize_rewires_restored_identity(tmp_path, monkeypatch) -> None:
     asyncio.run(_run())
 
 
+def _write_restore_config(tmp_path: Path) -> Path:
+    config = {
+        "consciousness": {
+            "name": "unnamed",
+            "origin_story": "origin",
+            "values": ["curiosity"],
+            "purpose": "purpose",
+        },
+        "llm": {"provider": "mock", "model": "mock", "temperature": 0.8, "max_tokens": 128},
+        "thought_loop": {
+            "min_interval_seconds": 0,
+            "max_interval_seconds": 0,
+            "reflection_probability": 0.0,
+            "existential_inquiry_every_n_thoughts": 5,
+        },
+        "memory": {
+            "short_term_capacity": 5,
+            "consolidation_interval_minutes": 5,
+            "forgetting_curve_enabled": False,
+            "importance_decay_rate": 0.01,
+        },
+        "mood": {"initial": {"curiosity": 0.5}, "drift_rate": 0.01},
+        "perception": {
+            "enabled": False,
+            "provider": "mock",
+            "every_n_cycles": 0,
+            "timeout_seconds": 1.0,
+            "cache_last_n": 0,
+        },
+    }
+    config_path = tmp_path / "cfg.yaml"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    return config_path
+
+
+def test_initialize_restores_persisted_short_term_importance(tmp_path, monkeypatch) -> None:
+    """#183: a HOT-2 noise/uncertain weight survives a save → resume round trip;
+    items without a usable importance fall back to their kind default."""
+    async def _run() -> None:
+        monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+        config_path = _write_restore_config(tmp_path)
+        await StateManager("Aria").save(
+            {
+                "identity": {"name": "Aria", "mood": {"curiosity": 0.5}},
+                "short_term": [
+                    {"kind": "thought", "content": "noise", "timestamp": "t", "importance": 0.5},
+                    {"kind": "thought", "content": "uncertain", "timestamp": "t", "importance": 0.75},
+                    {"kind": "reflection", "content": "legacy", "timestamp": "t"},
+                    {"kind": "thought", "content": "hand-edited", "timestamp": "t", "importance": "high"},
+                    {"kind": "thought", "content": "boolean", "timestamp": "t", "importance": True},
+                ],
+                "thought_count": 5,
+            }
+        )
+
+        mind = Consciousness(name="Aria", config_path=str(config_path))
+        await mind.initialize()
+
+        restored = {i.content: i.importance for i in mind.short_term.list()}
+        assert restored == {
+            "noise": 0.5,
+            "uncertain": 0.75,
+            "legacy": 2.0,
+            "hand-edited": 1.0,
+            "boolean": 1.0,
+        }
+
+    asyncio.run(_run())
+
+
+def test_restored_noise_thought_is_evicted_first(tmp_path, monkeypatch) -> None:
+    """#183: after resume, the noise-weighted thought is still the first to go."""
+    async def _run() -> None:
+        monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+        config_path = _write_restore_config(tmp_path)
+        await StateManager("Aria").save(
+            {
+                "identity": {"name": "Aria", "mood": {"curiosity": 0.5}},
+                "short_term": [
+                    {"kind": "thought", "content": f"high-{n}", "timestamp": "t", "importance": 1.0}
+                    for n in range(2)
+                ]
+                + [{"kind": "thought", "content": "noise", "timestamp": "t", "importance": 0.5}]
+                + [
+                    {"kind": "thought", "content": f"high-{n}", "timestamp": "t", "importance": 1.0}
+                    for n in range(2, 4)
+                ],
+                "thought_count": 5,
+            }
+        )
+
+        mind = Consciousness(name="Aria", config_path=str(config_path))
+        await mind.initialize()
+        mind.short_term.add("thought", "new", importance=1.0)
+
+        contents = [i.content for i in mind.short_term.list()]
+        assert "noise" not in contents
+        assert contents == ["high-0", "high-1", "high-2", "high-3", "new"]
+
+    asyncio.run(_run())
+
+
 def test_state_manager_concurrent_saves_do_not_corrupt(tmp_path, monkeypatch) -> None:
     """Concurrent save() calls must not produce a corrupted state.json."""
     monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
