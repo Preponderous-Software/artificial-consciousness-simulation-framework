@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import random
 import re
@@ -654,7 +655,23 @@ class Consciousness:
             self.thought_loop.inner_voice = InnerVoice(self.identity.name)
             for item in restored.get("short_term", []):
                 if isinstance(item, dict):
-                    self.short_term.add(str(item.get("kind", "thought")), str(item.get("content", "")))
+                    # Carry the persisted importance through (#183) so a thought the
+                    # HOT-2 monitor weighted as noise/uncertain does not come back at
+                    # the kind default and outlive its eviction weight. Missing or
+                    # non-numeric values (older state files, hand edits) use the default.
+                    raw_importance = item.get("importance")
+                    importance = (
+                        float(raw_importance)
+                        if isinstance(raw_importance, (int, float))
+                        and not isinstance(raw_importance, bool)
+                        and math.isfinite(raw_importance)
+                        else None
+                    )
+                    self.short_term.add(
+                        str(item.get("kind", "thought")),
+                        str(item.get("content", "")),
+                        importance=importance,
+                    )
             self.thought_count = int(restored.get("thought_count", 0))
             # #117: restore health block if state.json has one; older state
             # files lack the key, in which case we keep the defaults set in
