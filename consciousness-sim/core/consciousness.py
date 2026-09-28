@@ -37,6 +37,7 @@ from llm.provider import LLMProvider, build_provider
 from memory.consolidator import ConsolidationResult, MemoryConsolidator
 from memory.episodic import EpisodicMemory
 from memory.long_term import DEFAULT_MAX_ROWS, LongTermMemory
+from memory.short_term import DEFAULT_HALF_LIFE as DEFAULT_SHORT_TERM_HALF_LIFE
 from memory.short_term import ShortTermMemory
 from persistence.journal import Journal
 from persistence.paths import consciousness_dir
@@ -142,6 +143,20 @@ def _validate_config(config: dict[str, Any]) -> None:
             raise ValueError(
                 f"Config 'memory.long_term_max_rows' must be >= 0 (0 disables the bound), "
                 f"got {max_rows}"
+            )
+
+    # Optional: memory.short_term_half_life (#201). Absent → ShortTermMemory's
+    # DEFAULT_HALF_LIFE. 0 disables age decay (importance-only eviction).
+    half_life = config["memory"].get("short_term_half_life")
+    if half_life is not None:
+        if isinstance(half_life, bool) or not isinstance(half_life, (int, float)) or not math.isfinite(half_life):
+            raise ValueError(
+                f"Config 'memory.short_term_half_life' must be a number >= 0 "
+                f"(0 disables age decay), got {half_life!r}"
+            )
+        if half_life < 0:
+            raise ValueError(
+                f"Config 'memory.short_term_half_life' must be >= 0 (0 disables age decay), got {half_life}"
             )
 
     # Optional: llm.embed_model (#112). Absent/null → embeddings use the
@@ -456,7 +471,11 @@ class Consciousness:
         # `enabled: false` → drift_mood keeps using its lexical triggers.
         self.mood_scorer = _build_mood_scorer(self.config["mood"], self.provider)
 
-        self.short_term = ShortTermMemory(capacity=int(mem_cfg["short_term_capacity"]))
+        _half_life = mem_cfg.get("short_term_half_life")
+        self.short_term = ShortTermMemory(
+            capacity=int(mem_cfg["short_term_capacity"]),
+            half_life=DEFAULT_SHORT_TERM_HALF_LIFE if _half_life is None else float(_half_life),
+        )
         self.episodic = EpisodicMemory(base / "episodic.jsonl")
         # Optional retention bound (#135). Absent → LongTermMemory's default.
         long_term_max_rows = mem_cfg.get("long_term_max_rows")

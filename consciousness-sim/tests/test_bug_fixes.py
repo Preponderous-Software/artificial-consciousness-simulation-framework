@@ -1186,3 +1186,18 @@ def test_score_mood_triggers_returns_the_scorer_output(tmp_path, monkeypatch) ->
     mind.mood_scorer.score = AsyncMock(return_value={"curiosity": 0.5})
     assert asyncio.run(mind._score_mood_triggers("a thought")) == {"curiosity": 0.5}
 
+
+@pytest.mark.parametrize("value", [None, 0, 10, 7.5])
+def test_validate_config_accepts_short_term_half_life(value) -> None:
+    cfg = _minimal_valid_config()
+    if value is not None:
+        cfg["memory"]["short_term_half_life"] = value
+    _validate_config(cfg)
+
+
+@pytest.mark.parametrize("value", [-1, True, "10", float("nan"), float("inf")])
+def test_validate_config_rejects_malformed_short_term_half_life(value) -> None:
+    cfg = _minimal_valid_config()
+    cfg["memory"]["short_term_half_life"] = value
+    with pytest.raises(ValueError, match="short_term_half_life"):
+        _validate_config(cfg)
