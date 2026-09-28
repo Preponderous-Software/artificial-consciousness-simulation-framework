@@ -243,6 +243,35 @@ def test_run_loop_skips_cycle_event_without_trace(tmp_path, monkeypatch) -> None
     assert "cycle" not in [e["type"] for e in entries]
 
 
+def test_run_loop_journals_utterance_with_recipient_and_message_id(tmp_path, monkeypatch) -> None:
+    """#198: a reply is journaled as an `utterance` event carrying `to` and `in_reply_to`."""
+    from core.thought_loop import ThoughtCycleResult, Utterance
+
+    mind = _make_mind(tmp_path, monkeypatch)
+    received: list[dict] = []
+    mind.on_utterance.append(lambda payload: received.append(payload))
+
+    async def _once(n: int) -> ThoughtCycleResult:
+        mind._stop_event.set()
+        return ThoughtCycleResult(
+            thought="I think about the question.", reflection=None, existential=None,
+            utterance=Utterance(text="It is a river in Texas.", to="Dan", in_reply_to="abc123"),
+        )
+
+    mind.thought_loop.run_cycle = _once
+
+    async def _run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    asyncio.run(_run())
+    entries = asyncio.run(mind.journal.recent(limit=20))
+    utterance = next(e for e in entries if e["type"] == "utterance")
+    assert utterance["content"] == "It is a river in Texas."
+    assert (utterance["to"], utterance["in_reply_to"]) == ("Dan", "abc123")
+    assert received and received[0]["type"] == "utterance"
+
+
 # ---------------------------------------------------------------------------
 # Error recovery
 # ---------------------------------------------------------------------------

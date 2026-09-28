@@ -39,6 +39,8 @@ _KNOWN_EVENT_TYPES = frozenset({
     "consolidation",
     # Structured per-cycle internals (#196) for the component view (#197).
     "cycle",
+    # Replies to people who message the instance (#198).
+    "utterance",
 })
 
 

@@ -367,6 +367,8 @@ consciousness-sim/
 │   ├── journal.py           # Append-only JSONL of all events (for inspection)
 │   ├── state_manager.py     # JSON snapshot of identity + short-term + thought count
 │   │                        #   + health block (#117)
+│   ├── inbox.py             # Messages people send (#198): JSONL + persisted read
+│   │                        #   offset, so each is heard exactly once across restarts
 │   └── paths.py             # CONSCIOUSNESS_HOME resolution + name sanitization
 ├── llm/
 │   ├── provider.py          # LLMProvider ABC + Ollama/Anthropic/OpenAI/Mock impls;
@@ -379,7 +381,7 @@ consciousness-sim/
 │   │                        #   MockPerception (issue #53 / PR #54)
 │   └── prompts/             # Prompt templates (thought_generation, self_reflection,
 │                            #   identity_anchoring, existential_inquiry,
-│                            #   memory_consolidation)
+│                            #   memory_consolidation, critique, speak)
 ├── interfaces/
 │   ├── cli.py               # Rich live dashboard (ConsciousnessCLI)
 │   ├── observer.py          # Observer utilities
@@ -387,7 +389,9 @@ consciousness-sim/
 │   ├── web/                 # Standalone FastAPI + SSE dashboard (PR #52, #55)
 │   │   ├── server.py        #   process manager (spawn/stop/archive), SSE stream
 │   │   │                    #   + read-only GET /instances/<id>/state for the
-│   │   │                    #   component view (#197)
+│   │   │                    #   component view (#197); POST /instances/<id>/messages
+│   │   │                    #   (localhost-only, rate + backlog limited) and
+│   │   │                    #   GET /instances/<id>/conversation (#198)
 │   │   ├── journal_tail.py  #   polling journal tailer feeding live events
 │   │   ├── _deps.py         #   optional-dependency guard: reports the 'web'
 │   │   │                    #   extra when fastapi/uvicorn are absent (#169)
@@ -444,10 +448,10 @@ consciousness-sim/
 **Data flow per thought cycle:**
 1. `short_term.render_for_prompt()` → context string
 2. `provider.embed(context)` → query vector → `long_term.similarity_search()` → related memories
-3. Every `perception.every_n_cycles` cycles (default 3): `perception_provider.fetch()` → optional `Perception`; lingers in short-term + episodic so subsequent cycles can reference it (PR #54)
+3. If the instance's inbox has an unheard message (#198), the oldest becomes a `speech` perception (`title` "<sender> says") and pre-empts the cadence below; otherwise every `perception.every_n_cycles` cycles (default 3): `perception_provider.fetch()` → optional `Perception`; lingers in short-term + episodic so subsequent cycles can reference it (PR #54)
 4. Identity anchor (includes `AttentionSchema` state per AST-1) + mood + memories + context + perception block → prompt → `provider.generate()` → raw thought
 5. **RPT-2 (optional, `thought_loop.rpt_critique`, default off):** a second `provider.generate()` pass (`llm/prompts/critique.txt`) critiques the raw thought against its context and rewrites it as labelled `CRITIQUE:` / `REWRITE:` sections; only the `REWRITE:` text replaces the raw representation (#93, #192) — literal feedback from a later stage modulating the earlier representation; a critique-pass failure or a reply without a usable `REWRITE:` section falls back to the raw thought, logged at WARNING
-6. `inner_voice.render()` → styled thought → `MetacognitiveMonitor.score()` → importance-adjusted `short_term.add()` + `episodic.append()`; prediction error computed against prior cycle's `_predicted_theme`; `_predicted_theme` updated for next cycle
+6. `inner_voice.render()` → styled thought → `MetacognitiveMonitor.score()` → importance-adjusted `short_term.add()` + `episodic.append()`; prediction error computed against prior cycle's `_predicted_theme`; `_predicted_theme` updated for next cycle; when the perception was speech, a `speak` action (`llm/prompts/speak.txt`, message framed as untrusted text) produces an `Utterance` added to short-term (kind `utterance`) + episodic and journaled as an `utterance` event with `to` / `in_reply_to` (#198) — a failed or empty reply logs a WARNING and nothing is said
 7. Reflection trigger: `effective_prob = min(1.0, base + HOT-2 boost + PP-1 boost)` — fires only if `reflection_probability > 0.0`; → `reflection_engine.shallow/deep_reflection()` → `inner_voice.scrub_reflection()` strips leading meta-preambles/markdown headers and rejects second-person instructional drift (#132) before `short_term.add()` + `episodic.append()`; existential inquiry every N cycles (same scrub applied); `AttentionSchema.update()` (informed by cycle outcome: perception/existential/reflection/memory/introspection)
 8. `consciousness.py` outer loop: `journal.append()` + events emitted via `Consciousness._emit()` to registered handlers (CLI, observer, web SSE, Discord sink if configured); after each thought, one structured `cycle` journal event from `ThoughtCycleResult.trace` (`CycleTrace`: retrieved memories, PP-1 prior/next prediction + error, HOT-2 label, reflection odds breakdown + fired, attention, short-term size, timings) (#196)
 9. Background: `MemoryConsolidator.consolidate_once()` every N minutes — episodic events newer than the consolidator's watermark → LLM summary → long-term embeddings (#191)

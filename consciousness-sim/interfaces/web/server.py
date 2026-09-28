@@ -27,6 +27,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,6 +48,7 @@ except ModuleNotFoundError as exc:  # FastAPI ships in the optional 'web' extra
 from pydantic import BaseModel, Field
 
 from interfaces.web.journal_tail import JournalTailer
+from persistence.inbox import Inbox
 from persistence.journal import Journal
 from persistence.paths import (
     consciousness_dir,
@@ -394,6 +396,102 @@ async def stream_events(name: str) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# Conversation (#198). Limits keep a chat from starving the thought loop: an
+# instance hears at most one message per cycle (10–30 s by default).
+_MESSAGE_MAX_CHARS = 1000
+_SENDER_MAX_CHARS = 40
+_MAX_UNHEARD_MESSAGES = 20
+_MESSAGES_PER_MINUTE = 6
+_message_times: dict[str, deque[float]] = {}
+
+
+class MessageRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=_MESSAGE_MAX_CHARS)
+    sender: str | None = Field(default=None, max_length=_SENDER_MAX_CHARS)
+
+
+def _existing_instance_dir(name: str) -> tuple[str, Path]:
+    try:
+        safe_id = sanitize_consciousness_name(name)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Unknown instance: {name!r}")
+    instance_dir = consciousness_root() / safe_id
+    if not (instance_dir / "state.json").exists():
+        raise HTTPException(status_code=404, detail=f"Unknown instance: {name!r}")
+    return safe_id, instance_dir
+
+
+@app.post("/instances/{name}/messages")
+async def send_message(name: str, req: MessageRequest, request: Request) -> dict[str, Any]:
+    """Queue a message for an instance to hear as a `speech` perception (#198)."""
+    _require_local(request)
+    safe_id, instance_dir = _existing_instance_dir(name)
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="Message text is empty.")
+    sender = " ".join((req.sender or "").split()) or "visitor"
+
+    now = time.monotonic()
+    times = _message_times.setdefault(safe_id, deque())
+    while times and now - times[0] > 60.0:
+        times.popleft()
+    if len(times) >= _MESSAGES_PER_MINUTE:
+        raise HTTPException(
+            status_code=429,
+            detail=f"At most {_MESSAGES_PER_MINUTE} messages per minute per instance.",
+        )
+
+    inbox = Inbox(instance_dir / "inbox.jsonl")
+    unheard = await asyncio.to_thread(inbox.unread_count)
+    if unheard >= _MAX_UNHEARD_MESSAGES:
+        raise HTTPException(
+            status_code=429,
+            detail=f"{unheard} messages are still waiting to be heard; try again after it catches up.",
+        )
+    message = await asyncio.to_thread(inbox.append, sender, text)
+    times.append(now)
+    return {
+        "id": message.id,
+        "timestamp": message.timestamp,
+        "sender": message.sender,
+        "text": message.text,
+        "heard": False,
+        "waiting": unheard + 1,
+        "running": _pid_alive(instance_dir / "pid") is not None,
+    }
+
+
+@app.get("/instances/{name}/conversation")
+async def conversation(name: str) -> dict[str, Any]:
+    """Messages sent to an instance and its replies, oldest first (#198)."""
+    safe_id, instance_dir = _existing_instance_dir(name)
+    inbox = Inbox(instance_dir / "inbox.jsonl")
+    entries: list[dict[str, Any]] = [
+        {
+            "kind": "message",
+            "id": m.id,
+            "timestamp": m.timestamp,
+            "sender": m.sender,
+            "text": m.text,
+            "heard": heard,
+        }
+        for m, heard in await asyncio.to_thread(inbox.conversation)
+    ]
+    journal_path = instance_dir / "journal.jsonl"
+    if journal_path.exists():
+        for e in await Journal(journal_path).recent(limit=2000):
+            if e.get("type") == "utterance":
+                entries.append({
+                    "kind": "utterance",
+                    "timestamp": e.get("timestamp", ""),
+                    "text": e.get("content", ""),
+                    "to": e.get("to"),
+                    "in_reply_to": e.get("in_reply_to"),
+                })
+    entries.sort(key=lambda e: str(e.get("timestamp", "")))
+    return {"id": safe_id, "entries": entries[-200:]}
 
 
 class SpawnRequest(BaseModel):

@@ -868,3 +868,94 @@ def test_history_keeps_fifty_non_cycle_events_plus_newest_cycle(server):
 def test_history_without_cycle_events_is_unchanged(server):
     events = [{"timestamp": f"t{i:03d}", "type": "thought", "content": str(i)} for i in range(70)]
     assert server._select_history(events) == events[-50:]
+
+
+# ---------------------------------------------------------------------------
+# Conversation (#198): POST /instances/{id}/messages, GET .../conversation
+# ---------------------------------------------------------------------------
+
+def test_send_message_queues_it_for_the_instance(client, consciousness_home):
+    from persistence.inbox import Inbox
+    c, _ = client
+    d = _seed_instance(consciousness_home, "Aria")
+
+    r = c.post("/instances/Aria/messages", json={"text": "  hello there  ", "sender": " Dan  S "})
+
+    assert r.status_code == 200
+    body = r.json()
+    assert (body["text"], body["sender"], body["heard"], body["waiting"]) == ("hello there", "Dan S", False, 1)
+    assert body["running"] is False
+    assert [(m.text, heard) for m, heard in Inbox(d / "inbox.jsonl").conversation()] == [("hello there", False)]
+
+
+def test_send_message_defaults_sender_to_visitor(client, consciousness_home):
+    c, _ = client
+    _seed_instance(consciousness_home, "Aria")
+    assert c.post("/instances/Aria/messages", json={"text": "hi"}).json()["sender"] == "visitor"
+
+
+def test_send_message_is_localhost_only(server, consciousness_home):
+    _seed_instance(consciousness_home, "Aria")
+    c = TestClient(server.app, client=("10.0.0.5", 54321))
+    assert c.post("/instances/Aria/messages", json={"text": "hi"}).status_code == 403
+
+
+@pytest.mark.parametrize("payload", [{"text": ""}, {"text": "   "}, {"text": "x" * 1001}, {"text": "hi", "sender": "y" * 41}])
+def test_send_message_rejects_bad_payloads(client, consciousness_home, payload):
+    c, _ = client
+    _seed_instance(consciousness_home, "Aria")
+    assert c.post("/instances/Aria/messages", json=payload).status_code == 422
+
+
+def test_send_message_unknown_instance_is_404(client):
+    c, _ = client
+    assert c.post("/instances/Nobody/messages", json={"text": "hi"}).status_code == 404
+
+
+def test_send_message_rate_limited_per_minute(client, consciousness_home):
+    c, srv = client
+    _seed_instance(consciousness_home, "Aria")
+    codes = [c.post("/instances/Aria/messages", json={"text": f"m{i}"}).status_code for i in range(srv._MESSAGES_PER_MINUTE + 1)]
+    assert codes[:-1] == [200] * srv._MESSAGES_PER_MINUTE
+    assert codes[-1] == 429
+
+
+def test_send_message_refused_when_backlog_full(client, consciousness_home):
+    from persistence.inbox import Inbox
+    c, srv = client
+    d = _seed_instance(consciousness_home, "Aria")
+    inbox = Inbox(d / "inbox.jsonl")
+    for i in range(srv._MAX_UNHEARD_MESSAGES):
+        inbox.append("Dan", f"queued {i}")
+    r = c.post("/instances/Aria/messages", json={"text": "one more"})
+    assert r.status_code == 429
+    assert "waiting to be heard" in r.json()["detail"]
+
+
+def test_conversation_merges_messages_and_replies_in_order(client, consciousness_home):
+    import asyncio
+    from persistence.inbox import Inbox
+    c, _ = client
+    d = _seed_instance(consciousness_home, "Aria", journal_events=[])
+    (d / "inbox.jsonl").write_text(
+        json.dumps({"id": "m1", "timestamp": "2026-01-01T00:00:01+00:00", "sender": "Dan", "text": "first question"}) + "\n"
+        + json.dumps({"id": "m2", "timestamp": "2026-01-01T00:00:03+00:00", "sender": "Dan", "text": "second question"}) + "\n"
+    )
+    asyncio.run(Inbox(d / "inbox.jsonl").next_unread())
+    (d / "journal.jsonl").write_text("\n".join(json.dumps(e) for e in [
+        {"timestamp": "2026-01-01T00:00:02+00:00", "type": "utterance", "content": "first answer", "to": "Dan", "in_reply_to": "m1"},
+        {"timestamp": "2026-01-01T00:00:02+00:00", "type": "thought", "content": "not part of the conversation"},
+    ]) + "\n")
+
+    entries = c.get("/instances/Aria/conversation").json()["entries"]
+
+    assert [(e["kind"], e["text"]) for e in entries] == [
+        ("message", "first question"), ("utterance", "first answer"), ("message", "second question"),
+    ]
+    assert [e["heard"] for e in entries if e["kind"] == "message"] == [True, False]
+    assert entries[1]["in_reply_to"] == "m1"
+
+
+def test_conversation_unknown_instance_is_404(client):
+    c, _ = client
+    assert c.get("/instances/Nobody/conversation").status_code == 404

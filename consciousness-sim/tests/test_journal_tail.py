@@ -221,3 +221,8 @@ def test_ignores_hidden_and_non_directory_entries(home: Path) -> None:
 def test_cycle_events_are_streamed() -> None:
     """#197: structured per-cycle events (#196) reach the SSE stream."""
     assert "cycle" in _KNOWN_EVENT_TYPES
+
+
+def test_utterance_events_are_streamed() -> None:
+    """#198: replies to people reach the SSE stream."""
+    assert "utterance" in _KNOWN_EVENT_TYPES
