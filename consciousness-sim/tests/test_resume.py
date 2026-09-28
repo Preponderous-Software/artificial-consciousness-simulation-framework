@@ -8,6 +8,8 @@ Covers:
   ``configure_logging`` unchanged.
 - the startup usage event is tagged ``resume`` and is not a service.
 - ``--name`` is required.
+- an instance's persisted ``config.yaml`` (#187) is preferred over the
+  default, and ``--config`` replaces it.
 
 ``Consciousness``, ``ConsciousnessCLI``, ``configure_logging``, and the usage
 reporting calls are replaced with recorders, so no provider, run loop, log
@@ -42,6 +44,9 @@ class _Recorder:
 
 def _install(monkeypatch, tmp_path: Path) -> _Recorder:
     rec = _Recorder()
+    # An instance's persisted config.yaml (#187) is looked up under
+    # CONSCIOUSNESS_HOME; the developer's real ~/.consciousness must not leak in.
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
 
     class _FakeConsciousness:
         def __init__(self, name: str, config_path: str) -> None:
@@ -129,3 +134,50 @@ def test_resume_requires_name(monkeypatch, tmp_path) -> None:
     assert "--name" in result.output
     assert rec.minds == []
     assert rec.cli_runs == []
+
+
+def _write_persisted(tmp_path: Path, name: str, rpt_critique: bool) -> Path:
+    import yaml
+
+    cfg = yaml.safe_load((_REPO_ROOT / "config" / "default_consciousness.yaml").read_text(encoding="utf-8"))
+    cfg["thought_loop"]["rpt_critique"] = rpt_critique
+    path = tmp_path / name / "config.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return path
+
+
+def test_resume_prefers_persisted_instance_config(monkeypatch, tmp_path) -> None:
+    rec = _install(monkeypatch, tmp_path)
+    persisted = _write_persisted(tmp_path, "Aria", rpt_critique=True)
+
+    result = CliRunner().invoke(resume.main, ["--name", "Aria"])
+
+    assert result.exit_code == 0, result.output
+    assert Path(rec.minds[0]["config_path"]) == persisted
+
+
+def test_resume_config_flag_replaces_persisted_config(monkeypatch, tmp_path) -> None:
+    import yaml
+
+    rec = _install(monkeypatch, tmp_path)
+    persisted = _write_persisted(tmp_path, "Aria", rpt_critique=False)
+    override = _write_persisted(tmp_path, "elsewhere", rpt_critique=True)
+
+    result = CliRunner().invoke(resume.main, ["--name", "Aria", "--config", str(override)])
+
+    assert result.exit_code == 0, result.output
+    assert Path(rec.minds[0]["config_path"]) == persisted
+    assert yaml.safe_load(persisted.read_text(encoding="utf-8"))["thought_loop"]["rpt_critique"] is True
+
+
+def test_resume_invalid_config_exits_without_building(monkeypatch, tmp_path) -> None:
+    rec = _install(monkeypatch, tmp_path)
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("llm: [unclosed\n", encoding="utf-8")
+
+    result = CliRunner().invoke(resume.main, ["--name", "Aria", "--config", str(bad)])
+
+    assert result.exit_code == 1
+    assert "Cannot read config" in result.output
+    assert rec.minds == []

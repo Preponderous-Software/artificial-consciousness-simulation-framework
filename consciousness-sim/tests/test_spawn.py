@@ -1,15 +1,15 @@
 """Tests for scripts/spawn.py helpers.
 
 Covers:
-- _build_config_path's tempfile-leak regression (#105) — overrides must land
-  in the consciousness dir, not a /tmp file that nobody ever cleans up.
+- the --config flag (#187) reaches Consciousness as the persisted
+  <instance>/config.yaml, and a bad file fails before anything starts.
+  Resolution rules themselves are covered in test_instance_config.py.
 - _check_duplicate_pid's refusal/cleanup behaviour (#115) — duplicate spawns
   must abort, stale pid files must be cleaned up.
 """
 
 from __future__ import annotations
 
-import glob
 import os
 import sys
 from pathlib import Path
@@ -22,72 +22,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+import scripts.spawn as spawn  # noqa: E402
 from scripts.spawn import (  # noqa: E402
-    _build_config_path,
     _check_duplicate_pid,
     _is_alive,
     _read_pid,
 )
-
-
-def test_build_config_path_returns_default_when_no_overrides(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
-    result = _build_config_path("Aria", provider=None, model=None)
-    # Default config — same path returned without overrides
-    assert result.name == "default_consciousness.yaml"
-    assert result.exists()
-
-
-def test_build_config_path_with_overrides_writes_to_consciousness_dir(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
-    result = _build_config_path("Aria", provider="mock", model="mock")
-
-    expected = tmp_path / "Aria" / "_spawn_config.yaml"
-    assert result == expected, f"override config should land in {expected}, got {result}"
-    assert result.exists()
-
-    cfg = yaml.safe_load(result.read_text(encoding="utf-8"))
-    assert cfg["llm"]["provider"] == "mock"
-    assert cfg["llm"]["model"] == "mock"
-
-
-def test_build_config_path_does_not_leak_tmp_files(monkeypatch, tmp_path) -> None:
-    """Regression for #105 — the prior implementation left a /tmp file per spawn."""
-    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
-    before = set(glob.glob("/tmp/consciousness_override_*.yaml"))
-    for _ in range(3):
-        _build_config_path("Aria", provider="mock", model="mock")
-    after = set(glob.glob("/tmp/consciousness_override_*.yaml"))
-    new_files = after - before
-    assert not new_files, f"_build_config_path leaked tmp files: {new_files}"
-
-
-def test_build_config_path_overwrites_on_repeat_spawn(monkeypatch, tmp_path) -> None:
-    """Two spawns of the same name must reuse the same file, not accumulate."""
-    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
-    p1 = _build_config_path("Aria", provider="mock", model="mock")
-    p2 = _build_config_path("Aria", provider="anthropic", model="claude-opus-4-7")
-    assert p1 == p2
-    cfg = yaml.safe_load(p2.read_text(encoding="utf-8"))
-    assert cfg["llm"]["provider"] == "anthropic"
-    assert cfg["llm"]["model"] == "claude-opus-4-7"
-
-
-def test_build_config_path_provider_only_keeps_default_model(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
-    result = _build_config_path("Aria", provider="anthropic", model=None)
-    cfg = yaml.safe_load(result.read_text(encoding="utf-8"))
-    assert cfg["llm"]["provider"] == "anthropic"
-    # Default model from default_consciousness.yaml preserved (not None)
-    assert cfg["llm"]["model"]
-
-
-def test_build_config_path_model_only_keeps_default_provider(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
-    result = _build_config_path("Aria", provider=None, model="llama3.1:8b")
-    cfg = yaml.safe_load(result.read_text(encoding="utf-8"))
-    assert cfg["llm"]["model"] == "llama3.1:8b"
-    assert cfg["llm"]["provider"]
 
 
 # --- _is_alive / _read_pid helpers ---------------------------------------
@@ -211,3 +151,82 @@ def test_check_duplicate_pid_treats_malformed_file_as_absent(
     pid_path.write_text("garbage")
     # Malformed pid -> treated as no live conflict; proceed without raising.
     _check_duplicate_pid("Aria", force=False)
+
+
+# --- --config flag (#187) ------------------------------------------------
+
+
+def _install_spawn(monkeypatch, tmp_path: Path) -> list[dict]:
+    """Stub every collaborator of spawn.main so no mind, log or network runs."""
+    minds: list[dict] = []
+
+    class _FakeConsciousness:
+        def __init__(self, name: str, config_path: str) -> None:
+            minds.append({"name": name, "config_path": config_path})
+            self.name = name
+
+    async def _fake_run(mind, headless: bool) -> None:
+        return None
+
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    monkeypatch.setattr(spawn, "Consciousness", _FakeConsciousness)
+    monkeypatch.setattr(spawn, "_run", _fake_run)
+    monkeypatch.setattr(spawn, "configure_logging", lambda name, level: tmp_path / name / "run.log")
+    monkeypatch.setattr(spawn, "start_usage_reporting", lambda log: object())
+    monkeypatch.setattr(spawn, "report_startup", lambda *a, **k: None)
+    monkeypatch.setattr(spawn, "load_dotenv", lambda: None)
+    monkeypatch.setattr(spawn.atexit, "register", lambda fn: None)
+    return minds
+
+
+def _custom_config(tmp_path: Path) -> Path:
+    cfg = yaml.safe_load((_REPO_ROOT / "config" / "default_consciousness.yaml").read_text(encoding="utf-8"))
+    cfg["thought_loop"]["rpt_critique"] = True
+    path = tmp_path / "custom.yaml"
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return path
+
+
+def test_spawn_config_flag_runs_instance_against_persisted_copy(monkeypatch, tmp_path) -> None:
+    from click.testing import CliRunner
+
+    minds = _install_spawn(monkeypatch, tmp_path)
+    custom = _custom_config(tmp_path)
+
+    result = CliRunner().invoke(spawn.main, ["--name", "Aria", "--headless", "--config", str(custom)])
+
+    assert result.exit_code == 0, result.output
+    persisted = tmp_path / "Aria" / "config.yaml"
+    assert minds == [{"name": "Aria", "config_path": str(persisted)}]
+    assert yaml.safe_load(persisted.read_text(encoding="utf-8"))["thought_loop"]["rpt_critique"] is True
+
+
+def test_spawn_invalid_config_exits_before_building_the_instance(monkeypatch, tmp_path) -> None:
+    from click.testing import CliRunner
+
+    minds = _install_spawn(monkeypatch, tmp_path)
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("llm:\n  provider: ollama\n", encoding="utf-8")
+
+    result = CliRunner().invoke(spawn.main, ["--name", "Aria", "--headless", "--config", str(bad)])
+
+    assert result.exit_code == 1
+    assert "Invalid config" in result.output
+    assert minds == []
+    assert not (tmp_path / "Aria" / "config.yaml").exists()
+
+
+def test_spawn_bg_rejects_invalid_config_before_detaching(monkeypatch, tmp_path) -> None:
+    from click.testing import CliRunner
+
+    _install_spawn(monkeypatch, tmp_path)
+    launched: list = []
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **k: launched.append(a))
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("- not a mapping\n", encoding="utf-8")
+
+    result = CliRunner().invoke(spawn.main, ["--name", "Aria", "--bg", "--config", str(bad)])
+
+    assert result.exit_code == 1
+    assert "must be a YAML mapping" in result.output
+    assert launched == []
