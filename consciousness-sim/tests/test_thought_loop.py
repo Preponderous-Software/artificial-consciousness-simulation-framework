@@ -7,6 +7,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from core.identity import IdentityDocument
 from core.metacognition import MetacognitiveMonitor
 from core.reflection import ReflectionEngine
@@ -553,7 +555,10 @@ def test_rpt_critique_on_calls_provider_twice_and_uses_refined_thought() -> None
             base = Path(d)
             provider = MockProvider()
             captured_generate = AsyncMock(
-                side_effect=["raw first-pass thought.", "refined second-pass thought."]
+                side_effect=[
+                    "raw first-pass thought.",
+                    "CRITIQUE: it misses the context.\nREWRITE: refined second-pass thought.",
+                ]
             )
             provider.generate = captured_generate
             from unittest.mock import MagicMock
@@ -610,3 +615,63 @@ def test_rpt_critique_failure_falls_back_to_raw_thought_with_warning(caplog) -> 
 
     asyncio.run(_run())
 
+
+def _critique_loop(base: Path, replies: list):
+    from unittest.mock import MagicMock
+    provider = MockProvider()
+    provider.generate = AsyncMock(side_effect=replies)
+    ltm = MagicMock()
+    ltm.similarity_search = AsyncMock(return_value=[])
+    critique_prompt = base / "critique.txt"
+    critique_prompt.write_text("RAW: {raw_thought}\nCONTEXT: {context}", encoding="utf-8")
+    loop = _make_loop(base, provider, reflection_probability=0.0)
+    loop.long_term = ltm
+    loop.rpt_critique = True
+    loop.critique_prompt_path = critique_prompt
+    return loop
+
+
+def test_rpt_critique_keeps_only_the_rewrite_not_the_critique() -> None:
+    """#192: the critique sentence must never reach the stored thought."""
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            loop = _critique_loop(Path(d), [
+                "I sense threads of time.",
+                "**CRITIQUE:** It ignores that the article is about an 1808 election.\n"
+                "**REWRITE:** I notice Pennsylvania held its House elections on October 11, 1808.",
+            ])
+            result = await loop.run_cycle(thought_count=1)
+            assert "Pennsylvania held its House elections on October 11, 1808" in result.thought
+            assert "ignores" not in result.thought
+            assert "CRITIQUE" not in result.thought and "REWRITE" not in result.thought
+
+    asyncio.run(_run())
+
+
+@pytest.mark.parametrize("reply", [
+    # Literal leaked outputs observed on llama3.2:3b (#192) — no labels.
+    "I initially overlooked the significance of the Eppinger House as a tangible connection to "
+    "Arthur's past, rather than just a metaphorical threshold. I will rewrite my thought to "
+    "acknowledge this.\n\nAs I stand before the Eppinger House, its weathered stones seem to whisper.",
+    "One way this thought misreads or misses something is by stating that \"his footsteps now echo "
+    "within me like a haunting refrain\". As I stand before the Eppinger House, its stones whisper.",
+    "CRITIQUE: it drifts.\nREWRITE:   ",
+])
+def test_rpt_critique_unlabelled_or_empty_reply_falls_back_to_raw_with_warning(reply, caplog) -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            loop = _critique_loop(Path(d), ["raw thought that survives.", reply])
+            import logging
+            with caplog.at_level(logging.WARNING):
+                result = await loop.run_cycle(thought_count=1)
+            assert "raw thought that survives" in result.thought
+            assert "rewrite" not in result.thought.lower()
+            assert any("REWRITE:" in r.message for r in caplog.records)
+
+    asyncio.run(_run())
+
+
+def test_extract_rewrite_stops_at_a_repeated_critique_label() -> None:
+    from core.thought_loop import _extract_rewrite
+    reply = "CRITIQUE: a\nREWRITE: I see the river.\nCRITIQUE: b"
+    assert _extract_rewrite(reply) == "I see the river."
