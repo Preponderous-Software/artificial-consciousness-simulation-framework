@@ -23,6 +23,7 @@ import math
 import os
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -242,6 +243,89 @@ async def list_instances() -> list[dict[str, Any]]:
     return result
 
 
+_HISTORY_EVENTS = 50
+_STATE_ITEM_CHARS = 400
+
+
+def _select_history(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Last _HISTORY_EVENTS non-`cycle` entries plus the newest `cycle` entry.
+
+    `cycle` events (#196) are one per thought; counted like other events they
+    would crowd the replayed stream, but the component view (#197) needs the
+    latest one to draw the pipeline before the next live cycle arrives.
+    """
+    others = [e for e in entries if e.get("type") != "cycle"][-_HISTORY_EVENTS:]
+    cycles = [e for e in entries if e.get("type") == "cycle"]
+    if not cycles:
+        return others
+    selected = others + [cycles[-1]]
+    return sorted(selected, key=lambda e: str(e.get("timestamp", "")))
+
+
+def _long_term_count(db_path: Path) -> int | None:
+    """Row count of an instance's memory.db, read-only; None when unavailable."""
+    if not db_path.exists():
+        return None
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1.0) as conn:
+            row = conn.execute("SELECT COUNT(*) FROM memories").fetchone()
+    except sqlite3.Error as exc:
+        logger.warning("Could not count long-term memories in %s: %s", db_path, exc)
+        return None
+    return int(row[0]) if row else None
+
+
+@app.get("/instances/{name}/state")
+async def instance_state(name: str) -> dict[str, Any]:
+    """Read-only snapshot of an instance's components for the component view (#197).
+
+    Served from state.json (saved every cycle) and memory.db, so it works for
+    stopped instances too. Workspace item content is truncated.
+    """
+    try:
+        safe_id = sanitize_consciousness_name(name)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Unknown instance: {name!r}")
+    instance_dir = consciousness_root() / safe_id
+    state_path = instance_dir / "state.json"
+    if not state_path.exists():
+        raise HTTPException(status_code=404, detail=f"Unknown instance: {name!r}")
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise HTTPException(status_code=503, detail=f"state.json unreadable: {exc}")
+    if not isinstance(state, dict):
+        raise HTTPException(status_code=503, detail="state.json is not a JSON object")
+
+    raw_identity = state.get("identity")
+    identity: dict[str, Any] = raw_identity if isinstance(raw_identity, dict) else {}
+    workspace = [
+        {
+            "kind": str(item.get("kind", "")),
+            "content": str(item.get("content", ""))[:_STATE_ITEM_CHARS],
+            "importance": item.get("importance"),
+            "timestamp": item.get("timestamp"),
+        }
+        for item in state.get("short_term", [])
+        if isinstance(item, dict)
+    ]
+    return {
+        "id": safe_id,
+        "running": _pid_alive(instance_dir / "pid") is not None,
+        "thought_count": state.get("thought_count", 0),
+        "identity": {
+            key: identity.get(key)
+            for key in (
+                "name", "self_concept", "values", "personality_traits", "purpose",
+                "mood", "initial_mood", "attention_schema",
+            )
+        },
+        "workspace": workspace,
+        "health": state.get("health"),
+        "long_term_count": _long_term_count(instance_dir / "memory.db"),
+    }
+
+
 @app.get("/providers")
 async def list_providers() -> dict[str, list[str]]:
     """Return the provider/model allowlist used by the spawn UI."""
@@ -269,7 +353,7 @@ async def stream_events(name: str) -> StreamingResponse:
     queues.append(queue)
 
     journal_path = instance_dir / "journal.jsonl"
-    history = await Journal(journal_path).recent(limit=50) if journal_path.exists() else []
+    history = _select_history(await Journal(journal_path).recent(limit=400)) if journal_path.exists() else []
     # If the pid file is alive, the tailer will deliver future events through
     # the queue — flag the connection as live.
     is_live = _pid_alive(instance_dir / "pid") is not None

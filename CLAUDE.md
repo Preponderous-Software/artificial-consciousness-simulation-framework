@@ -386,6 +386,8 @@ consciousness-sim/
 │   ├── event_relay.py       # Unix-socket event relay for detach/attach (#59)
 │   ├── web/                 # Standalone FastAPI + SSE dashboard (PR #52, #55)
 │   │   ├── server.py        #   process manager (spawn/stop/archive), SSE stream
+│   │   │                    #   + read-only GET /instances/<id>/state for the
+│   │   │                    #   component view (#197)
 │   │   ├── journal_tail.py  #   polling journal tailer feeding live events
 │   │   ├── _deps.py         #   optional-dependency guard: reports the 'web'
 │   │   │                    #   extra when fastapi/uvicorn are absent (#169)
