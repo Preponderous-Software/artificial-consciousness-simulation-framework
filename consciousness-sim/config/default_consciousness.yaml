@@ -120,6 +120,11 @@ perception:
   every_n_cycles: 3
   timeout_seconds: 10
   cache_last_n: 5                # don't replay the same snippet within N fetches
+  # Optional wikipedia-only focus: null → random articles. Otherwise a
+  # Wikipedia search query, and each fetch is a random hit from its 10,000
+  # best-ranked results — e.g. '"United States"', 'morelike:Chicago',
+  # 'incategory:"Rivers of Texas"'.
+  topic: null
 
 discord:
   # Optional — stream consciousness events to a Discord channel via webhook.
