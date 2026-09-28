@@ -312,16 +312,32 @@ def test_stream_dedups_tail_events_already_in_history(server, consciousness_home
 # POST /instances — spawn
 # ---------------------------------------------------------------------------
 
-def test_spawn_rejects_invalid_name(client):
+def test_spawn_sanitizes_traversal_name(client, consciousness_home, monkeypatch):
+    """A traversal-shaped name is sanitized, not rejected, and never escapes
+    CONSCIOUSNESS_HOME. Popen is stubbed: an unstubbed call started a real
+    `etc_passwd` daemon on every pytest run and never stopped it (#190)."""
     c, _ = client
+    seen: dict = {}
+
+    class FakeProc:
+        def __init__(self): self.pid = 12345
+        def wait(self, timeout=None): return 0
+
+    def fake_popen(cmd, **kwargs):
+        seen["cmd"] = cmd
+        return FakeProc()
+
+    monkeypatch.setattr("interfaces.web.server.subprocess.Popen", fake_popen)
+
     r = c.post("/instances", json={"name": "../../etc/passwd"})
-    # The name sanitizes to something safe, but pydantic may still accept it.
-    # Either 400 from sanitize or successful sanitized run — check the
-    # response doesn't escape the home dir.
-    if r.status_code == 200:
-        assert ".." not in r.json()["id"]
-    else:
-        assert r.status_code in (400, 422)
+
+    assert r.status_code == 200
+    assert r.json()["id"] == "etc_passwd"
+    name_arg = seen["cmd"][seen["cmd"].index("--name") + 1]
+    assert name_arg == "etc_passwd"
+    created = (consciousness_home / "etc_passwd").resolve()
+    assert created.is_dir()
+    assert created.parent == consciousness_home.resolve()
 
 
 def test_spawn_rejects_unknown_provider(client):
