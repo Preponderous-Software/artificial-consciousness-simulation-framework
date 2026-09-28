@@ -233,6 +233,10 @@ python scripts/spawn.py --name "Aria"
 # Override provider at launch
 python scripts/spawn.py --name "Aria" --provider anthropic --model claude-opus-4-7
 
+# Run with a per-instance config (#187) — persisted to ~/.consciousness/Aria/config.yaml
+# and reused by resume.py and later spawns; --provider/--model persist the same way
+python scripts/spawn.py --name "Aria" --config my-aria.yaml
+
 # Run with debug logging (logs go to ~/.consciousness/Aria/run.log)
 python scripts/spawn.py --name "Aria" --log-level DEBUG
 
@@ -400,7 +404,8 @@ consciousness-sim/
 │   ├── stop.py              # Send SIGTERM to a --bg instance (5s grace);
 │   │                        #   --force sends SIGKILL immediately instead
 │   ├── attach.py            # Connect a TUI to a --bg instance via Unix socket (#59)
-│   ├── resume.py            # Restore from saved state
+│   ├── resume.py            # Restore from saved state against the instance's
+│   │                        #   persisted config.yaml; --config replaces it (#187)
 │   ├── inspect.py           # Read-only inspection of a running instance
 │   ├── doctor.py            # Surveys every instance under CONSCIOUSNESS_HOME:
 │   │                        #   alive / stopped / orphan from pid files, plus
@@ -409,6 +414,8 @@ consciousness-sim/
 │   ├── experiment.py        # Experiment harness CLI (issue #57): run / list /
 │   │                        #   status / replay-analysis / compare / prune /
 │   │                        #   check-smoke subcommands
+│   ├── _config.py           # Per-instance config resolution: --config > persisted
+│   │                        #   <instance>/config.yaml > shipped default (#187)
 │   └── _logging.py          # Per-instance rotating-file log config
 ├── experiments/
 │   ├── manifest.py          # Pydantic ExperimentManifest (YAML schema)

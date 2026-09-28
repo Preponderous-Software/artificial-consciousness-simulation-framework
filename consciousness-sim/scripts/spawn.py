@@ -34,6 +34,7 @@ from core.consciousness import Consciousness
 from interfaces.cli import ConsciousnessCLI
 from interfaces.usage_reporting import report_startup, start_usage_reporting
 from persistence.paths import consciousness_dir
+from scripts._config import ConfigError, resolve_config_path
 from scripts._logging import configure_logging
 
 
@@ -109,29 +110,6 @@ def _check_duplicate_pid(name: str, force: bool) -> None:
         pass
 
 
-def _build_config_path(name: str, provider: str | None, model: str | None) -> Path:
-    config_path = Path(__file__).resolve().parents[1] / "config" / "default_consciousness.yaml"
-    if not (provider or model):
-        return config_path
-
-    import yaml
-
-    base = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    if provider:
-        base["llm"]["provider"] = provider
-    if model:
-        base["llm"]["model"] = model
-    # Persist the override into the consciousness dir rather than /tmp — the
-    # previous tempfile-with-delete=False approach (#105) leaked a file on
-    # every spawn. Writing into the instance dir is overwritten on each spawn
-    # and makes the resolved config inspectable post-hoc.
-    agent_dir = consciousness_dir(name)
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    out_path = agent_dir / "_spawn_config.yaml"
-    out_path.write_text(yaml.safe_dump(base, sort_keys=False), encoding="utf-8")
-    return out_path
-
-
 async def _run(mind: Consciousness, headless: bool) -> None:
     """Unified async entry point for all foreground modes."""
     if headless:
@@ -155,6 +133,14 @@ async def _run(mind: Consciousness, headless: bool) -> None:
 @click.option("--name", required=True, type=str, help="Consciousness name")
 @click.option("--provider", default=None, type=str, help="LLM provider override")
 @click.option("--model", default=None, type=str, help="Model override")
+@click.option(
+    "--config",
+    "config_file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Config file to run this instance with; copied to <instance>/config.yaml "
+         "so resume.py and later spawns keep it (#187).",
+)
 @click.option("--log-level", default="WARNING", show_default=True, help="Log level (DEBUG/INFO/WARNING/ERROR)")
 @click.option("--headless", is_flag=True, default=False, help="Skip TUI — run as a foreground log-only process")
 @click.option("--bg", is_flag=True, default=False, help="Detach into background (implies --headless); logs to run.log")
@@ -163,6 +149,7 @@ def main(
     name: str,
     provider: str | None,
     model: str | None,
+    config_file: Path | None,
     log_level: str,
     headless: bool,
     bg: bool,
@@ -181,6 +168,15 @@ def main(
     # terminal rather than run.log. The startup event itself is sent below by
     # the process that runs the instance, so a `--bg` spawn counts once.
     usage = start_usage_reporting(log=click.echo)
+
+    # Resolved before `--bg` detaches so a bad --config fails in the caller's
+    # terminal instead of only in run.log. The child repeats the resolution
+    # from the forwarded argv, which rewrites the same file with the same
+    # content.
+    try:
+        config_path = resolve_config_path(name, config_file, provider, model)
+    except ConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     if bg:
         import subprocess
@@ -215,7 +211,7 @@ def main(
         return
 
     log_path = configure_logging(name, log_level)
-    logging.info("Spawn started — logs: %s", log_path)
+    logging.info("Spawn started — logs: %s, config: %s", log_path, config_path)
     report_startup(usage, "spawn")
 
     # Foreground/--headless modes also record a pid file so future spawns
@@ -241,7 +237,6 @@ def main(
 
     atexit.register(_cleanup_pid_file)
 
-    config_path = _build_config_path(name, provider, model)
     mind = Consciousness(name=name, config_path=str(config_path))
     asyncio.run(_run(mind, headless))
 

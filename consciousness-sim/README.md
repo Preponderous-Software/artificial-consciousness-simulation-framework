@@ -95,6 +95,11 @@ python scripts/spawn.py --name Aria --bg
 # Stale pid files (process gone) are cleaned silently. Pass --force to spawn anyway:
 python scripts/spawn.py --name Aria --bg --force
 
+# Per-instance config (#187) — copied to ~/.consciousness/Aria/config.yaml, which
+# resume.py, later spawns and the dashboard's respawn keep using. --provider /
+# --model apply on top of it and are persisted the same way.
+python scripts/spawn.py --name Aria --bg --config my-aria.yaml
+
 # Standalone web dashboard — separate process, manages many instances
 python scripts/web.py --port 8080
 # Default bind is 127.0.0.1; opt into LAN with --host 0.0.0.0
@@ -122,6 +127,9 @@ python scripts/doctor.py --json
 # Resume a previously persisted instance — restores identity/mood/short-term
 # buffer from disk instead of starting fresh, then runs the interactive TUI
 python scripts/resume.py --name Aria
+
+# Replace the instance's persisted config.yaml and resume with it
+python scripts/resume.py --name Aria --config my-aria.yaml
 
 # Read-only inspection of a persisted or running instance's recent journal
 # events, without starting the run loop
@@ -232,6 +240,8 @@ python scripts/spawn.py --name Sage --bg
 The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP failures, timeouts, and 429s are swallowed and logged — Discord outages never break a thought cycle. Hosts other than `discord.com` / `discordapp.com` are rejected at startup.
 
 ## Configuration Guide (`config/default_consciousness.yaml`)
+
+Every instance runs against this shipped default unless it has been customized. `spawn.py --config FILE` (and `--provider` / `--model`) validate the result with `_validate_config()` and copy it to `<CONSCIOUSNESS_HOME>/<name>/config.yaml`; from then on `spawn.py` and `resume.py` prefer that file, and the resolved path is logged at INFO in `run.log`. The copy is a snapshot: later edits to the source file or to the shipped default do not reach it, so edit the instance's `config.yaml` directly (or pass `--config` again), and delete it to return the instance to the default. `${VAR}` references are kept as written, so secrets are never persisted. The pre-#187 `_spawn_config.yaml` is no longer written or read.
 
 - `consciousness.name`: default identity name (overridden by CLI)
 - `consciousness.origin_story`: initial narrative self-description
