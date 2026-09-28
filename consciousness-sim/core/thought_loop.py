@@ -83,6 +83,25 @@ class ThoughtCycleResult:
     prediction_error: float = 0.0
 
 
+# Labels may arrive bolded or with a markdown bullet ("**REWRITE:**", "- REWRITE:").
+_REWRITE_LABEL_RE = re.compile(r"(?im)^[\s>*_#-]*rewrite[\s*_]*:[\s*_]*")
+_CRITIQUE_LABEL_RE = re.compile(r"(?im)^[\s>*_#-]*critique[\s*_]*:")
+
+
+def _extract_rewrite(reply: str) -> str | None:
+    """Return the text after the last ``REWRITE:`` label, or None if absent or empty."""
+    matches = list(_REWRITE_LABEL_RE.finditer(reply))
+    if not matches:
+        return None
+    body = reply[matches[-1].end():]
+    # A model that repeats the format ends the rewrite at the next CRITIQUE:.
+    nxt = _CRITIQUE_LABEL_RE.search(body)
+    if nxt:
+        body = body[: nxt.start()]
+    body = body.strip().strip("*_").strip().strip('"\u201c\u201d').strip()
+    return body or None
+
+
 class ThoughtLoop:
     """Runs asynchronous thought cycles with probabilistic introspection."""
 
@@ -273,10 +292,13 @@ class ThoughtLoop:
 
         Feedback from this later stage modulates the earlier representation
         (the raw thought) before it is rendered — see the module docstring's
-        RPT-2 mapping. Any failure (LLM error) falls back to the un-critiqued
+        RPT-2 mapping. The reply is asked for as labelled ``CRITIQUE:`` /
+        ``REWRITE:`` sections and only the rewrite replaces the thought (#192):
+        small models otherwise return the critique prose along with the
+        rewrite, and it was stored as the thought. An LLM error or a reply
+        without a usable ``REWRITE:`` section falls back to the un-critiqued
         raw thought, logged at WARNING, mirroring the no-silent-fallback
-        posture of production providers (#46) — the failure is surfaced, not
-        swallowed into deterministic output.
+        posture of production providers (#46).
         """
         assert self.critique_prompt_path is not None
         prompt = self.critique_prompt_path.read_text(encoding="utf-8").format(
@@ -284,11 +306,12 @@ class ThoughtLoop:
             context=context,
         )
         try:
-            return await self.provider.generate(
+            reply = await self.provider.generate(
                 prompt=prompt,
                 system=(
-                    "Reply ONLY with the rewritten thought, in first person, present tense. "
-                    "Do not explain your reasoning or add commentary."
+                    "Reply with exactly two labelled lines: 'CRITIQUE:' then 'REWRITE:'. "
+                    "The REWRITE is the thought itself, in first person, present tense, "
+                    "with no commentary about rewriting."
                 ),
                 temperature=self.thought_temperature,
                 max_tokens=self.thought_max_tokens,
@@ -296,6 +319,14 @@ class ThoughtLoop:
         except Exception:
             logging.warning("RPT-2 critique pass failed; falling back to raw thought", exc_info=True)
             return raw_thought
+        rewrite = _extract_rewrite(reply)
+        if rewrite is None:
+            logging.warning(
+                "RPT-2 critique reply had no usable REWRITE: section; falling back to raw thought: %r",
+                reply[:200],
+            )
+            return raw_thought
+        return rewrite
 
     async def _maybe_fetch_perception(self, thought_count: int) -> Perception | None:
         """Fetch a perception every Nth cycle. Failures yield None (logged by provider)."""

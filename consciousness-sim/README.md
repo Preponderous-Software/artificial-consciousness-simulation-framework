@@ -258,7 +258,7 @@ Every instance runs against this shipped default unless it has been customized. 
 - `thought_loop.reflection_probability`: base chance of reflection per cycle (0.0 disables all reflection including HOT-2/PP-1 boosts)
 - `thought_loop.existential_inquiry_every_n_thoughts`: deterministic existential cadence
 - `thought_loop.perf_log_every_n`: log per-component cycle timing (embed/search/generate/perception ms + prompt_chars + pred_error) every N thoughts at INFO level; 0 = off (default 10)
-- `thought_loop.rpt_critique`: optional, default `false`. RPT-2 (#93): when `true`, adds a second `provider.generate()` pass (`llm/prompts/critique.txt`) that critiques the raw thought against its context and rewrites it before rendering — literal feedback from a later stage modulating the earlier representation. Doubles LLM calls (and roughly doubles per-cycle latency) when enabled; a critique-pass failure falls back to the raw thought, logged at WARNING.
+- `thought_loop.rpt_critique`: optional, default `false`. RPT-2 (#93): when `true`, adds a second `provider.generate()` pass (`llm/prompts/critique.txt`) that critiques the raw thought against its context and rewrites it before rendering; the reply is requested as labelled `CRITIQUE:` / `REWRITE:` sections and only the rewrite is kept (#192) — literal feedback from a later stage modulating the earlier representation. Doubles LLM calls (and roughly doubles per-cycle latency) when enabled; a critique-pass failure, or a reply without a usable `REWRITE:` section, falls back to the raw thought, logged at WARNING.
 - `memory.short_term_capacity`: working-memory buffer size
 - `memory.consolidation_interval_minutes`: consolidator loop interval
 - `memory.forgetting_curve_enabled`: toggle long-term decay
