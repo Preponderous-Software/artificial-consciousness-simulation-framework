@@ -92,10 +92,26 @@ class MemoryConsolidator:
         self.prompt_path = prompt_path
         self.forgetting_curve_enabled = forgetting_curve_enabled
         self.decay_rate = decay_rate
+        # Timestamp of the newest episodic event already offered to a pass;
+        # without it every pass re-consolidated the same 20-event window and
+        # stored duplicate memories. None → seeded from long-term on first pass.
+        self._watermark: str | None = None
 
     async def consolidate_once(self) -> ConsolidationResult:
         start = time.monotonic()
-        events = await self.episodic.recent(limit=20)
+        if self._watermark is None:
+            # A new process has no record of earlier passes. The newest
+            # long-term row was written at the end of the last pass that
+            # stored anything, so events at or before it were already offered
+            # to consolidation. Events created during that pass's LLM call are
+            # skipped too — a small loss, versus re-storing the whole window
+            # after every restart.
+            self._watermark = await self.long_term.latest_timestamp()
+        window = await self.episodic.recent(limit=20)
+        watermark = self._watermark
+        # Both sides are datetime.now(timezone.utc).isoformat() strings, which
+        # order lexicographically in time order.
+        events = [e for e in window if watermark is None or e.timestamp > watermark]
         if not events:
             return ConsolidationResult(
                 stored=0,
@@ -157,6 +173,10 @@ class MemoryConsolidator:
                 stored += 1
             if stored:
                 logging.info("Consolidation fallback stored %d memories with default importance/valence.", stored)
+
+        # Advanced only once the pass has completed: a generate() failure
+        # propagates above and the same events are offered again next pass.
+        self._watermark = max(e.timestamp for e in events)
 
         self.short_term.prune_to_capacity()
         if self.forgetting_curve_enabled:
