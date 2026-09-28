@@ -301,7 +301,7 @@ Every instance runs against this shipped default unless it has been customized. 
 10. Reflection trigger: `effective_prob = base + HOT-2 boost + PP-1 boost` (capped at 1.0; base=0.0 disables entirely); the reflection text passes through `InnerVoice.scrub_reflection()` — leading meta-preambles and markdown headers stripped, second-person instructional drift replaced by a fallback — before it is saved to short-term + episodic (#132)
 11. Periodically trigger existential inquiry (deterministic, every N thoughts), scrubbed the same way before it is saved
 12. Update `AttentionSchema` via `update()` on success (sets focus/theme, resets salience to 1.0); on a failed cycle the outer loop calls `decay_only()` instead so salience fades smoothly (#120). Mood is drifted via `IdentityDocument.drift_mood()` — trigger-driven drift plus additive homeostatic reversion (#119), with per-dimension trigger strengths taken either from the lexical `_MOOD_TRIGGERS` lists or, when `mood.semantic.enabled` is on, from `SemanticMoodScorer` embedding similarity (#21). Outer loop appends to journal and emits events to handlers, including `on_health_change` on status transitions (#117).
-13. Background consolidator compresses episodic traces into durable long-term memories and emits one `on_consolidation` event per pass (#89), success or failure
+13. Background consolidator compresses episodic traces it has not yet consolidated (#191) into durable long-term memories and emits one `on_consolidation` event per pass (#89), success or failure
 
 ## Extending the System
 

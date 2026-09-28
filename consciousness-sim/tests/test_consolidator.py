@@ -27,10 +27,15 @@ from memory.consolidator import MemoryConsolidator
 # Fakes — just enough to drive consolidate_once() without touching disk or LLMs
 # ---------------------------------------------------------------------------
 
+_EVENT_SEQ = iter(range(1_000_000))
+
+
 class _FakeEpisodicEvent:
-    def __init__(self, kind: str, content: str) -> None:
+    def __init__(self, kind: str, content: str, timestamp: str | None = None) -> None:
         self.kind = kind
         self.content = content
+        # Strictly increasing ISO-shaped timestamps, like EpisodicMemory.append.
+        self.timestamp = timestamp or f"2026-01-01T00:00:00.{next(_EVENT_SEQ):06d}+00:00"
 
 
 class _FakeEpisodic:
@@ -38,14 +43,21 @@ class _FakeEpisodic:
     def __init__(self, events: list[_FakeEpisodicEvent] | None = None) -> None:
         self._events = events or []
 
+    def append(self, event: _FakeEpisodicEvent) -> None:
+        self._events.append(event)
+
     async def recent(self, limit: int = 20):
         return self._events[-limit:]
 
 
 class _FakeLongTerm:
     """Records every add_memory call so tests can assert against them."""
-    def __init__(self) -> None:
+    def __init__(self, latest: str | None = None) -> None:
         self.added: list[dict] = []
+        self.latest = latest
+
+    async def latest_timestamp(self) -> str | None:
+        return self.latest
 
     async def add_memory(self, summary: str, valence: float, importance: float, embedding) -> None:
         self.added.append({
@@ -70,8 +82,10 @@ class _ScriptedProvider:
     """Returns a predetermined `generate` output. Embeds return a constant vector."""
     def __init__(self, output: str) -> None:
         self._output = output
+        self.prompts: list[str] = []
 
     async def generate(self, prompt, system, temperature, max_tokens):
+        self.prompts.append(prompt)
         return self._output
 
     async def embed(self, text: str) -> list[float]:
@@ -442,3 +456,98 @@ def test_run_forever_swallows_callback_errors() -> None:
 
     asyncio.run(_runner())
     assert callback_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# Watermark — each episodic event is consolidated at most once
+# ---------------------------------------------------------------------------
+
+_ONE_MEMORY = "- [Importance: 7] [Emotional valence: 0.3] X happened."
+
+
+def _watermark_consolidator(
+    episodic: _FakeEpisodic, provider, long_term: _FakeLongTerm, tmp: str
+) -> MemoryConsolidator:
+    prompt_path = Path(tmp) / "p.txt"
+    prompt_path.write_text("PROMPT {episodic_chunk}", encoding="utf-8")
+    return MemoryConsolidator(
+        provider=provider,
+        episodic=episodic,
+        long_term=long_term,
+        short_term=_FakeShortTerm(),
+        prompt_path=prompt_path,
+        forgetting_curve_enabled=False,
+        decay_rate=0.0,
+    )
+
+
+def test_second_pass_with_no_new_events_stores_nothing_and_skips_llm() -> None:
+    """Regression: every pass re-read the same 20-event window, so an idle
+    window was re-summarised and stored again every interval."""
+    episodic = _FakeEpisodic([_FakeEpisodicEvent("thought", "I notice X.")])
+    provider = _ScriptedProvider(_ONE_MEMORY)
+    long_term = _FakeLongTerm()
+    with tempfile.TemporaryDirectory() as tmp:
+        consolidator = _watermark_consolidator(episodic, provider, long_term, tmp)
+        first = asyncio.run(consolidator.consolidate_once())
+        second = asyncio.run(consolidator.consolidate_once())
+
+    assert first.stored == 1
+    assert second.stored == 0
+    assert second.events_in == 0
+    assert len(long_term.added) == 1
+    assert len(provider.prompts) == 1
+
+
+def test_later_pass_offers_only_events_newer_than_the_last_pass() -> None:
+    episodic = _FakeEpisodic([_FakeEpisodicEvent("thought", "old event")])
+    provider = _ScriptedProvider(_ONE_MEMORY)
+    with tempfile.TemporaryDirectory() as tmp:
+        consolidator = _watermark_consolidator(episodic, provider, _FakeLongTerm(), tmp)
+        asyncio.run(consolidator.consolidate_once())
+        episodic.append(_FakeEpisodicEvent("thought", "new event"))
+        result = asyncio.run(consolidator.consolidate_once())
+
+    assert result.events_in == 1
+    assert "new event" in provider.prompts[1]
+    assert "old event" not in provider.prompts[1]
+
+
+def test_new_process_seeds_watermark_from_newest_long_term_memory() -> None:
+    """After a restart, events already consolidated before the newest stored
+    memory are not re-offered."""
+    old = _FakeEpisodicEvent("thought", "before restart", "2026-01-01T00:00:01+00:00")
+    new = _FakeEpisodicEvent("thought", "after restart", "2026-01-01T00:00:03+00:00")
+    provider = _ScriptedProvider(_ONE_MEMORY)
+    long_term = _FakeLongTerm(latest="2026-01-01T00:00:02+00:00")
+    with tempfile.TemporaryDirectory() as tmp:
+        consolidator = _watermark_consolidator(_FakeEpisodic([old, new]), provider, long_term, tmp)
+        result = asyncio.run(consolidator.consolidate_once())
+
+    assert result.events_in == 1
+    assert "after restart" in provider.prompts[0]
+    assert "before restart" not in provider.prompts[0]
+
+
+def test_failed_generate_does_not_advance_watermark() -> None:
+    class _FlakyProvider(_ScriptedProvider):
+        def __init__(self) -> None:
+            super().__init__(_ONE_MEMORY)
+            self.fail = True
+
+        async def generate(self, prompt, system, temperature, max_tokens):
+            if self.fail:
+                raise RuntimeError("provider down")
+            return await super().generate(prompt, system, temperature, max_tokens)
+
+    episodic = _FakeEpisodic([_FakeEpisodicEvent("thought", "I notice X.")])
+    provider = _FlakyProvider()
+    with tempfile.TemporaryDirectory() as tmp:
+        consolidator = _watermark_consolidator(episodic, provider, _FakeLongTerm(), tmp)
+        with pytest.raises(RuntimeError):
+            asyncio.run(consolidator.consolidate_once())
+        provider.fail = False
+        result = asyncio.run(consolidator.consolidate_once())
+
+    assert result.stored == 1
+    assert result.events_in == 1

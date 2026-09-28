@@ -209,6 +209,13 @@ class LongTermMemory:
             )
         return new_id
 
+    async def latest_timestamp(self) -> str | None:
+        """ISO timestamp of the most recently inserted memory, or None when empty."""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("SELECT MAX(timestamp) FROM memories")
+            row = await cursor.fetchone()
+            return str(row[0]) if row and row[0] is not None else None
+
     async def count(self) -> int:
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute("SELECT COUNT(*) FROM memories")

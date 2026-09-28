@@ -90,6 +90,22 @@ def test_long_term_eviction_breaks_importance_ties_by_age() -> None:
     asyncio.run(_run())
 
 
+def test_long_term_latest_timestamp_tracks_newest_insert() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            ltm = LongTermMemory(Path(d) / "mem.db")
+            await ltm.initialize()
+            assert await ltm.latest_timestamp() is None
+            await ltm.add_memory("first", 0.0, 5.0, [1.0, 0.0, 0.0])
+            first = await ltm.latest_timestamp()
+            await ltm.add_memory("second", 0.0, 5.0, [0.0, 1.0, 0.0])
+            second = await ltm.latest_timestamp()
+            assert first is not None and second is not None
+            assert second > first
+
+    asyncio.run(_run())
+
+
 def test_long_term_max_rows_zero_is_unbounded() -> None:
     async def _run() -> None:
         with tempfile.TemporaryDirectory() as d:

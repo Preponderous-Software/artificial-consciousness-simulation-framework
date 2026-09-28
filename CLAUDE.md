@@ -448,7 +448,7 @@ consciousness-sim/
 6. `inner_voice.render()` → styled thought → `MetacognitiveMonitor.score()` → importance-adjusted `short_term.add()` + `episodic.append()`; prediction error computed against prior cycle's `_predicted_theme`; `_predicted_theme` updated for next cycle
 7. Reflection trigger: `effective_prob = min(1.0, base + HOT-2 boost + PP-1 boost)` — fires only if `reflection_probability > 0.0`; → `reflection_engine.shallow/deep_reflection()` → `inner_voice.scrub_reflection()` strips leading meta-preambles/markdown headers and rejects second-person instructional drift (#132) before `short_term.add()` + `episodic.append()`; existential inquiry every N cycles (same scrub applied); `AttentionSchema.update()` (informed by cycle outcome: perception/existential/reflection/memory/introspection)
 8. `consciousness.py` outer loop: `journal.append()` + events emitted via `Consciousness._emit()` to registered handlers (CLI, observer, web SSE, Discord sink if configured)
-9. Background: `MemoryConsolidator.consolidate_once()` every N minutes — episodic → LLM summary → long-term embeddings
+9. Background: `MemoryConsolidator.consolidate_once()` every N minutes — episodic events newer than the consolidator's watermark → LLM summary → long-term embeddings (#191)
 
 **Key invariants:**
 - `_emit()` never propagates handler exceptions — each handler is isolated in `try/except`.
@@ -456,6 +456,7 @@ consciousness-sim/
 - `_validate_config()` must complete before any subsystem is constructed.
 - `long_term.add_memory()` rejects embeddings with dimension mismatches.
 - Memory consolidation logs a warning when 0 memories are stored from non-empty episodic events — always investigate.
+- Each episodic event is offered to consolidation at most once (#191): `MemoryConsolidator` keeps a watermark (newest consolidated event timestamp), advanced only after a pass completes so a `generate()` failure re-offers the same events, and seeded on a new process from `LongTermMemory.latest_timestamp()` so a restart does not re-store the window. A pass with no new events makes no LLM call. Before #191 every pass re-read the last 20 events and stored duplicate memories.
 - `OllamaProvider` serializes all requests via a process-wide `asyncio.Semaphore(1)` — concurrent calls queue rather than compete; see `llm/provider.py`.
 - All LLM failures in production providers (Ollama / Anthropic / OpenAI) raise — they do **not** fall back to deterministic output, and they log a `WARNING` before propagating. Silent fallback is a bug (#46). `MockProvider` retains deterministic generation for tests.
 - `reflection_probability=0.0` disables reflection entirely — HOT-2 and PP-1 boosts do not override an explicit zero.
