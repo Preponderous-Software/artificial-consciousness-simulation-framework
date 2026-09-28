@@ -9,7 +9,9 @@ model samples only from its prior and collapses into a single semantic
 basin.
 
 Gap: perception is read-only — the agent cannot yet *choose* what to
-perceive (AE-2 remains unsatisfied). Phase 3 of issue #53 would add a
+perceive (AE-2 remains unsatisfied). `perception.topic` narrows the
+Wikipedia source to an operator-chosen search query; the operator, not the
+agent, makes that choice, so it does not advance AE-2. Phase 3 of issue #53 would add a
 `query` parameter so reflection can drive the next perception, taking a
 first step toward active inference.
 """
@@ -17,7 +19,9 @@ first step toward active inference.
 from __future__ import annotations
 
 import logging
+import random
 import re
+from urllib.parse import quote, urlencode
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -101,22 +105,42 @@ class MockPerception(PerceptionProvider):
 
 
 class WikipediaPerception(PerceptionProvider):
-    """Fetches a random Wikipedia article summary via the public REST API.
+    """Fetches a Wikipedia article summary via the public REST API.
+
+    Without a ``topic`` the article is random. With one, it is a random hit
+    of that CirrusSearch query (e.g. ``"United States"``,
+    ``morelike:Chicago``, ``incategory:"Rivers of Texas"``), so an operator
+    can narrow what the instance perceives.
 
     Caches the most recent N article titles and rejects repeats so the
     agent isn't fed the same article twice in a short window.
     """
 
     API_URL = "https://en.wikipedia.org/api/rest_v1/page/random/summary"
+    SUMMARY_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/"
+    SEARCH_URL = "https://en.wikipedia.org/w/api.php"
+    # CirrusSearch rejects offsets past 10,000, so a topic with more hits is
+    # sampled from its 10,000 best-ranked results.
+    MAX_SEARCH_OFFSET = 9_999
     USER_AGENT = (
         "consciousness-sim/0.1 "
         "(https://github.com/Preponderous-Software/artificial-consciousness-simulation-framework)"
     )
 
-    def __init__(self, timeout_seconds: float = 10.0, cache_last_n: int = 5) -> None:
+    def __init__(
+        self,
+        timeout_seconds: float = 10.0,
+        cache_last_n: int = 5,
+        topic: str | None = None,
+        rng: random.Random | None = None,
+    ) -> None:
         self._timeout = float(timeout_seconds)
         self._cache_n = max(0, int(cache_last_n))
         self._recent_titles: list[str] = []
+        self._topic = topic.strip() if topic and topic.strip() else None
+        self._rng = rng or random.Random()
+        # Learned from the first search response; bounds later random offsets.
+        self._topic_hits: int | None = None
 
     async def fetch(self) -> Perception | None:
         import httpx
@@ -128,10 +152,14 @@ class WikipediaPerception(PerceptionProvider):
                 # endpoint returns 303 See Other → /summary/<title> for every
                 # request. Without this, every fetch fails with httpx.HTTPStatusError.
                 async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=True) as client:
-                    response = await client.get(
-                        self.API_URL,
-                        headers={"User-Agent": self.USER_AGENT},
-                    )
+                    url = self.API_URL
+                    if self._topic is not None:
+                        picked = await self._pick_topic_title(client)
+                        if picked is None:
+                            last_error = ValueError(f"topic search {self._topic!r} returned no articles")
+                            continue
+                        url = self.SUMMARY_URL + quote(picked.replace(" ", "_"), safe="")
+                    response = await client.get(url, headers={"User-Agent": self.USER_AGENT})
                     response.raise_for_status()
                     data = response.json()
             except Exception as exc:
@@ -165,6 +193,49 @@ class WikipediaPerception(PerceptionProvider):
             )
         return None
 
+    async def _pick_topic_title(self, client: Any) -> str | None:
+        """Return the title of one random hit for ``self._topic``, or None if it has none."""
+        upper = self.MAX_SEARCH_OFFSET if self._topic_hits is None else min(
+            self._topic_hits, self.MAX_SEARCH_OFFSET + 1
+        )
+        offset = self._rng.randrange(upper) if upper > 0 else 0
+        data = await self._search(client, offset)
+        hits = int(((data.get("query") or {}).get("searchinfo") or {}).get("totalhits") or 0)
+        self._topic_hits = hits
+        results = (data.get("query") or {}).get("search") or []
+        if not results and 0 < hits <= offset:
+            # First call guessed past the end of a small result set; now that
+            # totalhits is known, draw again inside it.
+            data = await self._search(client, self._rng.randrange(min(hits, self.MAX_SEARCH_OFFSET + 1)))
+            results = (data.get("query") or {}).get("search") or []
+        if not results:
+            return None
+        title = str(results[0].get("title") or "").strip()
+        return title or None
+
+    async def _search(self, client: Any, offset: int) -> dict[str, Any]:
+        params = {
+            "action": "query",
+            "list": "search",
+            "srsearch": self._topic,
+            "srnamespace": 0,
+            "srlimit": 1,
+            "sroffset": offset,
+            "srinfo": "totalhits",
+            "srprop": "",
+            "format": "json",
+        }
+        response = await client.get(
+            f"{self.SEARCH_URL}?{urlencode(params)}", headers={"User-Agent": self.USER_AGENT}
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict):
+            raise ValueError("search response is not a JSON object")
+        if "error" in data:
+            raise ValueError(f"search error: {data['error']}")
+        return data
+
     def _remember(self, title: str) -> None:
         if self._cache_n <= 0:
             return
@@ -180,6 +251,7 @@ def build_perception_provider(provider: str, **kwargs: Any) -> PerceptionProvide
         return WikipediaPerception(
             timeout_seconds=float(kwargs.get("timeout_seconds", 10.0)),
             cache_last_n=int(kwargs.get("cache_last_n", 5)),
+            topic=kwargs.get("topic"),
         )
     if normalized == "mock":
         return MockPerception()

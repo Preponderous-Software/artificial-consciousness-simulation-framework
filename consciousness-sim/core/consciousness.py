@@ -154,6 +154,21 @@ def _validate_config(config: dict[str, Any]) -> None:
                 f"(null = use llm.model), got {embed_model!r}"
             )
 
+    # Optional: perception.topic. Absent/null → random articles, the pre-topic
+    # behaviour. Only the wikipedia source can narrow by topic, so setting it
+    # for another source is a config mistake rather than a silent no-op.
+    topic = config["perception"].get("topic")
+    if topic is not None:
+        if not isinstance(topic, str) or not topic.strip():
+            raise ValueError(
+                f"Config 'perception.topic' must be a non-empty search query or null, got {topic!r}"
+            )
+        if str(config["perception"].get("provider", "")).lower() != "wikipedia":
+            raise ValueError(
+                "Config 'perception.topic' is only supported with provider 'wikipedia', "
+                f"got provider {config['perception'].get('provider')!r}"
+            )
+
     # Optional: llm.circuit_breaker (#114). Absent → no breaker, which is the
     # pre-#114 behaviour of waiting out every request timeout.
     breaker_cfg = config["llm"].get("circuit_breaker")
@@ -468,6 +483,7 @@ class Consciousness:
                 provider=str(perc_cfg["provider"]),
                 timeout_seconds=float(perc_cfg["timeout_seconds"]),
                 cache_last_n=int(perc_cfg["cache_last_n"]),
+                topic=perc_cfg.get("topic"),
             )
 
         self.thought_loop = ThoughtLoop(

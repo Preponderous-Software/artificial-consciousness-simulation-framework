@@ -275,6 +275,7 @@ Every instance runs against this shipped default unless it has been customized. 
 - `perception.every_n_cycles`: fetch cadence (default 3)
 - `perception.timeout_seconds`: per-fetch HTTP timeout (failures gracefully skip)
 - `perception.cache_last_n`: don't replay the same snippet within N fetches
+- `perception.topic`: optional, default `null` (random articles). A Wikipedia search query that narrows the `wikipedia` source: each fetch is a random hit from the query's 10,000 best-ranked results, e.g. `'"United States"'`, `'morelike:Chicago'`, `'incategory:"Rivers of Texas"'`. A query with no hits degrades like any failed fetch (WARNING, cycle continues without perception); a blank topic or a topic on a non-`wikipedia` provider is rejected at startup. The operator chooses the topic, not the agent, so it does not advance AE-2
 - `discord.enabled`: opt in to Discord webhook streaming (see "Discord webhook" above)
 - `discord.webhook_url`: webhook URL — use `${ENV_VAR}` indirection; never commit the literal URL
 - `discord.username`: optional. Override the webhook's display name. `null`/absent → falls back to the consciousness's own name once the sink is bound to a running instance.
