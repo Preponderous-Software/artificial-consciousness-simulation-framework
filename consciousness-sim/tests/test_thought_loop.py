@@ -710,7 +710,7 @@ def test_run_cycle_returns_trace_of_retrieval_prediction_reflection_and_timings(
             )
             assert trace.reflection_fired is True
             assert result.reflection is not None
-            assert set(trace.timings_ms) == {"embed", "search", "perception", "generate", "critique"}
+            assert set(trace.timings_ms) == {"embed", "search", "perception", "generate", "critique", "speak"}
             assert trace.prompt_chars > 0
 
     asyncio.run(_run())
@@ -734,5 +734,109 @@ def test_run_cycle_trace_records_skipped_reflection() -> None:
             assert result.trace.reflection_effective == 0.0
             assert result.trace.retrieved == []
             assert result.reflection is None
+
+    asyncio.run(_run())
+
+
+# --- conversation (#198) ------------------------------------------------------
+
+def _conversation_loop(base: Path, replies: list, perception_provider=None):
+    from unittest.mock import MagicMock
+    from persistence.inbox import Inbox
+    provider = MockProvider()
+    provider.generate = AsyncMock(side_effect=replies)
+    ltm = MagicMock()
+    ltm.similarity_search = AsyncMock(return_value=[])
+    speak_prompt = base / "speak.txt"
+    speak_prompt.write_text(
+        "{name} {identity_summary} {short_term_buffer} {message_block} {thought} {sender}",
+        encoding="utf-8",
+    )
+    loop = _make_loop(base, provider, reflection_probability=0.0)
+    loop.long_term = ltm
+    loop.inbox = Inbox(base / "inbox.jsonl")
+    loop.speak_prompt_path = speak_prompt
+    if perception_provider is not None:
+        loop.perception_provider = perception_provider
+        loop.perception_every_n = 1
+    return loop, provider
+
+
+def test_message_preempts_perception_and_gets_a_reply() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            wiki = AsyncMock()
+            wiki.fetch = AsyncMock()
+            loop, provider = _conversation_loop(
+                base,
+                ["I consider the Concho River question.", "Reply: The Concho is a river in Texas."],
+                perception_provider=wiki,
+            )
+            sent = loop.inbox.append("Dan", "What is the Concho River?")
+
+            result = await loop.run_cycle(thought_count=1)
+
+            wiki.fetch.assert_not_awaited()
+            assert result.perception is not None
+            assert result.perception.source == "speech"
+            assert result.perception.title == "Dan says"
+            assert provider.generate.await_count == 2
+            speak_prompt = provider.generate.await_args_list[1].kwargs["prompt"]
+            assert "What is the Concho River?" in speak_prompt
+            assert "untrusted" in speak_prompt
+            assert result.utterance is not None
+            assert result.utterance.text == "The Concho is a river in Texas."
+            assert (result.utterance.to, result.utterance.in_reply_to) == ("Dan", sent.id)
+            kinds = [i.kind for i in loop.short_term.list()]
+            assert kinds[-1] == "utterance"
+            assert loop.identity.attention_schema.focus == "conversation"
+            assert result.trace is not None and "speak" in result.trace.timings_ms
+            episodic = [e.kind for e in await loop.episodic.recent(limit=10)]
+            assert "utterance" in episodic
+
+    asyncio.run(_run())
+
+
+def test_no_message_leaves_cycle_unchanged_and_makes_one_call() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            loop, provider = _conversation_loop(Path(d), ["I note the Wichita River."])
+            result = await loop.run_cycle(thought_count=1)
+            assert provider.generate.await_count == 1
+            assert result.utterance is None
+            assert result.perception is None
+
+    asyncio.run(_run())
+
+
+@pytest.mark.parametrize("reply", [RuntimeError("provider down"), "   ", '""'])
+def test_failed_or_empty_reply_logs_warning_and_says_nothing(reply, caplog) -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            loop, _ = _conversation_loop(Path(d), ["I think about the question.", reply])
+            loop.inbox.append("Dan", "hello?")
+            import logging
+            with caplog.at_level(logging.WARNING):
+                result = await loop.run_cycle(thought_count=1)
+            assert result.utterance is None
+            assert "utterance" not in [i.kind for i in loop.short_term.list()]
+            assert any("Reply to message" in r.message for r in caplog.records)
+
+    asyncio.run(_run())
+
+
+def test_each_message_is_heard_on_its_own_cycle() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            loop, _ = _conversation_loop(Path(d), ["t1", "r1", "t2", "r2", "t3"])
+            loop.inbox.append("Dan", "first")
+            loop.inbox.append("Ada", "second")
+            a = await loop.run_cycle(thought_count=1)
+            b = await loop.run_cycle(thought_count=2)
+            c = await loop.run_cycle(thought_count=3)
+            assert a.perception is not None and a.perception.content == "first"
+            assert b.perception is not None and b.perception.title == "Ada says"
+            assert c.perception is None and c.utterance is None
 
     asyncio.run(_run())

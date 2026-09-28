@@ -38,6 +38,7 @@ from llm.provider import LLMProvider
 from memory.episodic import EpisodicMemory
 from memory.long_term import LongTermMemory
 from memory.short_term import ShortTermMemory
+from persistence.inbox import Inbox, InboxMessage
 
 
 _THEME_STOPWORDS = frozenset({
@@ -98,6 +99,14 @@ class CycleTrace:
 
 
 @dataclass(slots=True)
+class Utterance:
+    """A reply spoken to a person (#198) — the loop's first outward action."""
+    text: str
+    to: str
+    in_reply_to: str
+
+
+@dataclass(slots=True)
 class ThoughtCycleResult:
     thought: str
     reflection: str | None
@@ -106,11 +115,30 @@ class ThoughtCycleResult:
     metacognitive_label: str = "high"
     prediction_error: float = 0.0
     trace: CycleTrace | None = None
+    utterance: Utterance | None = None
 
 
 # Labels may arrive bolded or with a markdown bullet ("**REWRITE:**", "- REWRITE:").
 _REWRITE_LABEL_RE = re.compile(r"(?im)^[\s>*_#-]*rewrite[\s*_]*:[\s*_]*")
 _CRITIQUE_LABEL_RE = re.compile(r"(?im)^[\s>*_#-]*critique[\s*_]*:")
+
+
+_REPLY_LABEL_RE = re.compile(r"^\s*[*_]*(?:reply|response|answer)\s*[*_]*\s*:\s*[*_]*\s*", re.IGNORECASE)
+_SPEAKER_NAME_CHARS = 40
+
+
+def _speech_perception(message: InboxMessage) -> Perception:
+    """A message as the `speech` perception it is delivered as (#198)."""
+    sender = " ".join(message.sender.split())[:_SPEAKER_NAME_CHARS] or "someone"
+    return Perception(source="speech", title=f"{sender} says", content=message.text)
+
+
+def _clean_reply(reply: str) -> str:
+    """Strip a leading 'Reply:' label and wrapping quotes the model sometimes adds."""
+    text = _REPLY_LABEL_RE.sub("", reply.strip(), count=1).strip()
+    if len(text) >= 2 and text[0] in "\"\u201c" and text[-1] in "\"\u201d":
+        text = text[1:-1].strip()
+    return text
 
 
 def _extract_rewrite(reply: str) -> str | None:
@@ -149,6 +177,8 @@ class ThoughtLoop:
         perf_log_every_n: int = 10,
         rpt_critique: bool = False,
         critique_prompt_path: Path | None = None,
+        inbox: Inbox | None = None,
+        speak_prompt_path: Path | None = None,
     ) -> None:
         self.provider = provider
         self.identity = identity
@@ -167,6 +197,8 @@ class ThoughtLoop:
         self.perf_log_every_n = max(0, int(perf_log_every_n))
         self.rpt_critique = bool(rpt_critique)
         self.critique_prompt_path = critique_prompt_path
+        self.inbox = inbox
+        self.speak_prompt_path = speak_prompt_path
         self.inner_voice = InnerVoice(identity.name)
         self.monitor = MetacognitiveMonitor()
         self._predicted_theme: str = ""  # PP-1: continuity prior set at end of each cycle
@@ -192,7 +224,14 @@ class ThoughtLoop:
         memories = "\n".join(f"- {m.summary}" for m in related) or "(none retrieved)"
 
         _t = time.monotonic()
-        perception = await self._maybe_fetch_perception(thought_count)
+        # A waiting message pre-empts the perception cadence (#198): someone
+        # speaking to the instance is attended to on the next cycle.
+        message = await self._next_message()
+        perception = (
+            _speech_perception(message)
+            if message is not None
+            else await self._maybe_fetch_perception(thought_count)
+        )
         _perception_ms = (time.monotonic() - _t) * 1000
         if perception is not None:
             # Lingers into subsequent cycles via short-term buffer and gets
@@ -249,6 +288,16 @@ class ThoughtLoop:
         self.short_term.add("thought", thought, importance=self.monitor.importance(label))
         await self.episodic.append("thought", thought)
 
+        utterance: Utterance | None = None
+        _speak_ms = 0.0
+        if message is not None and perception is not None:
+            _t = time.monotonic()
+            utterance = await self._speak(message, perception, thought, context)
+            _speak_ms = (time.monotonic() - _t) * 1000
+            if utterance is not None:
+                self.short_term.add("utterance", f"(to {utterance.to}) {utterance.text}")
+                await self.episodic.append("utterance", f"I said to {utterance.to}: {utterance.text}")
+
         if self.perf_log_every_n > 0 and thought_count % self.perf_log_every_n == 0:
             logging.info(
                 "Cycle %d perf — embed: %.0fms  search: %.0fms  generate: %.0fms"
@@ -289,7 +338,9 @@ class ThoughtLoop:
             self.short_term.add("existential", existential_text)
             await self.episodic.append("existential", existential_text)
 
-        if perception is not None:
+        if message is not None:
+            focus, theme = "conversation", _extract_theme(message.text)
+        elif perception is not None:
             focus, theme = "perception", _extract_theme(perception.title + " " + perception.content)
         elif existential_text is not None:
             focus, theme = "existential", _extract_theme(existential_text)
@@ -310,6 +361,7 @@ class ThoughtLoop:
             perception=perception,
             metacognitive_label=label,
             prediction_error=prediction_error,
+            utterance=utterance,
             trace=CycleTrace(
                 retrieved=[
                     {"summary": m.summary[:_TRACE_SUMMARY_CHARS], "importance": round(m.importance_score, 3)}
@@ -328,6 +380,7 @@ class ThoughtLoop:
                     "perception": round(_perception_ms, 1),
                     "generate": round(_generate_ms, 1),
                     "critique": round(_critique_ms, 1),
+                    "speak": round(_speak_ms, 1),
                 },
                 prompt_chars=len(prompt_text),
             ),
@@ -373,6 +426,50 @@ class ThoughtLoop:
             )
             return raw_thought
         return rewrite
+
+    async def _next_message(self) -> InboxMessage | None:
+        if self.inbox is None:
+            return None
+        try:
+            return await self.inbox.next_unread()
+        except Exception:
+            logging.warning("Inbox read failed; continuing without a message this cycle", exc_info=True)
+            return None
+
+    async def _speak(
+        self, message: InboxMessage, perception: Perception, thought: str, context: str
+    ) -> Utterance | None:
+        """Reply to a message (#198). A failure is logged and yields no reply —
+        never a fabricated one (#46)."""
+        if self.speak_prompt_path is None:
+            logging.warning("Message %s heard but no speak prompt is configured; not replying", message.id)
+            return None
+        prompt = self.speak_prompt_path.read_text(encoding="utf-8").format(
+            name=self.identity.name,
+            identity_summary=self.identity.summary(),
+            short_term_buffer=context,
+            message_block=render_perception_block(perception),
+            thought=thought,
+            sender=perception.title.removesuffix(" says"),
+        )
+        try:
+            reply = await self.provider.generate(
+                prompt=prompt,
+                system=(
+                    "Reply to the person directly in 1 to 4 plain sentences. "
+                    "Output only the reply."
+                ),
+                temperature=self.thought_temperature,
+                max_tokens=self.thought_max_tokens,
+            )
+        except Exception:
+            logging.warning("Reply to message %s failed; not replying", message.id, exc_info=True)
+            return None
+        text = _clean_reply(reply)
+        if not text:
+            logging.warning("Reply to message %s was empty after cleanup: %r", message.id, reply[:200])
+            return None
+        return Utterance(text=text, to=message.sender, in_reply_to=message.id)
 
     async def _maybe_fetch_perception(self, thought_count: int) -> Perception | None:
         """Fetch a perception every Nth cycle. Failures yield None (logged by provider)."""

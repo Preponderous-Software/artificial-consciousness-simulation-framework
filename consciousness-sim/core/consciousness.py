@@ -38,6 +38,7 @@ from memory.consolidator import ConsolidationResult, MemoryConsolidator
 from memory.episodic import EpisodicMemory
 from memory.long_term import DEFAULT_MAX_ROWS, LongTermMemory
 from memory.short_term import ShortTermMemory
+from persistence.inbox import Inbox
 from persistence.journal import Journal
 from persistence.paths import consciousness_dir
 from persistence.state_manager import StateManager
@@ -504,6 +505,8 @@ class Consciousness:
             perf_log_every_n=int(self.config["thought_loop"].get("perf_log_every_n", 10)),
             rpt_critique=bool(self.config["thought_loop"].get("rpt_critique", False)),
             critique_prompt_path=root / "llm" / "prompts" / "critique.txt",
+            inbox=Inbox(base / "inbox.jsonl"),
+            speak_prompt_path=root / "llm" / "prompts" / "speak.txt",
         )
         self.consolidator = MemoryConsolidator(
             provider=self.provider,
@@ -516,6 +519,8 @@ class Consciousness:
         )
 
         self.on_thought: list[EventHandler] = []
+        # Replies to people (#198); journaled as `utterance` events.
+        self.on_utterance: list[EventHandler] = []
         self.on_memory_stored: list[EventHandler] = []
         self.on_reflection: list[EventHandler] = []
         self.on_identity_shift: list[EventHandler] = []
@@ -930,6 +935,14 @@ class Consciousness:
 
                 if cycle.trace is not None:
                     await self._journal_cycle_trace(cycle)
+
+                if cycle.utterance is not None:
+                    u = cycle.utterance
+                    await self.journal.append("utterance", u.text, to=u.to, in_reply_to=u.in_reply_to)
+                    await self._emit(
+                        self.on_utterance,
+                        {"type": "utterance", "content": u.text, "to": u.to, "in_reply_to": u.in_reply_to},
+                    )
 
                 if cycle.reflection:
                     await self.journal.append("reflection", cycle.reflection)
