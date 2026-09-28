@@ -216,3 +216,8 @@ def test_ignores_hidden_and_non_directory_entries(home: Path) -> None:
 
     assert [inst for inst, _ in collected] == ["Aria"]
     assert ".hidden" not in tailer._offsets
+
+
+def test_cycle_events_are_streamed() -> None:
+    """#197: structured per-cycle events (#196) reach the SSE stream."""
+    assert "cycle" in _KNOWN_EVENT_TYPES

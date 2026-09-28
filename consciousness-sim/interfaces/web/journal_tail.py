@@ -37,6 +37,8 @@ _KNOWN_EVENT_TYPES = frozenset({
     # MemoryConsolidator passes emit a "consolidation" event (#89) so
     # the dashboard can surface per-pass stored counts and error flags.
     "consolidation",
+    # Structured per-cycle internals (#196) for the component view (#197).
+    "cycle",
 })
 
 

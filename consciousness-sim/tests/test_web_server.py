@@ -786,3 +786,85 @@ def test_spawn_does_not_block_event_loop(client, monkeypatch):
     r = c.post("/instances", json={"name": "AsyncSpawn"})
     assert r.status_code == 200
     assert seen["to_thread_calls"] == 1, "proc.wait was not offloaded via asyncio.to_thread"
+
+
+# ---------------------------------------------------------------------------
+# Component view (#197): GET /instances/{id}/state + history selection
+# ---------------------------------------------------------------------------
+
+def test_state_endpoint_returns_components(client, consciousness_home):
+    import sqlite3
+    c, _ = client
+    d = _seed_instance(consciousness_home, "Aria")
+    state = json.loads((d / "state.json").read_text())
+    state["identity"].update({
+        "initial_mood": {"wonder": 0.6, "contentment": 0.5},
+        "attention_schema": {"focus": "perception", "theme": "river", "salience": 1.0, "history": ["perception"]},
+        "personality_traits": ["observant"],
+        "origin_story": "not exposed",
+    })
+    state["short_term"] = [
+        {"kind": "thought", "content": "x" * 1000, "importance": 1.0, "timestamp": "t1"},
+        {"kind": "reflection", "content": "r", "importance": 2.0, "timestamp": "t2"},
+        "not-a-dict",
+    ]
+    state["health"] = {"status": "ok", "circuit_state": "closed"}
+    (d / "state.json").write_text(json.dumps(state))
+    with sqlite3.connect(d / "memory.db") as conn:
+        conn.execute("CREATE TABLE memories (id INTEGER PRIMARY KEY, summary TEXT)")
+        conn.executemany("INSERT INTO memories (summary) VALUES (?)", [("a",), ("b",), ("c",)])
+
+    r = c.get("/instances/Aria/state")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["id"] == "Aria"
+    assert body["running"] is False
+    assert body["thought_count"] == 7
+    assert body["long_term_count"] == 3
+    assert body["health"] == {"status": "ok", "circuit_state": "closed"}
+    assert body["identity"]["attention_schema"]["theme"] == "river"
+    assert body["identity"]["initial_mood"] == {"wonder": 0.6, "contentment": 0.5}
+    assert "origin_story" not in body["identity"]
+    assert [i["kind"] for i in body["workspace"]] == ["thought", "reflection"]
+    assert len(body["workspace"][0]["content"]) == 400
+    assert body["workspace"][1]["importance"] == 2.0
+
+
+def test_state_endpoint_without_memory_db_reports_null_count(client, consciousness_home):
+    c, _ = client
+    _seed_instance(consciousness_home, "Aria")
+    assert c.get("/instances/Aria/state").json()["long_term_count"] is None
+
+
+def test_state_endpoint_unknown_instance_is_404(client):
+    c, _ = client
+    assert c.get("/instances/Nobody/state").status_code == 404
+
+
+def test_state_endpoint_non_object_state_is_503(client, consciousness_home):
+    c, _ = client
+    d = _seed_instance(consciousness_home, "Aria")
+    (d / "state.json").write_text("[]")
+    assert c.get("/instances/Aria/state").status_code == 503
+
+
+def test_history_keeps_fifty_non_cycle_events_plus_newest_cycle(server):
+    events = []
+    for i in range(60):
+        events.append({"timestamp": f"2026-01-01T00:{i:02d}:00+00:00", "type": "thought", "content": str(i)})
+        events.append({"timestamp": f"2026-01-01T00:{i:02d}:01+00:00", "type": "cycle", "content": f"c{i}"})
+
+    selected = server._select_history(events)
+
+    thoughts = [e for e in selected if e["type"] == "thought"]
+    cycles = [e for e in selected if e["type"] == "cycle"]
+    assert len(thoughts) == 50
+    assert thoughts[0]["content"] == "10"
+    assert [c["content"] for c in cycles] == ["c59"]
+    assert selected == sorted(selected, key=lambda e: e["timestamp"])
+
+
+def test_history_without_cycle_events_is_unchanged(server):
+    events = [{"timestamp": f"t{i:03d}", "type": "thought", "content": str(i)} for i in range(70)]
+    assert server._select_history(events) == events[-50:]
