@@ -29,7 +29,7 @@ from core.identity import IdentityDocument
 from core.inner_voice import InnerVoice
 from core.mood_semantics import DEFAULT_ANCHORS, DEFAULT_THRESHOLD, SemanticMoodScorer
 from core.reflection import ReflectionEngine
-from core.thought_loop import ThoughtLoop
+from core.thought_loop import ThoughtCycleResult, ThoughtLoop
 from interfaces.discord.webhook import build_sink_from_config as build_discord_sink
 from llm.circuit_breaker import build_circuit_breaker
 from llm.perception import PerceptionProvider, build_perception_provider
@@ -586,6 +586,48 @@ class Consciousness:
         """
         self.health["circuit_state"] = getattr(self.provider, "circuit_state", None)
 
+    async def _journal_cycle_trace(self, cycle: ThoughtCycleResult) -> None:
+        """Journal the cycle's internals as one structured ``cycle`` event (#196).
+
+        Observability only — exposes existing HOT-2 / PP-1 / AST-1 state to
+        out-of-process readers (the web dashboard tails journal.jsonl) and
+        changes no behaviour.
+        """
+        trace = cycle.trace
+        assert trace is not None
+        attention = self.identity.attention_schema
+        await self.journal.append(
+            "cycle",
+            f"cycle {self.thought_count}: {cycle.metacognitive_label}, "
+            f"prediction error {cycle.prediction_error:.1f}, "
+            f"reflection {'fired' if trace.reflection_fired else 'skipped'} "
+            f"(p={trace.reflection_effective:.2f})",
+            thought_count=self.thought_count,
+            retrieved=trace.retrieved,
+            prediction={
+                "prior": trace.prior_prediction,
+                "next": trace.next_prediction,
+                "error": cycle.prediction_error,
+            },
+            metacognitive_label=cycle.metacognitive_label,
+            reflection={
+                "base": trace.reflection_base,
+                "hot2_boost": trace.hot2_boost,
+                "pp1_boost": trace.pp1_boost,
+                "effective": trace.reflection_effective,
+                "fired": trace.reflection_fired,
+            },
+            attention={
+                "focus": attention.focus,
+                "theme": attention.theme,
+                "salience": attention.salience,
+            },
+            perception_title=cycle.perception.title if cycle.perception is not None else None,
+            short_term_size=len(self.short_term.list()),
+            timings_ms=trace.timings_ms,
+            prompt_chars=trace.prompt_chars,
+        )
+
     async def _score_mood_triggers(self, text: str) -> dict[str, float] | None:
         """Return embedding-derived mood trigger strengths, or None (#21).
 
@@ -885,6 +927,9 @@ class Consciousness:
 
                 await self.journal.append("thought", cycle.thought)
                 await self._emit(self.on_thought, {"type": "thought", "content": cycle.thought})
+
+                if cycle.trace is not None:
+                    await self._journal_cycle_trace(cycle)
 
                 if cycle.reflection:
                     await self.journal.append("reflection", cycle.reflection)

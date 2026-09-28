@@ -675,3 +675,64 @@ def test_extract_rewrite_stops_at_a_repeated_critique_label() -> None:
     from core.thought_loop import _extract_rewrite
     reply = "CRITIQUE: a\nREWRITE: I see the river.\nCRITIQUE: b"
     assert _extract_rewrite(reply) == "I see the river."
+
+
+def test_run_cycle_returns_trace_of_retrieval_prediction_reflection_and_timings() -> None:
+    """#196: the internals run_cycle() computes are carried out on a CycleTrace."""
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            from unittest.mock import MagicMock
+            from memory.long_term import LongTermMemoryItem
+            provider = MockProvider()
+            provider.generate = AsyncMock(return_value="I study the Concho River in Texas.")
+            ltm = MagicMock()
+            ltm.similarity_search = AsyncMock(return_value=[
+                LongTermMemoryItem(id=1, timestamp="t", embedding=[0.0], summary="x" * 500,
+                                   emotional_valence=0.0, importance_score=7.25),
+            ])
+            loop = _make_loop(Path(d), provider, reflection_probability=0.35)
+            loop.long_term = ltm
+            loop._predicted_theme = "glacier"
+
+            with patch("core.thought_loop.random.random", return_value=0.0):
+                result = await loop.run_cycle(thought_count=1)
+
+            trace = result.trace
+            assert trace is not None
+            assert trace.retrieved == [{"summary": "x" * 200, "importance": 7.25}]
+            assert trace.prior_prediction == "glacier"
+            assert trace.next_prediction == loop._predicted_theme
+            assert result.prediction_error == 1.0
+            assert trace.pp1_boost > 0.0
+            assert trace.reflection_base == 0.35
+            assert trace.reflection_effective == min(
+                1.0, trace.reflection_base + trace.hot2_boost + trace.pp1_boost
+            )
+            assert trace.reflection_fired is True
+            assert result.reflection is not None
+            assert set(trace.timings_ms) == {"embed", "search", "perception", "generate", "critique"}
+            assert trace.prompt_chars > 0
+
+    asyncio.run(_run())
+
+
+def test_run_cycle_trace_records_skipped_reflection() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            from unittest.mock import MagicMock
+            provider = MockProvider()
+            provider.generate = AsyncMock(return_value="I note the Wichita River.")
+            ltm = MagicMock()
+            ltm.similarity_search = AsyncMock(return_value=[])
+            loop = _make_loop(Path(d), provider, reflection_probability=0.0)
+            loop.long_term = ltm
+
+            result = await loop.run_cycle(thought_count=1)
+
+            assert result.trace is not None
+            assert result.trace.reflection_fired is False
+            assert result.trace.reflection_effective == 0.0
+            assert result.trace.retrieved == []
+            assert result.reflection is None
+
+    asyncio.run(_run())

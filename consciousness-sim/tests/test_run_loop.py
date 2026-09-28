@@ -170,6 +170,79 @@ def test_run_loop_journals_thoughts(tmp_path, monkeypatch) -> None:
     assert len(thought_entries) == 2
 
 
+def test_run_loop_journals_structured_cycle_event(tmp_path, monkeypatch) -> None:
+    """#196: each cycle with a trace journals one structured `cycle` event after its thought."""
+    from core.thought_loop import CycleTrace, ThoughtCycleResult
+
+    mind = _make_mind(tmp_path, monkeypatch)
+
+    async def _once(n: int) -> ThoughtCycleResult:
+        mind._stop_event.set()
+        return ThoughtCycleResult(
+            thought="I note the Concho River.",
+            reflection=None,
+            existential=None,
+            metacognitive_label="uncertain",
+            prediction_error=1.0,
+            trace=CycleTrace(
+                retrieved=[{"summary": "Texas rivers", "importance": 6.0}],
+                prior_prediction="glacier",
+                next_prediction="concho",
+                reflection_base=0.35,
+                hot2_boost=0.15,
+                pp1_boost=0.2,
+                reflection_effective=0.7,
+                reflection_fired=False,
+                timings_ms={"generate": 1234.5},
+                prompt_chars=99,
+            ),
+        )
+
+    mind.thought_loop.run_cycle = _once
+
+    async def _run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    asyncio.run(_run())
+    entries = asyncio.run(mind.journal.recent(limit=20))
+    types = [e["type"] for e in entries]
+    assert types.index("cycle") == types.index("thought") + 1
+    cycle = next(e for e in entries if e["type"] == "cycle")
+    assert cycle["thought_count"] == 1
+    assert cycle["metacognitive_label"] == "uncertain"
+    assert cycle["prediction"] == {"prior": "glacier", "next": "concho", "error": 1.0}
+    assert cycle["reflection"] == {
+        "base": 0.35, "hot2_boost": 0.15, "pp1_boost": 0.2, "effective": 0.7, "fired": False,
+    }
+    assert cycle["retrieved"] == [{"summary": "Texas rivers", "importance": 6.0}]
+    assert set(cycle["attention"]) == {"focus", "theme", "salience"}
+    assert cycle["short_term_size"] >= 0
+    assert cycle["timings_ms"] == {"generate": 1234.5}
+    assert cycle["perception_title"] is None
+
+
+def test_run_loop_skips_cycle_event_without_trace(tmp_path, monkeypatch) -> None:
+    """A ThoughtCycleResult without a trace (e.g. a stubbed loop) journals no `cycle` event."""
+    from core.thought_loop import ThoughtCycleResult
+
+    mind = _make_mind(tmp_path, monkeypatch)
+
+    async def _once(n: int) -> ThoughtCycleResult:
+        mind._stop_event.set()
+        return ThoughtCycleResult(thought="I note X.", reflection=None, existential=None)
+
+    mind.thought_loop.run_cycle = _once
+
+    async def _run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    asyncio.run(_run())
+    entries = asyncio.run(mind.journal.recent(limit=20))
+    assert "cycle" not in [e["type"] for e in entries]
+
+
 # ---------------------------------------------------------------------------
 # Error recovery
 # ---------------------------------------------------------------------------

@@ -25,7 +25,8 @@ import logging
 import re
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 from pathlib import Path
 
 from core.identity import IdentityDocument
@@ -73,6 +74,29 @@ def _select_register(raw: str, has_retrieved_memories: bool) -> str:
     return "wondering"
 
 
+_TRACE_SUMMARY_CHARS = 200
+
+
+@dataclass(slots=True)
+class CycleTrace:
+    """Per-cycle internals that run_cycle() computes and otherwise discards (#196).
+
+    Journaled as a structured ``cycle`` event so out-of-process observers (the
+    web dashboard, experiment metrics) can see how a thought was produced —
+    retrieval, the PP-1 prediction, the reflection odds — not only the thought.
+    """
+    retrieved: list[dict[str, Any]] = field(default_factory=list)
+    prior_prediction: str | None = None
+    next_prediction: str | None = None
+    reflection_base: float = 0.0
+    hot2_boost: float = 0.0
+    pp1_boost: float = 0.0
+    reflection_effective: float = 0.0
+    reflection_fired: bool = False
+    timings_ms: dict[str, float] = field(default_factory=dict)
+    prompt_chars: int = 0
+
+
 @dataclass(slots=True)
 class ThoughtCycleResult:
     thought: str
@@ -81,6 +105,7 @@ class ThoughtCycleResult:
     perception: Perception | None = None
     metacognitive_label: str = "high"
     prediction_error: float = 0.0
+    trace: CycleTrace | None = None
 
 
 # Labels may arrive bolded or with a markdown bullet ("**REWRITE:**", "- REWRITE:").
@@ -237,15 +262,15 @@ class ThoughtLoop:
         existential_text: str | None = None
         # reflection_probability=0.0 means "disabled"; boosts only apply when a
         # baseline is set, preserving the existing semantics of explicit zero.
+        hot2_boost = self.monitor.reflection_boost(label)
+        pp1_boost = prediction_error * _PREDICTION_ERROR_BOOST
         effective_reflection_prob = (
-            min(1.0,
-                self.reflection_probability
-                + self.monitor.reflection_boost(label)
-                + (prediction_error * _PREDICTION_ERROR_BOOST))
+            min(1.0, self.reflection_probability + hot2_boost + pp1_boost)
             if self.reflection_probability > 0.0
             else 0.0
         )
-        if random.random() < effective_reflection_prob:
+        reflection_fired = random.random() < effective_reflection_prob
+        if reflection_fired:
             recent = self.short_term.render_for_prompt()
             if self.reflection_engine.should_deep_reflect(thought_count):
                 reflection_text = await self.reflection_engine.deep_reflection(self.identity.name, recent)
@@ -285,6 +310,27 @@ class ThoughtLoop:
             perception=perception,
             metacognitive_label=label,
             prediction_error=prediction_error,
+            trace=CycleTrace(
+                retrieved=[
+                    {"summary": m.summary[:_TRACE_SUMMARY_CHARS], "importance": round(m.importance_score, 3)}
+                    for m in related
+                ],
+                prior_prediction=prior_prediction,
+                next_prediction=self._predicted_theme,
+                reflection_base=self.reflection_probability,
+                hot2_boost=hot2_boost,
+                pp1_boost=pp1_boost,
+                reflection_effective=effective_reflection_prob,
+                reflection_fired=reflection_fired,
+                timings_ms={
+                    "embed": round(_embed_ms, 1),
+                    "search": round(_search_ms, 1),
+                    "perception": round(_perception_ms, 1),
+                    "generate": round(_generate_ms, 1),
+                    "critique": round(_critique_ms, 1),
+                },
+                prompt_chars=len(prompt_text),
+            ),
         )
 
     async def _critique_and_refine(self, raw_thought: str, context: str) -> str:
