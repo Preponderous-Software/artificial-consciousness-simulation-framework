@@ -38,6 +38,7 @@ from memory.consolidator import ConsolidationResult, MemoryConsolidator
 from memory.episodic import EpisodicMemory
 from memory.long_term import DEFAULT_MAX_ROWS, LongTermMemory
 from memory.short_term import DEFAULT_HALF_LIFE as DEFAULT_SHORT_TERM_HALF_LIFE
+from memory.short_term import DEFAULT_PROMPT_CHARS as DEFAULT_SHORT_TERM_PROMPT_CHARS
 from memory.short_term import ShortTermMemory
 from persistence.inbox import Inbox
 from persistence.journal import Journal
@@ -158,6 +159,16 @@ def _validate_config(config: dict[str, Any]) -> None:
         if half_life < 0:
             raise ValueError(
                 f"Config 'memory.short_term_half_life' must be >= 0 (0 disables age decay), got {half_life}"
+            )
+
+    # Optional: memory.short_term_prompt_chars (#205). Absent → ShortTermMemory's
+    # DEFAULT_PROMPT_CHARS. 0 disables the budget (unbounded render).
+    prompt_chars = config["memory"].get("short_term_prompt_chars")
+    if prompt_chars is not None:
+        if isinstance(prompt_chars, bool) or not isinstance(prompt_chars, int) or prompt_chars < 0:
+            raise ValueError(
+                f"Config 'memory.short_term_prompt_chars' must be an integer >= 0 "
+                f"(0 disables the budget), got {prompt_chars!r}"
             )
 
     # Optional: llm.embed_model (#112). Absent/null → embeddings use the
@@ -476,6 +487,11 @@ class Consciousness:
         self.short_term = ShortTermMemory(
             capacity=int(mem_cfg["short_term_capacity"]),
             half_life=DEFAULT_SHORT_TERM_HALF_LIFE if _half_life is None else float(_half_life),
+            prompt_chars=(
+                DEFAULT_SHORT_TERM_PROMPT_CHARS
+                if mem_cfg.get("short_term_prompt_chars") is None
+                else int(mem_cfg["short_term_prompt_chars"])
+            ),
         )
         self.episodic = EpisodicMemory(base / "episodic.jsonl")
         # Optional retention bound (#135). Absent → LongTermMemory's default.

@@ -102,6 +102,51 @@ def test_short_term_equal_scores_evict_oldest_first() -> None:
     assert [item.content for item in stm.list()] == ["b", "c"]
 
 
+def test_short_term_render_keeps_a_full_workspace_of_long_items_within_budget() -> None:
+    """Regression for #205: 20 long reflections rendered to ~19k chars, past the
+    model's context, and embedding that text timed out."""
+    stm = ShortTermMemory(capacity=20, prompt_chars=8000)
+    for i in range(20):
+        stm.add("reflection", f"reflection {i:02d} " + "x" * 920)
+
+    rendered = stm.render_for_prompt()
+
+    assert len(rendered) <= 8000
+    lines = rendered.split("\n")
+    assert lines[-1].startswith("- [reflection] reflection 19 ")
+    numbers = [int(line.split()[3]) for line in lines]
+    assert numbers == sorted(numbers)
+    assert numbers[0] > 0
+
+
+def test_short_term_render_truncates_the_newest_item_if_it_alone_is_over_budget() -> None:
+    stm = ShortTermMemory(capacity=5, prompt_chars=100)
+    stm.add("thought", "older")
+    stm.add("reflection", "y" * 500)
+
+    rendered = stm.render_for_prompt()
+
+    assert rendered.startswith("- [reflection] yyy")
+    assert rendered.endswith(" …")
+    assert len(rendered) <= 100
+    assert "older" not in rendered
+
+
+def test_short_term_render_within_budget_is_unchanged() -> None:
+    stm = ShortTermMemory(capacity=5, prompt_chars=8000)
+    stm.add("thought", "one")
+    stm.add("perception", "two")
+    assert stm.render_for_prompt() == "- [thought] one\n- [perception] two"
+
+
+@pytest.mark.parametrize("budget", [None, 0])
+def test_short_term_render_budget_disabled_renders_everything(budget) -> None:
+    stm = ShortTermMemory(capacity=20, prompt_chars=budget)
+    for i in range(20):
+        stm.add("reflection", "z" * 1000)
+    assert len(stm.render_for_prompt()) > 20_000
+
+
 def test_long_term_evicts_lowest_importance_over_bound() -> None:
     """Inserting past max_rows leaves exactly max_rows, keeping the most important."""
 

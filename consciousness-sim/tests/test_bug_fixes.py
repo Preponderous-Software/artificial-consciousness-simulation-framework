@@ -1201,3 +1201,19 @@ def test_validate_config_rejects_malformed_short_term_half_life(value) -> None:
     cfg["memory"]["short_term_half_life"] = value
     with pytest.raises(ValueError, match="short_term_half_life"):
         _validate_config(cfg)
+
+
+@pytest.mark.parametrize("value", [None, 0, 8000])
+def test_validate_config_accepts_short_term_prompt_chars(value) -> None:
+    cfg = _minimal_valid_config()
+    if value is not None:
+        cfg["memory"]["short_term_prompt_chars"] = value
+    _validate_config(cfg)
+
+
+@pytest.mark.parametrize("value", [-1, True, "8000", 8000.5])
+def test_validate_config_rejects_malformed_short_term_prompt_chars(value) -> None:
+    cfg = _minimal_valid_config()
+    cfg["memory"]["short_term_prompt_chars"] = value
+    with pytest.raises(ValueError, match="short_term_prompt_chars"):
+        _validate_config(cfg)
