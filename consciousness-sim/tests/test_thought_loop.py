@@ -840,3 +840,77 @@ def test_each_message_is_heard_on_its_own_cycle() -> None:
             assert c.perception is None and c.utterance is None
 
     asyncio.run(_run())
+
+
+# --- refusals are not cognition (#207) ----------------------------------------
+
+def test_refused_thought_fails_the_cycle_and_stores_nothing() -> None:
+    from llm.refusal import RefusalError
+
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            from unittest.mock import MagicMock
+            provider = MockProvider()
+            provider.generate = AsyncMock(return_value="I can't help with that.")
+            ltm = MagicMock()
+            ltm.similarity_search = AsyncMock(return_value=[])
+            loop = _make_loop(Path(d), provider, reflection_probability=0.0)
+            loop.long_term = ltm
+            with pytest.raises(RefusalError):
+                await loop.run_cycle(thought_count=1)
+            assert [i.kind for i in loop.short_term.list()] == []
+            assert await loop.episodic.recent(limit=5) == []
+
+    asyncio.run(_run())
+
+
+def test_refused_reflection_is_not_stored(caplog) -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            from unittest.mock import MagicMock
+            provider = MockProvider()
+            provider.generate = AsyncMock(side_effect=[
+                "I note the Wichita River.",
+                "I cannot provide a response that promotes or glorifies self-harm or suicide. If you are experiencing thoughts",
+            ])
+            ltm = MagicMock()
+            ltm.similarity_search = AsyncMock(return_value=[])
+            loop = _make_loop(Path(d), provider, reflection_probability=1.0)
+            loop.long_term = ltm
+            loop.reflection_engine.should_deep_reflect = lambda n: False  # type: ignore[method-assign]
+            import logging
+            with caplog.at_level(logging.WARNING), patch("core.thought_loop.random.random", return_value=0.0):
+                result = await loop.run_cycle(thought_count=1)
+            assert result.reflection is None
+            assert "reflection" not in [i.kind for i in loop.short_term.list()]
+            assert any("refusal" in r.message for r in caplog.records)
+
+    asyncio.run(_run())
+
+
+def test_refused_critique_rewrite_falls_back_to_raw_thought() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            loop = _critique_loop(Path(d), [
+                "raw thought that survives.",
+                "CRITIQUE: n/a\nREWRITE: I can't assist with that request.",
+            ])
+            result = await loop.run_cycle(thought_count=1)
+            assert "raw thought that survives" in result.thought
+
+    asyncio.run(_run())
+
+
+def test_refused_reply_is_not_spoken(caplog) -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            loop, _ = _conversation_loop(Path(d), ["I think about the question.", "I can't help with that."])
+            loop.inbox.append("Dan", "hello?")
+            import logging
+            with caplog.at_level(logging.WARNING):
+                result = await loop.run_cycle(thought_count=1)
+            assert result.utterance is None
+            assert "utterance" not in [i.kind for i in loop.short_term.list()]
+            assert any("refusal" in r.message for r in caplog.records)
+
+    asyncio.run(_run())

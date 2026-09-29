@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from llm.provider import LLMProvider
+from llm.refusal import is_refusal
 from memory.episodic import EpisodicMemory
 from memory.long_term import LongTermMemory
 from memory.short_term import ShortTermMemory
@@ -153,6 +154,9 @@ class MemoryConsolidator:
             importance = float(match.group(1))
             valence = float(match.group(2))
             summary = match.group(3).strip()
+            if is_refusal(summary):
+                logging.warning("Consolidation: skipping refusal-shaped summary (#207): %r", summary[:120])
+                continue
             embedding = await self.provider.embed(summary)
             await self.long_term.add_memory(summary, valence, importance, embedding)
             stored += 1
@@ -167,6 +171,9 @@ class MemoryConsolidator:
             fell_through = True
             for summary in fallback_candidates:
                 if not summary:
+                    continue
+                if is_refusal(summary):
+                    logging.warning("Consolidation fallback: skipping refusal-shaped line (#207): %r", summary[:120])
                     continue
                 embedding = await self.provider.embed(summary)
                 await self.long_term.add_memory(summary, 0.0, 5.0, embedding)
