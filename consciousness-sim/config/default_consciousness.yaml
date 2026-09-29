@@ -66,6 +66,13 @@ memory:
   # restores pre-#135 growth. At 3072-dim embeddings a row costs ~40 KB, so
   # 2000 rows plateaus memory.db at roughly 80 MB.
   long_term_max_rows: 2000
+  # Workspace age decay (#201). An item's eviction score halves every N later
+  # additions, so importance biases which items survive without letting any
+  # kind stay forever. Before #201 eviction was importance-only: reflections
+  # (2.0) accumulated until they filled the buffer and each new thought (1.0)
+  # was evicted on the next add. Optional — absent uses 10; 0 restores the
+  # importance-only behaviour.
+  short_term_half_life: 10
 
 mood:
   initial:

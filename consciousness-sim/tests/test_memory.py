@@ -6,6 +6,8 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from memory.long_term import DEFAULT_MAX_ROWS, LongTermMemory
 from memory.short_term import ShortTermMemory
 
@@ -50,6 +52,54 @@ def test_long_term_index_exists_after_initialize() -> None:
             )
 
     asyncio.run(_run())
+
+
+def test_short_term_newest_thoughts_survive_a_workspace_full_of_reflections() -> None:
+    """Regression for #201: with importance-only eviction a buffer of
+    reflections/perceptions evicted every new thought on the next add."""
+    stm = ShortTermMemory(capacity=20)
+    for i in range(13):
+        stm.add("reflection", f"reflection {i}")
+    for i in range(7):
+        stm.add("perception", f"perception {i}")
+    for i in range(6):
+        stm.add("thought", f"thought {i}")
+        stm.add("perception", f"new perception {i}")
+
+    kinds = [item.kind for item in stm.list()]
+    thoughts = [item.content for item in stm.list() if item.kind == "thought"]
+    assert len(kinds) == 20
+    assert thoughts[-3:] == ["thought 3", "thought 4", "thought 5"]
+    assert kinds.count("reflection") < 13
+
+
+def test_short_term_old_reflection_is_outranked_after_one_half_life_per_importance_doubling() -> None:
+    stm = ShortTermMemory(capacity=100, half_life=10)
+    reflection = stm.add("reflection", "r")
+    for i in range(10):
+        stm.add("thought", f"t{i}")
+    newest = stm.list()[-1]
+    assert stm.effective_importance(reflection) == pytest.approx(1.0)
+    assert stm.effective_importance(newest) == pytest.approx(1.0)
+    stm.add("thought", "one more")
+    assert stm.effective_importance(reflection) < stm.effective_importance(stm.list()[-1])
+
+
+def test_short_term_half_life_zero_restores_importance_only_eviction() -> None:
+    stm = ShortTermMemory(capacity=3, half_life=0)
+    for i in range(3):
+        stm.add("reflection", f"r{i}")
+    stm.add("thought", "t")
+    assert [item.kind for item in stm.list()] == ["reflection", "reflection", "reflection"]
+    assert stm.effective_importance(stm.list()[0]) == 2.0
+
+
+def test_short_term_equal_scores_evict_oldest_first() -> None:
+    stm = ShortTermMemory(capacity=2, half_life=None)
+    stm.add("thought", "a")
+    stm.add("thought", "b")
+    stm.add("thought", "c")
+    assert [item.content for item in stm.list()] == ["b", "c"]
 
 
 def test_long_term_evicts_lowest_importance_over_bound() -> None:
