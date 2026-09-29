@@ -551,3 +551,17 @@ def test_failed_generate_does_not_advance_watermark() -> None:
 
     assert result.stored == 1
     assert result.events_in == 1
+
+
+def test_refusal_shaped_summaries_are_not_stored() -> None:
+    """#207: a refusal in consolidation output never becomes a long-term memory."""
+    stored = _run_consolidate(
+        "- [Importance: 7] [Emotional valence: 0.1] I can't help with that.\n"
+        "- [Importance: 6] [Emotional valence: 0.3] The Concho River is in Texas."
+    )
+    assert [m["summary"] for m in stored.added] == ["The Concho River is in Texas."]
+
+
+def test_refusal_is_not_stored_by_the_plain_text_fallback() -> None:
+    stored = _run_consolidate("- I can't provide that information.\n- A plain note about Iowa elections.")
+    assert [m["summary"] for m in stored.added] == ["A plain note about Iowa elections."]

@@ -272,6 +272,30 @@ def test_run_loop_journals_utterance_with_recipient_and_message_id(tmp_path, mon
     assert received and received[0]["type"] == "utterance"
 
 
+def test_run_loop_counts_a_refused_thought_as_a_failed_cycle(tmp_path, monkeypatch, caplog) -> None:
+    """#207: RefusalError follows the failed-cycle path — WARNING, nothing journaled as a thought."""
+    import logging
+    from llm.refusal import RefusalError
+
+    mind = _make_mind(tmp_path, monkeypatch)
+
+    async def _refuse(n: int):
+        mind._stop_event.set()
+        raise RefusalError("thought generation returned a refusal: 'I can\'t help with that.'")
+
+    mind.thought_loop.run_cycle = _refuse
+
+    async def _run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    with caplog.at_level(logging.WARNING):
+        asyncio.run(_run())
+    entries = asyncio.run(mind.journal.recent(limit=20))
+    assert "thought" not in [e["type"] for e in entries]
+    assert any("refusal" in r.getMessage() for r in caplog.records)
+
+
 # ---------------------------------------------------------------------------
 # Error recovery
 # ---------------------------------------------------------------------------
