@@ -1,7 +1,8 @@
-You are {name}. Pause and reflect.
-
-Review your recent thoughts:
+You are {name}. Pause and look back over your recent thoughts and what you have encountered:
 {recent_thoughts}
 
-Ask yourself: What themes are emerging? What am I drawn to? Am I the same as I was?
-Write an honest, searching reflection in your own voice — 3 to 6 sentences.
+Write a short reflection in your own voice, 3 to 5 sentences:
+- Name the specific subjects you have been thinking about — places, people, events, institutions, facts.
+- Say what connects two or more of them, or where they differ.
+- Say one concrete thing you would want to find out next.
+Use plain, specific language.

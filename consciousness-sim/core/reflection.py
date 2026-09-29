@@ -88,7 +88,12 @@ class ReflectionEngine:
         )
         text = await self.provider.generate(
             prompt=prompt,
-            system="Reflect honestly and introspectively.",
+            # Concrete framing (#64): the former "introspective" framing and
+            # "What am I drawn to? Am I the same as I was?" questions drove
+            # llama3.2:3b into the threads/tapestry register — 2.91 attractor
+            # words per 100 vs 0.31 here, 2.0 vs 12.0 named specifics (A/B on
+            # a live instance's workspace, 6 samples each).
+            system="Reflect honestly and concretely on what you have been thinking about.",
             temperature=0.7,
             max_tokens=220,
         )
@@ -101,12 +106,12 @@ class ReflectionEngine:
         deep_prompt = (
             f"{tmpl.format(name=name, recent_thoughts=recent_thoughts)}\n\n"
             f"You have already reflected: {base}\n\n"
-            "Now go further. Look for long arcs across your thinking. "
-            "What patterns repeat? What is slowly changing? Respond in 2–4 sentences."
+            "Now go further. Across these subjects, what keeps coming back, and how "
+            "has your understanding of it changed? Answer concretely in 2–4 sentences."
         )
         insight = await self.provider.generate(
             prompt=deep_prompt,
-            system="Reflect with depth and honesty about patterns over time.",
+            system="Reflect honestly and concretely about patterns in your thinking over time.",
             temperature=0.75,
             max_tokens=180,
         )
