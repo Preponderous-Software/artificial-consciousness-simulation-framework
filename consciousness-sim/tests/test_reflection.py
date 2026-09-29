@@ -361,3 +361,28 @@ def test_deep_reflection_records_base_opening() -> None:
         assert "Base shallow opening sentence." in engine._recent_openings
 
     asyncio.run(_run())
+
+
+def test_shipped_reflection_prompt_asks_for_concrete_subjects() -> None:
+    """#64: the shipped prompt and system framing ask for named subjects and
+    connections, not introspective questions, which A/B testing showed drove
+    llama3.2:3b into the threads/tapestry register."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    root = Path(__file__).resolve().parents[1]
+    provider = MagicMock()
+    provider.generate = AsyncMock(return_value="I have been reading about Texas rivers.")
+    engine = ReflectionEngine(
+        provider,
+        root / "llm" / "prompts" / "self_reflection.txt",
+        root / "llm" / "prompts" / "existential_inquiry.txt",
+    )
+
+    asyncio.run(engine.shallow_reflection("Arthur", "- [thought] I note the Concho River."))
+
+    kwargs = provider.generate.await_args.kwargs
+    assert "- [thought] I note the Concho River." in kwargs["prompt"]
+    assert "specific subjects" in kwargs["prompt"]
+    assert "Am I the same as I was?" not in kwargs["prompt"]
+    assert "concretely" in kwargs["system"]
+    assert "introspectively" not in kwargs["system"]
