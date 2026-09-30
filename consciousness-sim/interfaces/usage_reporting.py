@@ -3,7 +3,7 @@
 No direct theory mapping — infrastructure module.
 
 What is sent: the program name (``artificial-consciousness-simulation-framework``)
-and its version with a ``startup`` event when ``scripts/spawn.py``,
+and its version (tag ``version``, on every event) with a ``startup`` event when ``scripts/spawn.py``,
 ``scripts/resume.py`` or ``scripts/web.py`` starts (tag ``command``; the web
 dashboard's is also tagged ``service=true``), and an ``experiment-started``
 event when ``scripts/experiment.py run`` begins a manifest. Nothing about the
@@ -43,6 +43,10 @@ DEFAULT_ENDPOINT = "https://trace.danielstephenson.dev"
 DEFAULT_KEY = "0sw-zEhUfxPw_Z5DcYuf3stJ3cGZ-GHuSgjq56tAjZY"
 
 _PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
+# Sent as the version when neither pyproject.toml nor the installed metadata
+# has one: the client requires a version, and a missing one must never stop
+# an entry point from starting.
+UNKNOWN_VERSION = "unknown"
 
 DETAILS_URL = "https://github.com/Stephenson-Software/trace#usage-reporting"
 
@@ -136,7 +140,8 @@ def build_client(section: dict[str, Any] | None) -> TraceClient:
     Always built through the client's constructor otherwise, which puts
     TRACE_USAGE_REPORTING / DO_NOT_TRACK ahead of ``enabled`` and records why it
     is off in ``disabled_reason``. A missing endpoint or key falls back to the
-    shipped default.
+    shipped default. Every event carries :func:`read_version` (or
+    ``UNKNOWN_VERSION``) as the tag ``version``, added by the client.
     """
     if section is None:
         return TraceClient.disabled()
@@ -144,6 +149,7 @@ def build_client(section: dict[str, Any] | None) -> TraceClient:
         return TraceClient(
             str(section.get("endpoint") or DEFAULT_ENDPOINT),
             APPLICATION,
+            read_version() or UNKNOWN_VERSION,
             key=str(section.get("key") or DEFAULT_KEY),
             enabled=bool(section.get("enabled", True)),
         )
@@ -168,11 +174,9 @@ def start_usage_reporting(path: Path | None = None, log: Callable[[str], None] =
 
 
 def report_startup(client: TraceClient, command: str, service: bool = False) -> None:
-    """Report ``startup`` for the entry point ``command`` (spawn / resume / web)."""
+    """Report ``startup`` for the entry point ``command`` (spawn / resume / web).
+    The client adds the ``version`` tag itself."""
     tags = {"command": command}
-    version = read_version()
-    if version:
-        tags["version"] = version
     if service:
         tags["service"] = "true"
     client.report("startup", tags=tags)
