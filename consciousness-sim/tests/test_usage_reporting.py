@@ -211,8 +211,24 @@ def test_startup_and_experiment_started_reach_the_configured_endpoint(
         {"application": APPLICATION, "name": "startup", "tags": {"command": "spawn", "version": version}},
         {"application": APPLICATION, "name": "startup",
          "tags": {"command": "web", "version": version, "service": "true"}},
-        {"application": APPLICATION, "name": "experiment-started"},
+        {"application": APPLICATION, "name": "experiment-started", "tags": {"version": version}},
     ]
+
+
+def test_a_missing_version_is_sent_as_unknown_and_never_raises(
+    home: Path, monkeypatch: pytest.MonkeyPatch, stub: tuple[str, list[dict[str, Any]], threading.Event]
+) -> None:
+    endpoint, requests, _ = stub
+    _write_settings(home, {"enabled": True, "endpoint": endpoint, "key": "test-key"})
+    monkeypatch.setattr(usage_reporting.atexit, "register", lambda f: None)
+    monkeypatch.setattr(usage_reporting, "read_version", lambda: None)
+
+    client = start_usage_reporting(log=lambda message: None)
+    assert client.enabled
+    report_startup(client, "resume")
+    client.close()
+
+    assert [r["body"]["tags"] for r in requests] == [{"command": "resume", "version": "unknown"}]
 
 
 def test_start_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:

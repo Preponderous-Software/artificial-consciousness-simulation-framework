@@ -376,6 +376,8 @@ consciousness-sim/
 │   │                        #   OllamaProvider has a per-instance LRU embed cache (#113),
 │   │                        #   an optional dedicated embed model (#112), and an
 │   │                        #   optional circuit breaker (#114)
+│   ├── refusal.py           # is_refusal() + RefusalError — model refusals are
+│   │                        #   failed generations, never stored (#207)
 │   ├── circuit_breaker.py   # CircuitBreaker + LLMUnavailableError — fast-fails
 │   │                        #   Ollama calls after repeated timeouts (#114)
 │   ├── perception.py        # PerceptionProvider ABC + WikipediaPerception +
@@ -466,6 +468,7 @@ consciousness-sim/
 - Each episodic event is offered to consolidation at most once (#191): `MemoryConsolidator` keeps a watermark (newest consolidated event timestamp), advanced only after a pass completes so a `generate()` failure re-offers the same events, and seeded on a new process from `LongTermMemory.latest_timestamp()` so a restart does not re-store the window. A pass with no new events makes no LLM call. Before #191 every pass re-read the last 20 events and stored duplicate memories.
 - `OllamaProvider` serializes all requests via a process-wide `asyncio.Semaphore(1)` — concurrent calls queue rather than compete; see `llm/provider.py`.
 - All LLM failures in production providers (Ollama / Anthropic / OpenAI) raise — they do **not** fall back to deterministic output, and they log a `WARNING` before propagating. Silent fallback is a bug (#46). `MockProvider` retains deterministic generation for tests.
+- Model refusals are never stored as cognition (#207): `llm/refusal.py:is_refusal()` flags assistant refusals ("I can't help with that.", crisis-line redirects) while allowing genuine openings like "I can't help but…". A refused thought raises `RefusalError`, which the outer loop counts as a failed cycle (WARNING, consecutive-failure limit); a refused reflection / existential inquiry / reply is logged and not stored; a refused critique rewrite falls back to the raw thought; refusal-shaped consolidation summaries are skipped.
 - `reflection_probability=0.0` disables reflection entirely — HOT-2 and PP-1 boosts do not override an explicit zero.
 - `LongTermMemory` has a compound index on `(embedding_dim, importance_score, timestamp)`; `similarity_search` candidate selection is O(log N), not O(table size).
 - `LongTermMemory` is bounded by `max_rows` (config `memory.long_term_max_rows`, default `DEFAULT_MAX_ROWS = 2000`; 0 disables) (#135). The bound is enforced inside the insert transaction of `add_memory()` and once in `initialize()`, evicting lowest-`importance_score` / oldest rows. Because eviction runs after the insert, `add_memory()` can evict the row it just wrote when that row is the least important in the store — the returned id is then no longer present. Retention is capacity-triggered, not time-triggered: it composes with, but does not replace, `apply_forgetting_curve()`.

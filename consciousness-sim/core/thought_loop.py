@@ -35,6 +35,7 @@ from core.metacognition import MetacognitiveMonitor
 from core.reflection import ReflectionEngine
 from llm.perception import Perception, PerceptionProvider, render_perception_block
 from llm.provider import LLMProvider
+from llm.refusal import RefusalError, is_refusal
 from memory.episodic import EpisodicMemory
 from memory.long_term import LongTermMemory
 from memory.short_term import ShortTermMemory
@@ -264,6 +265,10 @@ class ThoughtLoop:
             max_tokens=self.thought_max_tokens,
         )
         _generate_ms = (time.monotonic() - _t) * 1000
+        if is_refusal(raw):
+            # Not the instance's thought (#207): fail the cycle rather than
+            # store "I can't help with that." as cognition.
+            raise RefusalError(f"thought generation returned a refusal: {raw[:120]!r}")
 
         _critique_ms = 0.0
         if self.rpt_critique and self.critique_prompt_path is not None:
@@ -329,14 +334,22 @@ class ThoughtLoop:
             # before the reflection enters the workspace (#132) — mirrors the
             # render() scrub already applied to thoughts.
             reflection_text = self.inner_voice.scrub_reflection(reflection_text)
-            self.short_term.add("reflection", reflection_text)
-            await self.episodic.append("reflection", reflection_text)
+            if is_refusal(reflection_text):
+                logging.warning("Reflection returned a refusal; not stored (#207): %r", reflection_text[:120])
+                reflection_text = None
+            else:
+                self.short_term.add("reflection", reflection_text)
+                await self.episodic.append("reflection", reflection_text)
 
         if self.existential_every_n > 0 and thought_count > 0 and thought_count % self.existential_every_n == 0:
             existential_text = await self.reflection_engine.existential_inquiry(self.identity.name, f"{thought_count} thoughts")
             existential_text = self.inner_voice.scrub_reflection(existential_text)
-            self.short_term.add("existential", existential_text)
-            await self.episodic.append("existential", existential_text)
+            if is_refusal(existential_text):
+                logging.warning("Existential inquiry returned a refusal; not stored (#207): %r", existential_text[:120])
+                existential_text = None
+            else:
+                self.short_term.add("existential", existential_text)
+                await self.episodic.append("existential", existential_text)
 
         if message is not None:
             focus, theme = "conversation", _extract_theme(message.text)
@@ -419,6 +432,9 @@ class ThoughtLoop:
             logging.warning("RPT-2 critique pass failed; falling back to raw thought", exc_info=True)
             return raw_thought
         rewrite = _extract_rewrite(reply)
+        if rewrite is not None and is_refusal(rewrite):
+            logging.warning("RPT-2 critique rewrite was a refusal; falling back to raw thought: %r", rewrite[:120])
+            return raw_thought
         if rewrite is None:
             logging.warning(
                 "RPT-2 critique reply had no usable REWRITE: section; falling back to raw thought: %r",
@@ -466,6 +482,9 @@ class ThoughtLoop:
             logging.warning("Reply to message %s failed; not replying", message.id, exc_info=True)
             return None
         text = _clean_reply(reply)
+        if is_refusal(text):
+            logging.warning("Reply to message %s was a refusal; not replying (#207): %r", message.id, text[:120])
+            return None
         if not text:
             logging.warning("Reply to message %s was empty after cleanup: %r", message.id, reply[:200])
             return None
