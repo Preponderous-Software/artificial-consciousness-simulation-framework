@@ -31,6 +31,7 @@ from interfaces.usage_reporting import (  # noqa: E402
     FIRST_RUN_NOTICE,
     FIRST_RUN_NOTICE_OFF_BY_ENVIRONMENT,
     build_client,
+    install_id_file,
     load_settings,
     read_version,
     report_experiment_started,
@@ -46,6 +47,7 @@ def home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
     monkeypatch.delenv("TRACE_USAGE_REPORTING", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.delenv("TRACE_INSTALL_ID", raising=False)
     return tmp_path
 
 
@@ -207,11 +209,13 @@ def test_startup_and_experiment_started_reach_the_configured_endpoint(
     assert [r["path"] for r in requests] == ["/api/metrics"] * 3
     assert {r["authorization"] for r in requests} == {"Bearer test-key"}
     version = read_version()
+    install = (home / "trace-install-id").read_text(encoding="utf-8").strip()
     assert [r["body"] for r in requests] == [
-        {"application": APPLICATION, "name": "startup", "tags": {"command": "spawn", "version": version}},
         {"application": APPLICATION, "name": "startup",
-         "tags": {"command": "web", "version": version, "service": "true"}},
-        {"application": APPLICATION, "name": "experiment-started", "tags": {"version": version}},
+         "tags": {"command": "spawn", "version": version, "install": install}},
+        {"application": APPLICATION, "name": "startup",
+         "tags": {"command": "web", "version": version, "service": "true", "install": install}},
+        {"application": APPLICATION, "name": "experiment-started", "tags": {"version": version, "install": install}},
     ]
 
 
@@ -228,7 +232,41 @@ def test_a_missing_version_is_sent_as_unknown_and_never_raises(
     report_startup(client, "resume")
     client.close()
 
-    assert [r["body"]["tags"] for r in requests] == [{"command": "resume", "version": "unknown"}]
+    assert [r["body"]["tags"] for r in requests] == [
+        {"command": "resume", "version": "unknown", "install": client.install_id}]
+
+
+def test_install_id_is_kept_in_the_persistence_root_and_reused(home: Path) -> None:
+    assert install_id_file() == home / "trace-install-id"
+    first = build_client({"enabled": True, "key": "k"})
+    second = build_client({"enabled": True, "key": "k"})
+    first.close()
+    second.close()
+    assert first.install_id
+    assert first.install_id == (home / "trace-install-id").read_text(encoding="utf-8").strip()
+    assert second.install_id == first.install_id
+
+
+def test_trace_install_id_environment_variable_wins_over_the_file(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRACE_INSTALL_ID", "pinned-id")
+    client = build_client({"enabled": True, "key": "k"})
+    client.close()
+    assert client.install_id == "pinned-id"
+    assert not (home / "trace-install-id").exists()
+
+
+@pytest.mark.parametrize("variable,value", [("TRACE_USAGE_REPORTING", "off"), ("DO_NOT_TRACK", "1")])
+def test_no_install_id_file_is_created_when_reporting_is_off(
+    home: Path, monkeypatch: pytest.MonkeyPatch, variable: str, value: str
+) -> None:
+    monkeypatch.setenv(variable, value)
+    environment_off = build_client({"enabled": True, "key": "k"})
+    monkeypatch.delenv(variable)
+    settings_off = build_client({"enabled": False, "key": "k"})
+    assert environment_off.install_id is None and settings_off.install_id is None
+    assert not (home / "trace-install-id").exists()
 
 
 def test_start_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:

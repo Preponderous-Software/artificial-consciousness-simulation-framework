@@ -6,8 +6,11 @@ What is sent: the program name (``artificial-consciousness-simulation-framework`
 and its version (tag ``version``, on every event) with a ``startup`` event when ``scripts/spawn.py``,
 ``scripts/resume.py`` or ``scripts/web.py`` starts (tag ``command``; the web
 dashboard's is also tagged ``service=true``), and an ``experiment-started``
-event when ``scripts/experiment.py run`` begins a manifest. Nothing about the
-user, the machine, instance names, configuration, providers, models, thoughts,
+event when ``scripts/experiment.py run`` begins a manifest. Every event also
+carries a random installation ID (tag ``install``) so installations can be
+counted rather than events: a UUID the client keeps in ``trace-install-id`` in
+the persistence root, or the ``TRACE_INSTALL_ID`` environment variable when set.
+Nothing about the user, instance names, configuration, providers, models, thoughts,
 journals or any other content.
 
 Reporting is on by default. The first launch writes a ``usage_reporting``
@@ -26,6 +29,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import os
 import tomllib
 from importlib import metadata
 from pathlib import Path
@@ -36,6 +40,7 @@ from persistence.paths import consciousness_root
 
 APPLICATION = "artificial-consciousness-simulation-framework"
 SETTINGS_FILE_NAME = "settings.json"
+INSTALL_ID_FILE_NAME = "trace-install-id"
 SETTINGS_SECTION = "usage_reporting"
 DEFAULT_ENDPOINT = "https://trace.danielstephenson.dev"
 # The program key this framework ships with. Keys identify a program rather
@@ -52,9 +57,9 @@ DETAILS_URL = "https://github.com/Stephenson-Software/trace#usage-reporting"
 
 FIRST_RUN_NOTICE = (
     "Usage reporting is on: artificial-consciousness-simulation-framework sends its name "
-    "and version when spawn, resume or the web dashboard starts and when an experiment "
-    "starts, to https://trace.danielstephenson.dev - nothing about you, your machine, "
-    "your instances or their content. Turn it off with "
+    "and version (with a random installation ID) when spawn, resume or the web dashboard "
+    "starts and when an experiment starts, to https://trace.danielstephenson.dev - nothing "
+    "about you, your instances or their content. Turn it off with "
     '"usage_reporting": {"enabled": false} in settings.json in the persistence root '
     "(~/.consciousness/ or $CONSCIOUSNESS_HOME), or for every trace-reporting program "
     "with the environment variable TRACE_USAGE_REPORTING=off. Details: " + DETAILS_URL
@@ -70,6 +75,13 @@ def settings_file() -> Path:
     """Where the usage_reporting block lives: the persistence root, resolved per call so
     ``CONSCIOUSNESS_HOME`` set by a test or a wrapper is honoured."""
     return consciousness_root() / SETTINGS_FILE_NAME
+
+
+def install_id_file() -> Path:
+    """Where the client keeps this installation's random ID: next to the settings file in
+    the persistence root, resolved per call like :func:`settings_file`. The client only
+    creates it when reporting is on; deleting it resets the ID."""
+    return consciousness_root() / INSTALL_ID_FILE_NAME
 
 
 def read_version(pyproject: Path = _PYPROJECT) -> str | None:
@@ -141,7 +153,9 @@ def build_client(section: dict[str, Any] | None) -> TraceClient:
     TRACE_USAGE_REPORTING / DO_NOT_TRACK ahead of ``enabled`` and records why it
     is off in ``disabled_reason``. A missing endpoint or key falls back to the
     shipped default. Every event carries :func:`read_version` (or
-    ``UNKNOWN_VERSION``) as the tag ``version``, added by the client.
+    ``UNKNOWN_VERSION``) as the tag ``version`` and the installation ID
+    (``TRACE_INSTALL_ID``, else :func:`install_id_file`) as ``install``, both
+    added by the client.
     """
     if section is None:
         return TraceClient.disabled()
@@ -152,6 +166,10 @@ def build_client(section: dict[str, Any] | None) -> TraceClient:
             read_version() or UNKNOWN_VERSION,
             key=str(section.get("key") or DEFAULT_KEY),
             enabled=bool(section.get("enabled", True)),
+            # Resolved by the client only after its opt-out checks: a disabled
+            # client never creates the file.
+            install_id=os.environ.get("TRACE_INSTALL_ID"),
+            install_id_file=install_id_file(),
         )
     except Exception:
         return TraceClient.disabled()
