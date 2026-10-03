@@ -403,8 +403,9 @@ consciousness-sim/
 │   │   └── webhook.py
 │   ├── usage_reporting.py   # trace usage reporting: settings.json block in the
 │   │                        #   persistence root + first-run notice; startup
-│   │                        #   (spawn/resume/web) and experiment-started events
-│   └── trace_client.py      # Vendored trace-client-python 0.2.0 (unmodified)
+│   │                        #   (spawn/resume/web) and experiment-started events;
+│   │                        #   install ID file trace-install-id in the root
+│   └── trace_client.py      # Vendored trace-client-python 0.4.0 (unmodified)
 ├── scripts/
 │   ├── spawn.py             # Entry point: build mind + optional perception
 │   │                        #   + sinks; foreground / --bg / --headless;

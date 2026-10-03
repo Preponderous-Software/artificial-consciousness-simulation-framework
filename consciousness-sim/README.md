@@ -314,9 +314,13 @@ Every instance runs against this shipped default unless it has been customized. 
 
 ## Usage reporting
 
-Usage reporting is on by default: the framework sends its name (`artificial-consciousness-simulation-framework`) and its version from `pyproject.toml` to [trace](https://github.com/Stephenson-Software/trace) at `https://trace.danielstephenson.dev`, as a `startup` event when `scripts/spawn.py`, `scripts/resume.py` or `scripts/web.py` starts (tagged `command` = `spawn` / `resume` / `web`; the dashboard's is also tagged `service=true`) and an `experiment-started` event when `scripts/experiment.py run` begins a manifest. Nothing about you, your machine, your IP address, instance names, configuration, providers, models, thoughts, journals or any other content is sent. The report is made from a background thread, never blocks the run, and is dropped silently if the service is unreachable. A `spawn.py --bg` launch is counted once, by the background process.
+Usage reporting is on by default: the framework sends its name (`artificial-consciousness-simulation-framework`) and its version from `pyproject.toml` to [trace](https://github.com/Stephenson-Software/trace) at `https://trace.danielstephenson.dev`, as a `startup` event when `scripts/spawn.py`, `scripts/resume.py` or `scripts/web.py` starts (tagged `command` = `spawn` / `resume` / `web`; the dashboard's is also tagged `service=true`) and an `experiment-started` event when `scripts/experiment.py run` begins a manifest. Every event also carries a random installation ID (tag `install`) so installations can be counted rather than events; beyond that, nothing about you, your machine, your IP address, instance names, configuration, providers, models, thoughts, journals or any other content is sent. The report is made from a background thread, never blocks the run, and is dropped silently if the service is unreachable. A `spawn.py --bg` launch is counted once, by the background process.
 
-The first launch writes a `settings.json` in the persistence root (`~/.consciousness/`, or `$CONSCIOUSNESS_HOME`) and prints a one-line notice. To turn reporting off, any one of these is enough:
+The first launch writes a `settings.json` in the persistence root (`~/.consciousness/`, or `$CONSCIOUSNESS_HOME`) and prints a one-line notice.
+
+The installation ID is a random UUID the client keeps in `trace-install-id` in the same persistence root, created the first time reporting runs. It identifies no person, account or address; delete the file to get a new one. Setting the environment variable `TRACE_INSTALL_ID` sends that value instead (useful to pin one for a container or service) and leaves the file alone. The file is only created while reporting is on, so every opt-out below also stops it.
+
+To turn reporting off, any one of these is enough:
 
 - `"usage_reporting": {"enabled": false}` in that `settings.json`:
 
