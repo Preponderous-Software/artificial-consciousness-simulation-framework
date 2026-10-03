@@ -107,7 +107,10 @@ class ShortTermMemory:
                 used += cost
                 continue
             if not kept:
-                kept.append(line[: max(0, self.prompt_chars - len(_TRUNCATION_MARK))].rstrip() + _TRUNCATION_MARK)
+                room = self.prompt_chars - len(_TRUNCATION_MARK)
+                # A budget too small to fit the mark gets a bare slice instead,
+                # so the render never exceeds the budget.
+                kept.append(line[:room].rstrip() + _TRUNCATION_MARK if room > 0 else line[: self.prompt_chars])
             break
         if len(kept) < len(lines):
             logging.debug(

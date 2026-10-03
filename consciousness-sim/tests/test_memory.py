@@ -132,6 +132,14 @@ def test_short_term_render_truncates_the_newest_item_if_it_alone_is_over_budget(
     assert "older" not in rendered
 
 
+@pytest.mark.parametrize("budget", [1, 2, 3])
+def test_short_term_render_never_exceeds_a_budget_smaller_than_the_truncation_mark(budget) -> None:
+    stm = ShortTermMemory(capacity=5, prompt_chars=budget)
+    stm.add("thought", "some content")
+
+    assert len(stm.render_for_prompt()) <= budget
+
+
 def test_short_term_render_within_budget_is_unchanged() -> None:
     stm = ShortTermMemory(capacity=5, prompt_chars=8000)
     stm.add("thought", "one")
