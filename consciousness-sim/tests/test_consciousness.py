@@ -436,3 +436,34 @@ def test_short_term_half_life_propagates_from_config(tmp_path, monkeypatch, conf
 
     mind = Consciousness(name="Aria", config_path=str(cfg_path))
     assert mind.short_term.half_life == expected
+
+
+@pytest.mark.parametrize("configured, expected", [(None, 8000), (0, None), (5000, 5000)])
+def test_short_term_prompt_chars_propagates_from_config(tmp_path, monkeypatch, configured, expected) -> None:
+    """memory.short_term_prompt_chars (#205): absent → 8000, 0 → unbounded."""
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    memory = {
+        "short_term_capacity": 5, "consolidation_interval_minutes": 5,
+        "forgetting_curve_enabled": False, "importance_decay_rate": 0.01,
+    }
+    if configured is not None:
+        memory["short_term_prompt_chars"] = configured
+    cfg = {
+        "consciousness": {"origin_story": "o", "values": ["v"], "purpose": "p"},
+        "llm": {"provider": "ollama", "model": "llama3"},
+        "thought_loop": {
+            "min_interval_seconds": 0, "max_interval_seconds": 0,
+            "reflection_probability": 0.0, "existential_inquiry_every_n_thoughts": 0,
+        },
+        "memory": memory,
+        "mood": {"initial": {"curiosity": 0.5}, "drift_rate": 0.01},
+        "perception": {
+            "enabled": False, "provider": "mock",
+            "every_n_cycles": 0, "timeout_seconds": 1.0, "cache_last_n": 0,
+        },
+    }
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    mind = Consciousness(name="Aria", config_path=str(cfg_path))
+    assert mind.short_term.prompt_chars == expected

@@ -73,6 +73,14 @@ memory:
   # was evicted on the next add. Optional — absent uses 10; 0 restores the
   # importance-only behaviour.
   short_term_half_life: 10
+  # Character budget for the rendered workspace (#205) — what every thought /
+  # reflection / reply prompt and the retrieval embedding reread. Newest items
+  # are kept first; the newest is truncated if it alone is over budget. ~8000
+  # chars is about half of llama3.2:3b's 4,096-token context. Optional —
+  # absent uses 8000; 0 renders everything (the pre-#205 behaviour, under which
+  # a full workspace of long reflections reached ~19k chars and embedding it
+  # timed out).
+  short_term_prompt_chars: 8000
 
 mood:
   initial:
