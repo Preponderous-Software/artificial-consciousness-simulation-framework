@@ -315,7 +315,7 @@ Every instance runs against this shipped default unless it has been customized. 
 
 ## Usage reporting
 
-Usage reporting is on by default: the framework sends its name (`artificial-consciousness-simulation-framework`) and its version from `pyproject.toml` to [trace](https://github.com/Stephenson-Software/trace) at `https://trace.danielstephenson.dev`, as a `startup` event when `scripts/spawn.py`, `scripts/resume.py` or `scripts/web.py` starts (tagged `command` = `spawn` / `resume` / `web`; the dashboard's is also tagged `service=true`) and an `experiment-started` event when `scripts/experiment.py run` begins a manifest. Every event also carries a random installation ID (tag `install`) so installations can be counted rather than events; beyond that, nothing about you, your machine, your IP address, instance names, configuration, providers, models, thoughts, journals or any other content is sent. The report is made from a background thread, never blocks the run, and is dropped silently if the service is unreachable. A `spawn.py --bg` launch is counted once, by the background process.
+Usage reporting is on by default: the framework sends its name (`artificial-consciousness-simulation-framework`) and its version from `pyproject.toml` to [trace](https://danielstephenson.dev/usage-reporting) at `https://trace.danielstephenson.dev`, as a `startup` event when `scripts/spawn.py`, `scripts/resume.py` or `scripts/web.py` starts (tagged `command` = `spawn` / `resume` / `web`; the dashboard's is also tagged `service=true`) and an `experiment-started` event when `scripts/experiment.py run` begins a manifest. Every event also carries a random installation ID (tag `install`) so installations can be counted rather than events; beyond that, nothing about you, your machine, your IP address, instance names, configuration, providers, models, thoughts, journals or any other content is sent. The report is made from a background thread, never blocks the run, and is dropped silently if the service is unreachable. A `spawn.py --bg` launch is counted once, by the background process.
 
 The first launch writes a `settings.json` in the persistence root (`~/.consciousness/`, or `$CONSCIOUSNESS_HOME`) and prints a one-line notice.
 
@@ -338,7 +338,7 @@ To turn reporting off, any one of these is enough:
 
 The environment variables win over `settings.json`. The `endpoint` and `key` entries in the same block select where reports go and the key they are sent with. The client is `interfaces/trace_client.py`, vendored from [trace-client-python](https://github.com/Stephenson-Software/trace-client-python); the settings handling is in `interfaces/usage_reporting.py`. The test suite (`tests/conftest.py`) and both CI workflows run with `TRACE_USAGE_REPORTING=off`.
 
-Details: https://github.com/Stephenson-Software/trace#usage-reporting
+Details: https://danielstephenson.dev/usage-reporting
 
 ## Ethical Note
 

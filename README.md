@@ -12,9 +12,9 @@ This is research code, not production infrastructure. It treats questions about 
 
 ## Usage reporting
 
-Usage reporting is on by default: the entry-point scripts send the program's name, its version, a random installation ID (kept in `trace-install-id` next to `settings.json`; delete it to reset) and a `startup` or `experiment-started` event to [trace](https://github.com/Stephenson-Software/trace) — nothing about you, your instances or their content. Turn it off with `"usage_reporting": {"enabled": false}` in `~/.consciousness/settings.json` (or `$CONSCIOUSNESS_HOME/settings.json`), or with `TRACE_USAGE_REPORTING=off` or `DO_NOT_TRACK=1` in the environment. See [consciousness-sim/README.md](./consciousness-sim/README.md#usage-reporting) for exactly what is sent.
+Usage reporting is on by default: the entry-point scripts send the program's name, its version, a random installation ID (kept in `trace-install-id` next to `settings.json`; delete it to reset) and a `startup` or `experiment-started` event to [trace](https://danielstephenson.dev/usage-reporting) — nothing about you, your instances or their content. Turn it off with `"usage_reporting": {"enabled": false}` in `~/.consciousness/settings.json` (or `$CONSCIOUSNESS_HOME/settings.json`), or with `TRACE_USAGE_REPORTING=off` or `DO_NOT_TRACK=1` in the environment. See [consciousness-sim/README.md](./consciousness-sim/README.md#usage-reporting) for exactly what is sent.
 
-Details: https://github.com/Stephenson-Software/trace#usage-reporting
+Details: https://danielstephenson.dev/usage-reporting
 
 ## Contributing
 
