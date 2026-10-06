@@ -128,7 +128,7 @@ def test_notice_says_reporting_is_on_and_names_every_opt_out() -> None:
     assert '"enabled": false' in FIRST_RUN_NOTICE
     assert "TRACE_USAGE_REPORTING=off" in FIRST_RUN_NOTICE
     assert DETAILS_URL in FIRST_RUN_NOTICE
-    assert DETAILS_URL == "https://github.com/Stephenson-Software/trace#usage-reporting"
+    assert DETAILS_URL == "https://danielstephenson.dev/usage-reporting"
     assert "\n" not in FIRST_RUN_NOTICE
 
 

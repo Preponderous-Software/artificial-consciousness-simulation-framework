@@ -22,7 +22,7 @@ which every trace client honours and which win over the settings file because
 the vendored client checks them first. Every call returns immediately and
 never raises: the network happens on a daemon thread owned by the client in
 ``interfaces/trace_client.py``.
-Details: https://github.com/Stephenson-Software/trace#usage-reporting
+Details: https://danielstephenson.dev/usage-reporting
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ _PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 # an entry point from starting.
 UNKNOWN_VERSION = "unknown"
 
-DETAILS_URL = "https://github.com/Stephenson-Software/trace#usage-reporting"
+DETAILS_URL = "https://danielstephenson.dev/usage-reporting"
 
 FIRST_RUN_NOTICE = (
     "Usage reporting is on: artificial-consciousness-simulation-framework sends its name "
