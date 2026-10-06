@@ -405,7 +405,7 @@ consciousness-sim/
 │   │                        #   persistence root + first-run notice; startup
 │   │                        #   (spawn/resume/web) and experiment-started events;
 │   │                        #   install ID file trace-install-id in the root
-│   └── trace_client.py      # Vendored trace-client-python 0.4.0 (unmodified)
+│   └── trace_client.py      # Vendored trace-client-python 0.4.1 (unmodified)
 ├── scripts/
 │   ├── spawn.py             # Entry point: build mind + optional perception
 │   │                        #   + sinks; foreground / --bg / --headless;
