@@ -124,6 +124,13 @@ python scripts/doctor.py --prune --yes
 # Machine-readable output for tooling
 python scripts/doctor.py --json
 
+# Back up a stopped instance to a portable archive (#10). The archive holds one
+# Aria/ directory (state, logs, memory.db, config) minus the pid file, so
+# extracting it into CONSCIOUSNESS_HOME restores the instance. A running
+# instance is refused, and an existing output file is never overwritten.
+python scripts/export.py --name Aria
+python scripts/export.py --name Aria --output aria-backup.tar.gz
+
 # Resume a previously persisted instance — restores identity/mood/short-term
 # buffer from disk instead of starting fresh, then runs the interactive TUI
 python scripts/resume.py --name Aria
