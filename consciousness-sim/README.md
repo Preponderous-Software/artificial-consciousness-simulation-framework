@@ -131,6 +131,13 @@ python scripts/doctor.py --json
 python scripts/export.py --name Aria
 python scripts/export.py --name Aria --output aria-backup.tar.gz
 
+# Permanently delete a stopped instance's directory, or --reset it: remove all
+# state but keep its config.yaml so the next spawn starts fresh with the same
+# config (#10). Prompts for confirmation unless --yes; a running instance is
+# refused. Export first if the state may be wanted later.
+python scripts/delete.py --name Aria
+python scripts/delete.py --name Aria --reset --yes
+
 # Resume a previously persisted instance — restores identity/mood/short-term
 # buffer from disk instead of starting fresh, then runs the interactive TUI
 python scripts/resume.py --name Aria
