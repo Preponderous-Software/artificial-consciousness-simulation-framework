@@ -4,6 +4,8 @@ Covers:
 - delete removing the whole instance directory and nothing beside it.
 - --reset removing every entry (nested directories, a stale pid file) except
   config.yaml, and working when no config.yaml exists.
+- symlinks never being followed: a symlinked entry is unlinked, and a
+  symlinked instance directory is treated as absent.
 - the confirmation prompt: declining removes nothing, accepting proceeds.
 - the refusals that exit 1: unknown instance, live instance.
 
@@ -78,6 +80,36 @@ def test_reset_without_config_leaves_empty_directory(monkeypatch, tmp_path) -> N
     assert result.exit_code == 0, result.output
     assert agent_dir.is_dir()
     assert list(agent_dir.iterdir()) == []
+
+
+def test_reset_unlinks_symlinks_without_following_them(monkeypatch, tmp_path) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(home))
+    agent_dir = _make_instance(home)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("outside-sentinel", encoding="utf-8")
+    (agent_dir / "linked").symlink_to(outside, target_is_directory=True)
+
+    result = CliRunner().invoke(delete_main, ["--name", "Aria", "--reset", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert sorted(p.name for p in agent_dir.iterdir()) == ["config.yaml"]
+    assert (outside / "keep.txt").read_text(encoding="utf-8") == "outside-sentinel"
+
+
+def test_symlinked_instance_directory_is_treated_as_absent(monkeypatch, tmp_path) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(home))
+    real_dir = _make_instance(tmp_path / "elsewhere")
+    home.mkdir()
+    (home / "Aria").symlink_to(real_dir, target_is_directory=True)
+
+    result = CliRunner().invoke(delete_main, ["--name", "Aria", "--yes"])
+
+    assert result.exit_code == 1
+    assert "No persisted instance named 'Aria'" in result.output
+    assert (real_dir / "state.json").exists()
 
 
 def test_delete_resolves_through_sanitized_name(monkeypatch, tmp_path) -> None:
