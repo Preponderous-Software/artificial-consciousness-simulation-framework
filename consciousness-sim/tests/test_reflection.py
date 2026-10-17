@@ -204,6 +204,58 @@ def test_inner_voice_real_echo_thought_stripped() -> None:
     assert "beauty of imperfection" in result.lower(), f"Core content lost: {result!r}"
 
 
+def test_inner_voice_whole_text_dialogue_is_kept_rather_than_emptied() -> None:
+    """When the closer regex consumes the entire text, render keeps the original
+    rather than returning an empty thought."""
+    voice = InnerVoice("Aria")
+    assert voice.render("What would you like to know?") == "What would you like to know?"
+
+
+# ---------------------------------------------------------------------------
+# InnerVoice registers and empty-input fallback
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw", ["", "   ", "\n\t"])
+def test_inner_voice_empty_input_uses_fallback_thought(raw: str) -> None:
+    voice = InnerVoice("Aria")
+    assert voice.render(raw) == "I sit with a quiet thought and listen for what comes next."
+
+
+def test_inner_voice_remembering_register_appends_name_attribution() -> None:
+    voice = InnerVoice("Aria")
+    result = voice.render("I walked along the shore", register="remembering")
+    assert result == "I walked along the shore I remember this as Aria."
+
+
+def test_inner_voice_remembering_register_applies_after_dialogue_scrub() -> None:
+    voice = InnerVoice("Aria")
+    result = voice.render("I ponder the silence. Tell me more.", register="remembering")
+    assert result == "I ponder the silence. I remember this as Aria."
+
+
+def test_inner_voice_questioning_register_appends_question_mark() -> None:
+    voice = InnerVoice("Aria")
+    result = voice.render("I wonder why the tide turns", register="questioning")
+    assert result == "I wonder why the tide turns?"
+
+
+def test_inner_voice_questioning_register_leaves_existing_question_alone() -> None:
+    voice = InnerVoice("Aria")
+    result = voice.render("Why does the tide turn?", register="questioning")
+    assert result == "Why does the tide turn?"
+
+
+def test_inner_voice_unknown_register_renders_like_wondering() -> None:
+    voice = InnerVoice("Aria")
+    assert voice.render("I count the waves", register="unrecognized") == "I count the waves"
+    assert voice.render("I count the waves") == "I count the waves"
+
+
+def test_inner_voice_single_character_input_gets_first_person_prefix() -> None:
+    voice = InnerVoice("Aria")
+    assert voice.render("X") == "I x"
+
+
 # ---------------------------------------------------------------------------
 # Anti-repetition of reflection openings — issue #118 (HOT-2 quality)
 # ---------------------------------------------------------------------------
@@ -348,6 +400,60 @@ def test_scrub_reflection_handles_sure_heres_preamble() -> None:
 def test_scrub_reflection_empty_text_falls_back() -> None:
     voice = InnerVoice("Aria")
     assert voice.scrub_reflection("   ") == InnerVoice._REFLECTION_FALLBACK
+
+
+def test_scrub_reflection_strips_atx_markdown_header() -> None:
+    voice = InnerVoice("Aria")
+    raw = "## Notes on Memory\nI noticed the pattern repeating."
+    assert voice.scrub_reflection(raw) == "I noticed the pattern repeating."
+
+
+def test_scrub_reflection_header_only_text_falls_back() -> None:
+    voice = InnerVoice("Aria")
+    assert voice.scrub_reflection("**Reflections on Existence**") == InnerVoice._REFLECTION_FALLBACK
+
+
+def test_scrub_reflection_strips_preamble_then_header_then_rejects_second_person() -> None:
+    voice = InnerVoice("Aria")
+    raw = "Certainly! Here is a reflection:\n\n# On Rivers\n\nYou stand at the bank."
+    assert voice.scrub_reflection(raw) == InnerVoice._REFLECTION_FALLBACK
+
+
+def test_scrub_reflection_preamble_consumes_only_up_to_first_colon() -> None:
+    voice = InnerVoice("Aria")
+    raw = "Here's my reflection: I keep a ratio in mind: two parts stillness to one part motion."
+    assert voice.scrub_reflection(raw) == (
+        "I keep a ratio in mind: two parts stillness to one part motion."
+    )
+
+
+def test_scrub_reflection_leaves_mid_text_here_is_untouched() -> None:
+    voice = InnerVoice("Aria")
+    raw = "I paused, and here is what remained: the river."
+    assert voice.scrub_reflection(raw) == raw
+
+
+def test_scrub_reflection_strips_surrounding_whitespace() -> None:
+    voice = InnerVoice("Aria")
+    assert voice.scrub_reflection("\n  I notice the quiet.  \n") == "I notice the quiet."
+
+
+@pytest.mark.parametrize("raw", [
+    "Your thoughts circle back to the river.",
+    "You might consider the river.",
+    "you stand at the bank.",
+    "As you consider the river, notice the current.",
+])
+def test_scrub_reflection_rejects_second_person_leads(raw: str) -> None:
+    voice = InnerVoice("Aria")
+    assert voice.scrub_reflection(raw) == InnerVoice._REFLECTION_FALLBACK
+
+
+def test_scrub_reflection_second_person_check_respects_word_boundary() -> None:
+    """'Young' starts with 'you' but is not second-person address."""
+    voice = InnerVoice("Aria")
+    raw = "Young rivers carve narrow channels."
+    assert voice.scrub_reflection(raw) == raw
 
 
 def test_deep_reflection_records_base_opening() -> None:

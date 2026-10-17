@@ -12,7 +12,7 @@ import pytest
 from core.identity import IdentityDocument
 from core.metacognition import MetacognitiveMonitor
 from core.reflection import ReflectionEngine
-from core.thought_loop import ThoughtLoop
+from core.thought_loop import ThoughtLoop, _select_register
 from llm.provider import MockProvider
 from memory.episodic import EpisodicMemory
 from memory.long_term import LongTermMemory
@@ -914,3 +914,22 @@ def test_refused_reply_is_not_spoken(caplog) -> None:
             assert any("refusal" in r.message for r in caplog.records)
 
     asyncio.run(_run())
+
+
+@pytest.mark.parametrize("raw,has_memories,expected", [
+    ("Why does the river bend?", True, "questioning"),
+    ("Why does the river bend?", False, "questioning"),
+    # A question mark wins over a memory keyword.
+    ("Do I recall the river?", True, "questioning"),
+    ("I remember the river.", True, "remembering"),
+    ("I Recall the delta.", True, "remembering"),
+    ("I once crossed the delta.", True, "remembering"),
+    ("Back then the river ran high.", True, "remembering"),
+    ("I used to watch the river.", True, "remembering"),
+    # Memory keywords only select "remembering" when memories were retrieved.
+    ("I remember the river.", False, "wondering"),
+    ("I watch the river.", True, "wondering"),
+    ("I watch the river.", False, "wondering"),
+])
+def test_select_register(raw: str, has_memories: bool, expected: str) -> None:
+    assert _select_register(raw, has_memories) == expected
