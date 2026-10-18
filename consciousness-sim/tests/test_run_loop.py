@@ -218,6 +218,9 @@ def test_run_loop_journals_structured_cycle_event(tmp_path, monkeypatch) -> None
     assert cycle["retrieved"] == [{"summary": "Texas rivers", "importance": 6.0}]
     assert set(cycle["attention"]) == {"focus", "theme", "salience"}
     assert cycle["short_term_size"] >= 0
+    # #220: post-drift mood for this cycle (one cycle ran, so it is the final mood).
+    assert cycle["mood"] == mind.identity.mood
+    assert cycle["mood"] and all(0.0 <= v <= 1.0 for v in cycle["mood"].values())
     assert cycle["timings_ms"] == {"generate": 1234.5}
     assert cycle["perception_title"] is None
 

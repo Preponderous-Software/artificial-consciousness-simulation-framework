@@ -79,7 +79,7 @@ class InnerVoice:
     # person is instructional scaffolding directed at a hypothetical reader, not a
     # genuine self-reflection — reject rather than attempt a lossy pronoun swap (#132).
     _SECOND_PERSON_LEAD_RE: re.Pattern[str] = re.compile(
-        r"^(?:as you\b|you\b|your\b)",
+        r"^(?:as\s+)?your?\b",
         re.IGNORECASE,
     )
 

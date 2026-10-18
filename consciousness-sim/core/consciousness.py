@@ -666,6 +666,9 @@ class Consciousness:
             short_term_size=len(self.short_term.list()),
             timings_ms=trace.timings_ms,
             prompt_chars=trace.prompt_chars,
+            # Post-drift mood for this thought_count, so a mood trajectory can be
+            # rebuilt from journal.jsonl rather than only the final state.json (#220).
+            mood=dict(self.identity.mood),
         )
 
     async def _score_mood_triggers(self, text: str) -> dict[str, float] | None:
