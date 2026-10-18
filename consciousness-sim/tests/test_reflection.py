@@ -443,6 +443,7 @@ def test_scrub_reflection_strips_surrounding_whitespace() -> None:
     "You might consider the river.",
     "you stand at the bank.",
     "As you consider the river, notice the current.",
+    "As your mind wanders, the river bends.",  # #218
 ])
 def test_scrub_reflection_rejects_second_person_leads(raw: str) -> None:
     voice = InnerVoice("Aria")
