@@ -132,11 +132,16 @@ def cmd_list() -> None:
                 meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
             except (yaml.YAMLError, OSError):
                 continue
+            # An empty file loads as None, and a list/scalar document has no keys —
+            # skip it like any other unreadable run rather than hide every row (#224).
+            if not isinstance(meta, dict):
+                continue
+            wall_clock = meta.get("wall_clock_minutes", 0)
             rows.append((
                 manifest_dir.name,
                 run_dir.name,
                 meta.get("exit_reason", "?"),
-                f"{meta.get('wall_clock_minutes', 0):.1f}m",
+                f"{wall_clock:.1f}m" if isinstance(wall_clock, (int, float)) else "?",
             ))
     if not rows:
         click.echo("No recorded runs found.")
