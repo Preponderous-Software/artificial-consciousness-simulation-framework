@@ -513,13 +513,15 @@ def status(run_dir: Path) -> dict[str, Any]:
         if meta_path.exists():
             try:
                 meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
+            except yaml.YAMLError:
+                meta = None
+            # An empty or non-mapping meta.yaml contributes nothing (#224).
+            if isinstance(meta, dict):
                 info.update({
                     "exit_reason": meta.get("exit_reason"),
                     "wall_clock_minutes": meta.get("wall_clock_minutes"),
                     "started_at": meta.get("started_at"),
                 })
-            except yaml.YAMLError:
-                pass
         if has_index:
             n_replicates = len(list(run_dir.glob("replicate-*")))
             info["n_replicates"] = n_replicates

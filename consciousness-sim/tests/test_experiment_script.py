@@ -234,6 +234,40 @@ def test_list_rows_are_newest_first_and_skip_unreadable_runs(monkeypatch, tmp_pa
     ]
 
 
+def test_list_skips_non_mapping_meta_and_renders_null_wall_clock(monkeypatch, tmp_path) -> None:
+    # #224: an empty / list / scalar meta.yaml must not hide the other rows,
+    # and a null or non-numeric wall clock renders as "?" instead of raising.
+    monkeypatch.setattr(exp_mod, "EXPERIMENTS_ROOT", tmp_path)
+    _write_run(tmp_path, "smoke", "20260101T000000Z", "exit_reason: thoughts_reached\nwall_clock_minutes: null\n")
+    _write_run(tmp_path, "smoke", "20260102T000000Z", "")
+    _write_run(tmp_path, "smoke", "20260103T000000Z", "- a\n- b\n")
+    _write_run(tmp_path, "smoke", "20260104T000000Z", "just-a-scalar\n")
+    _write_run(tmp_path, "smoke", "20260105T000000Z", "exit_reason: wall_clock\nwall_clock_minutes: soon\n")
+
+    result = _invoke(["list"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines() == [
+        "smoke  20260105T000000Z  ?         wall_clock",
+        "smoke  20260101T000000Z  ?         thoughts_reached",
+    ]
+
+
+def test_status_ignores_empty_or_non_mapping_meta(tmp_path) -> None:
+    # #224: runner.status must report the run as done without meta keys
+    # rather than crash on a None / list document.
+    for body in ("", "- a\n- b\n"):
+        run_dir = tmp_path / f"run-{len(body)}"
+        run_dir.mkdir()
+        (run_dir / "report.md").write_text("# report", encoding="utf-8")
+        (run_dir / "meta.yaml").write_text(body, encoding="utf-8")
+
+        result = _invoke(["status", str(run_dir)])
+
+        assert result.exit_code == 0, result.output
+        assert result.output.splitlines() == [f"{run_dir}: done", "  kind: single"]
+
+
 # ---------------------------------------------------------------------------
 # replay-analysis
 # ---------------------------------------------------------------------------
