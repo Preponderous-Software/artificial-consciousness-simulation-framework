@@ -382,6 +382,29 @@ def test_consciousness_expands_env_var_in_discord_url(tmp_path, monkeypatch) -> 
     assert len(mind.on_perception) == 1
 
 
+def test_consciousness_has_a_channel_for_every_documented_discord_event(tmp_path, monkeypatch, caplog) -> None:
+    """Every type README.md lists under `discord.events` must be subscribable.
+
+    `register()` only logs a WARNING for an unknown type, so a documented event
+    with no `on_<type>` channel would silently forward nothing."""
+    from core.consciousness import Consciousness
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    documented = [
+        "thought", "reflection", "perception", "identity_shift",
+        "memory_stored", "consolidation", "health_change", "utterance",
+    ]
+    cfg = _base_cfg(enabled=True, webhook_url=VALID_URL, events=documented)
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg))
+
+    with caplog.at_level(logging.WARNING, logger="interfaces.discord.webhook"):
+        mind = Consciousness(name="A", config_path=str(cfg_path))
+
+    assert not any("channel on mind" in r.getMessage() for r in caplog.records)
+    for event_type in documented:
+        assert len(getattr(mind, f"on_{event_type}")) == 1, event_type
+
+
 def test_consciousness_raises_clearly_when_discord_enabled_but_env_missing(tmp_path, monkeypatch) -> None:
     from core.consciousness import Consciousness
     monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))

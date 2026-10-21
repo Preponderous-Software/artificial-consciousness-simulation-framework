@@ -298,7 +298,7 @@ Every instance runs against this shipped default unless it has been customized. 
 - `discord.webhook_url`: webhook URL — use `${ENV_VAR}` indirection; never commit the literal URL
 - `discord.username`: optional. Override the webhook's display name. `null`/absent → falls back to the consciousness's own name once the sink is bound to a running instance.
 - `discord.avatar_url`: optional. Override the webhook's avatar image URL. `null`/absent → Discord's default webhook avatar.
-- `discord.events`: which event types to forward (`thought`, `reflection`, `perception`, `identity_shift`, `memory_stored`, `consolidation` (#89), `health_change` (#117)). Discord auto-subscribes to any of these via the existing `getattr(mind, "on_{event_type}")` register loop — opt in by adding the type to the list.
+- `discord.events`: which event types to forward (`thought`, `reflection`, `perception`, `identity_shift`, `memory_stored`, `consolidation` (#89), `health_change` (#117), `utterance` (#198)). Discord auto-subscribes to any of these via the existing `getattr(mind, "on_{event_type}")` register loop — opt in by adding the type to the list.
 - `discord.rate_limit.max_per_minute`: outbound rate cap (default 25; Discord allows ~30/min sustained)
 - `discord.truncate_chars`: max embed description length (default 1800; Discord cap 4096)
 - `discord.include_perception_url`: default `true`. Let Discord auto-unfurl a perception event's source URL instead of stripping it from the embed.
