@@ -440,9 +440,8 @@ def test_prune_yes_deletes(monkeypatch, tmp_path) -> None:
 
 
 def test_prune_no_dry_run_alone_also_deletes(monkeypatch, tmp_path) -> None:
-    """Characterizes current behaviour: --no-dry-run drops the safety on its
-    own, as the inline comment in cmd_prune says, although the option's help
-    text claims it "requires --yes"."""
+    """--no-dry-run drops the safety on its own, as the inline comment in
+    cmd_prune and the option's help text both say (#225)."""
     calls = _capture_prune(monkeypatch, [tmp_path / "old-run"])
 
     result = _invoke(["prune", "--keep-last", "5", "--no-dry-run"])
@@ -450,3 +449,14 @@ def test_prune_no_dry_run_alone_also_deletes(monkeypatch, tmp_path) -> None:
     assert result.exit_code == 0, result.output
     assert calls[0]["dry_run"] is False
     assert "Deleted 1 run dir(s):" in result.output
+
+
+def test_prune_help_describes_both_delete_paths() -> None:
+    """The help text must not claim --no-dry-run needs --yes (#225)."""
+    result = _invoke(["prune", "--help"])
+
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.output.split())
+    assert "requires --yes" not in text
+    assert "Required to actually delete" not in text
+    assert "--no-dry-run deletes, the same as --yes" in text

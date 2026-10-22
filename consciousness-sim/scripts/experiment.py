@@ -242,11 +242,11 @@ def cmd_check_smoke(run_dir: Path, expected_path: Path | None) -> None:
 )
 @click.option(
     "--dry-run/--no-dry-run", default=True,
-    help="Default ON: list what would be deleted without acting. --no-dry-run requires --yes.",
+    help="Default ON: list what would be deleted without acting. --no-dry-run deletes, the same as --yes.",
 )
 @click.option(
     "--yes", "-y", "confirm_delete", is_flag=True, default=False,
-    help="Required to actually delete (overrides --dry-run). Reversibility safety.",
+    help="Actually delete (overrides --dry-run). Equivalent to --no-dry-run.",
 )
 def cmd_prune(
     older_than_days: int | None,
@@ -258,7 +258,7 @@ def cmd_prune(
     """Garbage-collect old run dirs under experiments/<manifest>/<UTC-ts>/.
 
     Default policy when no flags are given: `--keep-last 10` in dry-run mode.
-    Pass `--yes` (or `--no-dry-run --yes`) to actually delete.
+    Pass `--yes` (or `--no-dry-run`) to actually delete.
 
     Protected from deletion: `experiments/golden/`, `experiments/manifests/`,
     any run dir with a `.STARTED` marker, any run dir with a future mtime.
