@@ -40,6 +40,13 @@ class EpisodicMemory:
         self._cache_loaded: bool = False
 
     async def append(self, kind: str, content: str) -> EpisodicEvent:
+        # The cache is marked loaded below, so the on-disk tail must be read in
+        # first — otherwise events from a previous process vanish from recent()
+        # and never reach consolidation (#230). Loading before the write keeps
+        # the new event from being read back and cached twice.
+        if not self._cache_loaded:
+            await self._load_from_disk()
+
         event = EpisodicEvent(
             timestamp=datetime.now(timezone.utc).isoformat(),
             kind=kind,
