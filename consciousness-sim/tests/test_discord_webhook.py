@@ -23,8 +23,10 @@ from unittest.mock import AsyncMock
 import pytest
 import yaml
 
+import interfaces.discord.webhook as webhook_module
 from interfaces.discord.webhook import (
     DiscordWebhookSink,
+    _TokenBucket,
     _mask_url,
     build_sink_from_config,
 )
@@ -162,6 +164,103 @@ def test_post_falls_back_to_thought_color_for_unknown_type(monkeypatch) -> None:
     assert captured["posts"][0]["json"]["embeds"][0]["color"] == 0x7c83ff
 
 
+def test_build_body_identity_shift_uses_green_and_fixed_footer() -> None:
+    sink = DiscordWebhookSink(VALID_URL, events={"identity_shift"})
+    embed = sink._build_body({"type": "identity_shift", "content": "amended"})["embeds"][0]
+    assert embed["color"] == 0x4ade80
+    assert embed["footer"]["text"] == "identity shift · self-concept updated"
+
+
+def test_build_body_defaults_missing_type_to_thought_and_missing_content_to_empty() -> None:
+    sink = DiscordWebhookSink(VALID_URL, events={"thought"})
+    embed = sink._build_body({})["embeds"][0]
+    assert embed["description"] == ""
+    assert embed["color"] == 0x7c83ff
+    assert embed["footer"]["text"] == "thought"
+
+
+def test_build_body_perception_without_source_or_title_footer_says_external() -> None:
+    sink = DiscordWebhookSink(VALID_URL, events={"perception"})
+    embed = sink._build_body({"type": "perception", "content": "x"})["embeds"][0]
+    # The trailing ": " left by the empty title is stripped.
+    assert embed["footer"]["text"] == "perception · external"
+    assert "url" not in embed
+    assert "title" not in embed
+
+
+def test_build_body_omits_perception_url_when_disabled() -> None:
+    sink = DiscordWebhookSink(VALID_URL, events={"perception"}, include_perception_url=False)
+    embed = sink._build_body({
+        "type": "perception", "content": "x", "source": "wikipedia",
+        "title": "Salt", "url": "https://en.wikipedia.org/wiki/Salt",
+    })["embeds"][0]
+    assert "url" not in embed
+    assert "title" not in embed
+    # The footer still names the source and title.
+    assert embed["footer"]["text"] == "perception · wikipedia: Salt"
+
+
+@pytest.mark.parametrize("url", ["javascript:alert(1)", "ftp://example.com/x", "", 42])
+def test_build_body_ignores_non_http_perception_url(url) -> None:
+    sink = DiscordWebhookSink(VALID_URL, events={"perception"})
+    embed = sink._build_body({
+        "type": "perception", "content": "x", "title": "Salt", "url": url,
+    })["embeds"][0]
+    assert "url" not in embed
+    # The title is attached only alongside an accepted URL.
+    assert "title" not in embed
+
+
+def test_build_body_attaches_url_without_title_when_title_absent() -> None:
+    sink = DiscordWebhookSink(VALID_URL, events={"perception"})
+    embed = sink._build_body({
+        "type": "perception", "content": "x", "url": "http://example.com/a",
+    })["embeds"][0]
+    assert embed["url"] == "http://example.com/a"
+    assert "title" not in embed
+
+
+def test_build_body_includes_avatar_and_omits_unset_username() -> None:
+    sink = DiscordWebhookSink(
+        VALID_URL, events={"thought"}, avatar_url="https://example.com/a.png",
+    )
+    body = sink._build_body({"type": "thought", "content": "x"})
+    assert body["avatar_url"] == "https://example.com/a.png"
+    assert "username" not in body
+
+
+def test_build_body_omits_avatar_when_unset() -> None:
+    sink = DiscordWebhookSink(VALID_URL, events={"thought"}, username="Sage")
+    body = sink._build_body({"type": "thought", "content": "x"})
+    assert "avatar_url" not in body
+    assert body["username"] == "Sage"
+
+
+def test_truncate_chars_is_floored_at_64() -> None:
+    sink = DiscordWebhookSink(VALID_URL, events={"thought"}, truncate_chars=10)
+    assert sink.truncate_chars == 64
+    desc = sink._build_body({"type": "thought", "content": "y" * 200})["embeds"][0]["description"]
+    assert len(desc) == 64
+    assert desc.endswith("… [truncated]")
+
+
+def test_truncate_leaves_content_at_exactly_the_limit_untouched() -> None:
+    sink = DiscordWebhookSink(VALID_URL, events={"thought"}, truncate_chars=100)
+    assert sink._truncate("z" * 100) == "z" * 100
+
+
+def test_truncate_strips_trailing_whitespace_before_the_suffix() -> None:
+    sink = DiscordWebhookSink(VALID_URL, events={"thought"}, truncate_chars=64)
+    keep = 64 - len("… [truncated]")
+    text = "a" * (keep - 3) + "   " + "b" * 50
+    assert sink._truncate(text) == "a" * (keep - 3) + "… [truncated]"
+
+
+def test_masked_url_property_hides_token() -> None:
+    sink = DiscordWebhookSink(VALID_URL, events={"thought"})
+    assert sink.masked_url == VALID_URL_MASKED
+
+
 # ---------------------------------------------------------------------------
 # Rate limiting
 # ---------------------------------------------------------------------------
@@ -193,6 +292,86 @@ def test_rate_limit_drop_warning_throttled_to_once_per_minute(monkeypatch, caplo
     # Many drops, but the warning fires at most once in a single test span
     drop_warnings = [r for r in caplog.records if "rate-limit" in r.getMessage().lower()]
     assert 1 <= len(drop_warnings) <= 2  # 1 normally; second only if minute-boundary crossed
+
+
+class _FakeClock:
+    """Stands in for the webhook module's `time` so refill is deterministic."""
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self.now = start
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+def _install_fake_clock(monkeypatch, start: float = 1000.0) -> _FakeClock:
+    clock = _FakeClock(start)
+    monkeypatch.setattr(webhook_module, "time", clock)
+    return clock
+
+
+def test_token_bucket_starts_full_then_refuses(monkeypatch) -> None:
+    _install_fake_clock(monkeypatch)
+    bucket = _TokenBucket(3)
+    assert [bucket.try_consume() for _ in range(4)] == [True, True, True, False]
+
+
+def test_token_bucket_refills_at_rate_per_minute(monkeypatch) -> None:
+    clock = _install_fake_clock(monkeypatch)
+    bucket = _TokenBucket(6)   # 6/min → one token every 10 s
+    for _ in range(6):
+        assert bucket.try_consume()
+    assert not bucket.try_consume()
+
+    clock.now += 9.0
+    assert not bucket.try_consume(), "0.9 tokens accrued — not yet a whole one"
+    clock.now += 1.0
+    assert bucket.try_consume(), "fractional refill carries across calls"
+    assert not bucket.try_consume()
+
+
+def test_token_bucket_refill_is_capped_at_capacity(monkeypatch) -> None:
+    clock = _install_fake_clock(monkeypatch)
+    bucket = _TokenBucket(2)
+    assert bucket.try_consume()
+    clock.now += 3600.0    # an hour idle would accrue 120 tokens uncapped
+    assert [bucket.try_consume() for _ in range(3)] == [True, True, False]
+
+
+def test_token_bucket_with_zero_rate_never_admits(monkeypatch) -> None:
+    clock = _install_fake_clock(monkeypatch)
+    bucket = _TokenBucket(0)
+    assert not bucket.try_consume()
+    clock.now += 3600.0
+    assert not bucket.try_consume()
+
+
+def test_drop_warning_refires_after_a_minute_with_accumulated_count(monkeypatch, caplog) -> None:
+    install_fake_httpx(monkeypatch)
+    clock = _install_fake_clock(monkeypatch)
+    sink = DiscordWebhookSink(VALID_URL, events={"thought"}, rate_limit_per_min=0)
+
+    def _drop_messages() -> list[str]:
+        return [r.getMessage() for r in caplog.records if "dropped" in r.getMessage()]
+
+    with caplog.at_level(logging.WARNING, logger="interfaces.discord.webhook"):
+        asyncio.run(sink._post({"type": "thought", "content": "x"}))
+        # The first drop warns immediately — the -inf sentinel guarantees it.
+        assert _drop_messages() == [
+            "Discord sink: rate-limit reached — dropped 1 event(s) in the last minute"
+        ]
+        clock.now += 30.0
+        for _ in range(4):
+            asyncio.run(sink._post({"type": "thought", "content": "x"}))
+        assert len(_drop_messages()) == 1, "drops inside the minute stay silent"
+
+        clock.now += 30.0
+        asyncio.run(sink._post({"type": "thought", "content": "x"}))
+
+    assert _drop_messages()[-1] == (
+        "Discord sink: rate-limit reached — dropped 5 event(s) in the last minute"
+    )
+    assert len(_drop_messages()) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +478,35 @@ def test_factory_builds_sink_when_enabled(monkeypatch) -> None:
     assert isinstance(sink, DiscordWebhookSink)
     assert sink.events == {"thought"}
     assert sink.truncate_chars == 500
+
+
+def test_factory_applies_defaults_for_omitted_keys() -> None:
+    sink = build_sink_from_config({
+        "enabled": True,
+        "webhook_url": VALID_URL,
+        "rate_limit": None,     # a bare `rate_limit:` key in YAML loads as None
+        "username": "",
+        "avatar_url": "",
+    })
+    assert isinstance(sink, DiscordWebhookSink)
+    # memory_stored is excluded from the default set — one ping per cycle is noise.
+    assert sink.events == {"thought", "reflection", "perception", "identity_shift"}
+    assert sink._bucket._capacity == 25.0
+    assert sink.truncate_chars == 1800
+    assert sink.include_perception_url is True
+    # Empty strings are normalised to None so register() can fill in the mind's name.
+    assert sink.username is None
+    assert sink.avatar_url is None
+
+
+def test_factory_passes_include_perception_url_false_through() -> None:
+    sink = build_sink_from_config({
+        "enabled": True,
+        "webhook_url": VALID_URL,
+        "include_perception_url": False,
+    })
+    assert sink is not None
+    assert sink.include_perception_url is False
 
 
 def test_factory_rejects_unresolved_env_var() -> None:
