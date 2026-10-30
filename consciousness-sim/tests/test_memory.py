@@ -308,3 +308,225 @@ def test_long_term_rejects_dimension_mismatch_on_store() -> None:
                 assert "dimension mismatch" in str(exc).lower()
 
     asyncio.run(_run())
+
+
+def test_long_term_rejects_empty_embedding_on_store() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            ltm = LongTermMemory(Path(d) / "mem.db")
+            await ltm.initialize()
+            with pytest.raises(ValueError, match="must not be empty"):
+                await ltm.add_memory("empty", 0.0, 1.0, [])
+            assert await ltm.count() == 0
+
+    asyncio.run(_run())
+
+
+async def _insert_raw_row(db_path: Path, embedding: str, embedding_dim: int | None, summary: str) -> None:
+    """Write a row directly, bypassing add_memory's validation — models a
+    pre-``embedding_dim`` legacy row or an on-disk corruption."""
+    import aiosqlite
+
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            """
+            INSERT INTO memories (timestamp, embedding, embedding_dim, summary, emotional_valence, importance_score)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("2026-01-01T00:00:00+00:00", embedding, embedding_dim, summary, 0.0, 5.0),
+        )
+        await db.commit()
+
+
+def test_long_term_similarity_search_returns_stored_fields() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            ltm = LongTermMemory(Path(d) / "mem.db")
+            await ltm.initialize()
+            new_id = await ltm.add_memory("the tide turns", 0.25, 6.5, [0.0, 1.0, 0.0])
+            [hit] = await ltm.similarity_search([0.0, 1.0, 0.0], limit=5)
+            assert hit.id == new_id
+            assert hit.summary == "the tide turns"
+            assert hit.emotional_valence == 0.25
+            assert hit.importance_score == 6.5
+            assert hit.embedding == [0.0, 1.0, 0.0]
+            assert hit.timestamp == await ltm.latest_timestamp()
+
+    asyncio.run(_run())
+
+
+def test_long_term_similarity_search_ranks_by_cosine_not_importance() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            ltm = LongTermMemory(Path(d) / "mem.db")
+            await ltm.initialize()
+            await ltm.add_memory("important but far", 0.0, 9.0, [1.0, 0.0, 0.0])
+            await ltm.add_memory("minor but close", 0.0, 1.0, [0.0, 1.0, 0.1])
+            await ltm.add_memory("in between", 0.0, 5.0, [0.5, 0.5, 0.0])
+            hits = await ltm.similarity_search([0.0, 1.0, 0.0], limit=3)
+            assert [h.summary for h in hits] == ["minor but close", "in between", "important but far"]
+
+    asyncio.run(_run())
+
+
+@pytest.mark.parametrize("query, limit", [([], 3), ([1.0, 0.0, 0.0], 0), ([1.0, 0.0, 0.0], -1)])
+def test_long_term_similarity_search_empty_query_or_nonpositive_limit_returns_nothing(query, limit) -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            ltm = LongTermMemory(Path(d) / "mem.db")
+            await ltm.initialize()
+            await ltm.add_memory("seed", 0.0, 5.0, [1.0, 0.0, 0.0])
+            assert await ltm.similarity_search(query, limit=limit) == []
+
+    asyncio.run(_run())
+
+
+def test_long_term_similarity_search_on_empty_store_returns_nothing() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            ltm = LongTermMemory(Path(d) / "mem.db")
+            await ltm.initialize()
+            assert await ltm.similarity_search([1.0, 0.0, 0.0]) == []
+
+    asyncio.run(_run())
+
+
+def test_long_term_similarity_search_ignores_rows_of_another_dimension() -> None:
+    """A query of a different dimension than the store matches no candidates
+    rather than raising on a shape mismatch."""
+
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            ltm = LongTermMemory(Path(d) / "mem.db")
+            await ltm.initialize()
+            await ltm.add_memory("three-dim", 0.0, 5.0, [1.0, 0.0, 0.0])
+            assert await ltm.similarity_search([1.0, 0.0]) == []
+
+    asyncio.run(_run())
+
+
+def test_long_term_similarity_search_zero_norm_query_does_not_divide_by_zero() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            ltm = LongTermMemory(Path(d) / "mem.db")
+            await ltm.initialize()
+            await ltm.add_memory("a", 0.0, 5.0, [1.0, 0.0, 0.0])
+            await ltm.add_memory("b", 0.0, 4.0, [0.0, 1.0, 0.0])
+            hits = await ltm.similarity_search([0.0, 0.0, 0.0], limit=5)
+            assert {h.summary for h in hits} == {"a", "b"}
+
+    asyncio.run(_run())
+
+
+def test_long_term_similarity_search_includes_legacy_null_dim_row_of_matching_shape() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            db_path = Path(d) / "mem.db"
+            ltm = LongTermMemory(db_path)
+            await ltm.initialize()
+            await _insert_raw_row(db_path, "[0.0, 1.0, 0.0]", None, "legacy")
+            hits = await ltm.similarity_search([0.0, 1.0, 0.0], limit=5)
+            assert [h.summary for h in hits] == ["legacy"]
+
+    asyncio.run(_run())
+
+
+@pytest.mark.parametrize(
+    "raw_embedding",
+    ["not json", '{"a": 1}', "[]", "[1.0, 0.0]", '["x", "y", "z"]'],
+)
+def test_long_term_similarity_search_skips_unusable_stored_embeddings(raw_embedding) -> None:
+    """Corrupt, non-list, empty, wrong-shape, or non-numeric embeddings on a
+    NULL-dim row are skipped; the valid row beside them is still returned."""
+
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            db_path = Path(d) / "mem.db"
+            ltm = LongTermMemory(db_path)
+            await ltm.initialize()
+            await ltm.add_memory("valid", 0.0, 1.0, [0.0, 1.0, 0.0])
+            await _insert_raw_row(db_path, raw_embedding, None, "broken")
+            hits = await ltm.similarity_search([0.0, 1.0, 0.0], limit=5)
+            assert [h.summary for h in hits] == ["valid"]
+
+    asyncio.run(_run())
+
+
+def test_long_term_similarity_search_scores_only_top_importance_candidates() -> None:
+    """candidate_limit restricts scoring to the most important rows, so a
+    perfect cosine match outside that window is not returned."""
+
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            ltm = LongTermMemory(Path(d) / "mem.db")
+            await ltm.initialize()
+            await ltm.add_memory("exact but minor", 0.0, 1.0, [0.0, 1.0, 0.0])
+            await ltm.add_memory("major", 0.0, 9.0, [1.0, 0.0, 0.0])
+            await ltm.add_memory("middling", 0.0, 5.0, [0.0, 0.0, 1.0])
+            hits = await ltm.similarity_search([0.0, 1.0, 0.0], limit=5, candidate_limit=2)
+            assert {h.summary for h in hits} == {"major", "middling"}
+
+    asyncio.run(_run())
+
+
+def test_long_term_similarity_search_candidate_limit_is_capped() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            ltm = LongTermMemory(Path(d) / "mem.db")
+            await ltm.initialize()
+            for i in range(4):
+                await ltm.add_memory(f"memory {i}", 0.0, float(i), [float(i), 1.0, 0.0])
+            ltm._MAX_CANDIDATES = 2
+            hits = await ltm.similarity_search([1.0, 1.0, 0.0], limit=10, candidate_limit=10)
+            assert {h.summary for h in hits} == {"memory 2", "memory 3"}
+
+    asyncio.run(_run())
+
+
+def test_long_term_forgetting_curve_decays_importance_and_floors_at_zero() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            ltm = LongTermMemory(Path(d) / "mem.db")
+            await ltm.initialize()
+            await ltm.add_memory("strong", 0.0, 5.0, [1.0, 0.0, 0.0])
+            await ltm.add_memory("weak", 0.0, 0.3, [0.0, 1.0, 0.0])
+            await ltm.apply_forgetting_curve(0.5)
+            scores = {
+                h.summary: h.importance_score
+                for h in await ltm.similarity_search([1.0, 1.0, 0.0], limit=10)
+            }
+            assert scores == {"strong": pytest.approx(4.5), "weak": 0.0}
+            assert await ltm.count() == 2
+
+    asyncio.run(_run())
+
+
+def test_long_term_forgetting_curve_zero_rate_leaves_importance_unchanged() -> None:
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            ltm = LongTermMemory(Path(d) / "mem.db")
+            await ltm.initialize()
+            await ltm.add_memory("kept", 0.0, 3.0, [1.0, 0.0, 0.0])
+            await ltm.apply_forgetting_curve(0.0)
+            [hit] = await ltm.similarity_search([1.0, 0.0, 0.0])
+            assert hit.importance_score == 3.0
+
+    asyncio.run(_run())
+
+
+def test_long_term_forgetting_curve_shifts_which_rows_eviction_drops() -> None:
+    """Decay lowers importance uniformly, so it does not reorder retention on
+    its own; a fresh insert above the decayed scores then outranks old rows."""
+
+    async def _run() -> None:
+        with tempfile.TemporaryDirectory() as d:
+            ltm = LongTermMemory(Path(d) / "mem.db", max_rows=2)
+            await ltm.initialize()
+            await ltm.add_memory("old high", 0.0, 4.0, [1.0, 0.0, 0.0])
+            await ltm.add_memory("old low", 0.0, 3.0, [0.0, 1.0, 0.0])
+            await ltm.apply_forgetting_curve(2.0)
+            await ltm.add_memory("fresh", 0.0, 2.5, [0.0, 0.0, 1.0])
+            kept = {h.summary for h in await ltm.similarity_search([1.0, 1.0, 1.0], limit=10)}
+            assert kept == {"fresh", "old high"}
+
+    asyncio.run(_run())
