@@ -1,8 +1,8 @@
 """Stop a background consciousness instance launched with spawn.py --bg.
 
 No direct theory mapping — infrastructure script.
-Reads the PID file written by spawn.py and sends SIGTERM, then waits
-briefly before escalating to SIGKILL if the process is still alive.
+Reads the PID file written by spawn.py or resume.py and sends SIGTERM,
+then waits briefly before escalating to SIGKILL if the process is still alive.
 
 Malformed pid files and pids that cannot be signalled from this account
 exit 1 with a message naming the file, instead of escaping as tracebacks
