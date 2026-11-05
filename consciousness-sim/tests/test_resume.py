@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
+import pytest
 from click.testing import CliRunner
 
 # Make scripts/ importable the same way spawn.py's tests do.
@@ -225,6 +226,12 @@ def test_resume_removes_its_pid_file_at_exit(monkeypatch, tmp_path) -> None:
 
 def test_resumed_instance_is_refused_by_a_later_spawn(monkeypatch, tmp_path) -> None:
     _install(monkeypatch, tmp_path)
+    # If the refusal regresses, spawn must fail here rather than start a real
+    # instance and reach for a provider.
+    monkeypatch.setattr(spawn, "Consciousness", lambda **kwargs: pytest.fail("spawn passed the duplicate check"))
+    monkeypatch.setattr(spawn, "configure_logging", lambda name, level: tmp_path / name / "run.log")
+    monkeypatch.setattr(spawn, "start_usage_reporting", lambda log: object())
+    monkeypatch.setattr(spawn, "report_startup", lambda *args, **kwargs: None)
     monkeypatch.setattr(spawn, "load_dotenv", lambda: None)
     # The exit handler is captured, not run, so the resume above still holds
     # the pid file the way a live resumed process does.
