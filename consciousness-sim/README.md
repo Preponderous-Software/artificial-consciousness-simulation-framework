@@ -142,6 +142,9 @@ python scripts/delete.py --name Aria --reset --yes
 # buffer from disk instead of starting fresh, then runs the interactive TUI
 python scripts/resume.py --name Aria
 
+# Resume refuses a live instance the same way spawn does (#237); --force overrides
+python scripts/resume.py --name Aria --force
+
 # Replace the instance's persisted config.yaml and resume with it
 python scripts/resume.py --name Aria --config my-aria.yaml
 
