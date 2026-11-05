@@ -94,7 +94,7 @@ def _check_duplicate_pid(name: str, force: bool) -> None:
             f"ERROR: A consciousness named '{name}' is already running "
             f"(PID {existing_pid}).\n"
             f"Use `python scripts/stop.py --name {name}` first, "
-            f"or pass --force to spawn anyway.",
+            f"or pass --force to start it anyway.",
             err=True,
         )
         sys.exit(1)
@@ -108,6 +108,35 @@ def _check_duplicate_pid(name: str, force: bool) -> None:
         # another spawn or the file is already gone, ignore — the next
         # caller will succeed.
         pass
+
+
+def _claim_pid_file(name: str) -> Path:
+    """Record this process in the instance's pid file until it exits.
+
+    Foreground, ``--headless`` and resume.py runs call this so future spawns
+    can detect duplicates (#115, #237). ``--bg``'s parent has already written
+    this file with the same PID (idempotent overwrite).
+    """
+    agent_dir = consciousness_dir(name)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    pid_path = agent_dir / "pid"
+    pid_path.write_text(str(os.getpid()))
+
+    def _cleanup_pid_file() -> None:
+        # Only delete if the file still points at us — protects against the
+        # case where another spawn raced ahead and claimed the slot.
+        current = _read_pid(pid_path)
+        if current == os.getpid():
+            try:
+                pid_path.unlink()
+            except OSError:
+                # Best-effort cleanup at process exit. atexit handlers must
+                # never raise; the next spawn will see a stale pid file and
+                # remove it itself.
+                pass
+
+    atexit.register(_cleanup_pid_file)
+    return pid_path
 
 
 async def _run(mind: Consciousness, headless: bool) -> None:
@@ -214,28 +243,7 @@ def main(
     logging.info("Spawn started — logs: %s, config: %s", log_path, config_path)
     report_startup(usage, "spawn")
 
-    # Foreground/--headless modes also record a pid file so future spawns
-    # can detect duplicates. Cleaned up on graceful exit; --bg's parent
-    # has already written this file with the same PID (idempotent overwrite).
-    agent_dir = consciousness_dir(name)
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    pid_path = agent_dir / "pid"
-    pid_path.write_text(str(os.getpid()))
-
-    def _cleanup_pid_file() -> None:
-        # Only delete if the file still points at us — protects against the
-        # case where another spawn raced ahead and claimed the slot.
-        current = _read_pid(pid_path)
-        if current == os.getpid():
-            try:
-                pid_path.unlink()
-            except OSError:
-                # Best-effort cleanup at process exit. atexit handlers must
-                # never raise; the next spawn will see a stale pid file and
-                # remove it itself.
-                pass
-
-    atexit.register(_cleanup_pid_file)
+    _claim_pid_file(name)
 
     mind = Consciousness(name=name, config_path=str(config_path))
     asyncio.run(_run(mind, headless))

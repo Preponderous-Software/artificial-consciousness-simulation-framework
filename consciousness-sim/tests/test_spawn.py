@@ -6,6 +6,8 @@ Covers:
   Resolution rules themselves are covered in test_instance_config.py.
 - _check_duplicate_pid's refusal/cleanup behaviour (#115) — duplicate spawns
   must abort, stale pid files must be cleaned up.
+- _claim_pid_file records this process and removes the file at exit only
+  while it still points at this process.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Callable
 
 import pytest
 import yaml
@@ -25,6 +28,7 @@ if str(_REPO_ROOT) not in sys.path:
 import scripts.spawn as spawn  # noqa: E402
 from scripts.spawn import (  # noqa: E402
     _check_duplicate_pid,
+    _claim_pid_file,
     _is_alive,
     _read_pid,
 )
@@ -151,6 +155,47 @@ def test_check_duplicate_pid_treats_malformed_file_as_absent(
     pid_path.write_text("garbage")
     # Malformed pid -> treated as no live conflict; proceed without raising.
     _check_duplicate_pid("Aria", force=False)
+
+
+# --- _claim_pid_file --------------------------------------------------------
+
+
+def _capture_atexit(monkeypatch) -> list[Callable[[], None]]:
+    registered: list[Callable[[], None]] = []
+    monkeypatch.setattr(spawn.atexit, "register", registered.append)
+    return registered
+
+
+def test_claim_pid_file_records_this_process(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    _capture_atexit(monkeypatch)
+
+    pid_path = _claim_pid_file("Aria")
+
+    assert pid_path == tmp_path / "Aria" / "pid"
+    assert _read_pid(pid_path) == os.getpid()
+
+
+def test_claim_pid_file_cleanup_removes_own_file(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    registered = _capture_atexit(monkeypatch)
+
+    pid_path = _claim_pid_file("Aria")
+    assert len(registered) == 1
+    registered[0]()
+
+    assert not pid_path.exists()
+
+
+def test_claim_pid_file_cleanup_leaves_a_later_claim_alone(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    registered = _capture_atexit(monkeypatch)
+
+    pid_path = _claim_pid_file("Aria")
+    pid_path.write_text(str(os.getpid() + 1))
+    registered[0]()
+
+    assert _read_pid(pid_path) == os.getpid() + 1
 
 
 # --- --config flag (#187) ------------------------------------------------
