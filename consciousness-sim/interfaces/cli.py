@@ -254,7 +254,7 @@ class ConsciousnessCLI:
                 stderr=log_fh,
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,
-                env={**os.environ},
+                env={**os.environ, INTERNAL_SPAWN_ENV: "1"},
             )
         pid_path.write_text(str(proc.pid))
         self.console.print(

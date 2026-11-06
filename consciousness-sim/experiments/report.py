@@ -70,6 +70,17 @@ def render_report(
     attractor_top10 = voc.get("attractor_ranks_in_top_10", {})
     attractor_top50 = voc.get("attractor_ranks_in_top_50", {})
 
+    # Initial values come from the metrics dict (which sources them from
+    # state.identity.initial_mood when persisted, else the default config).
+    # Falling back to the hardcoded default ensures the report renders cleanly
+    # for older runs that predate the metrics.mood.initial field.
+    initial = mood.get("initial") or {
+        "curiosity": 0.7, "wonder": 0.6, "melancholy": 0.2, "contentment": 0.5,
+    }
+    # Any non-empty mood mapping is valid config (#161), so the dimension count
+    # comes from the run itself rather than from the default four.
+    n_mood_dimensions = len(mood.get("final") or initial)
+
     # --- header ---
     lines = [
         f"# Experiment report — {manifest.name}",
@@ -89,7 +100,7 @@ def render_report(
         "",
         f"Event counts: {ec}",
         f"Final mood: {_fmt_mood(mood.get('final', {}))}",
-        f"Mood dimensions non-degenerate (eps=0.05): **{mood.get('dimensions_non_degenerate', 0)} / 4**",
+        f"Mood dimensions non-degenerate (eps=0.05): **{mood.get('dimensions_non_degenerate', 0)} / {n_mood_dimensions}**",
         f"Top-word density: **{voc.get('top_word_density_per_thought', 0):.2f}** per thought "
         f"({top10[0][0] if top10 else '(none)'} × {top10[0][1] if top10 else 0})",
         "",
@@ -100,13 +111,6 @@ def render_report(
     ]
 
     # --- mood ---
-    # Initial values come from the metrics dict (which sources them from
-    # state.identity.initial_mood when persisted, else the default config).
-    # Falling back to the hardcoded default ensures the report renders cleanly
-    # for older runs that predate the metrics.mood.initial field.
-    initial = mood.get("initial") or {
-        "curiosity": 0.7, "wonder": 0.6, "melancholy": 0.2, "contentment": 0.5,
-    }
     mood_rows = []
     for k, init in initial.items():
         actual = float(mood.get("final", {}).get(k, init))
@@ -200,10 +204,12 @@ def render_report(
             ),
             "",
         ]
-        if len(trajectory) >= 2:
+        if len(trajectory) >= 2 and trajectory[0] > 0:
             drift_pct = (trajectory[-1] - trajectory[0]) / trajectory[0] * 100
             lines.append(f"End-to-start drift: **{drift_pct:+.1f}%** "
                          f"(see #72 for cycle-rate degradation context)")
+        elif len(trajectory) >= 2:
+            lines.append(f"End-to-start drift: unavailable (first window averaged {trajectory[0]:.1f}s)")
     else:
         lines.append("_(fewer than one full 30-thought window; trajectory unavailable)_")
     lines.append("")
