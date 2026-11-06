@@ -16,8 +16,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from experiments.manifest import Duration, ExperimentManifest, SuccessCriterion
 from experiments.report import _criteria_section, _fmt_mood, _fmt_table, render_report
 
@@ -204,7 +202,7 @@ def test_render_report_summary_names_the_top_word() -> None:
     lines = _render().splitlines()
     assert "Event counts: {'thought': 30, 'reflection': 6}" in lines
     assert "Final mood: `curiosity=0.85`, `wonder=0.55`" in lines
-    assert "Mood dimensions non-degenerate (eps=0.05): **2 / 4**" in lines
+    assert "Mood dimensions non-degenerate (eps=0.05): **2 / 2**" in lines
     assert "Top-word density: **3.30** per thought (word1 × 99)" in lines
 
 
@@ -280,10 +278,22 @@ def test_render_report_single_window_has_no_drift_line() -> None:
     assert "End-to-start drift" not in rendered
 
 
-def test_render_report_zero_first_window_raises() -> None:
-    """Characterizes current behaviour: a 0.0 first window aborts the report.
+def test_render_report_zero_first_window_reports_drift_unavailable() -> None:
+    """Drift has no 0.0 baseline; the rest of the report must still render (#235)."""
+    rendered = _render(performance={"cycle_rate_trajectory": [0.0, 75.0]})
+    assert "| window 1 | 0.0s |" in rendered
+    assert "| window 2 | 75.0s |" in rendered
+    assert "End-to-start drift: unavailable (first window averaged 0.0s)" in rendered.splitlines()
 
-    Pinned so a fix is a visible change; see #235.
-    """
-    with pytest.raises(ZeroDivisionError):
-        _render(performance={"cycle_rate_trajectory": [0.0, 75.0]})
+
+def test_render_report_mood_denominator_counts_final_dimensions() -> None:
+    """A five-dimension instance must not report `5 / 4` (#235)."""
+    final = {name: 0.5 for name in ("a", "b", "c", "d", "e")}
+    lines = _render(mood={"final": final, "dimensions_non_degenerate": 5}).splitlines()
+    assert "Mood dimensions non-degenerate (eps=0.05): **5 / 5**" in lines
+
+
+def test_render_report_mood_denominator_falls_back_to_initial() -> None:
+    mood = {"initial": {"curiosity": 0.7, "wonder": 0.6, "calm": 0.5}, "final": {}}
+    lines = _render(mood=mood).splitlines()
+    assert "Mood dimensions non-degenerate (eps=0.05): **0 / 3**" in lines

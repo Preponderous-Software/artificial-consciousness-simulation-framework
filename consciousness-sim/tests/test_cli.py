@@ -1,4 +1,4 @@
-"""Tests for interfaces/cli.py payload handling (#11).
+"""Tests for interfaces/cli.py payload handling (#11) and TUI detach (#239).
 
 The Rich dashboard consumes `dict[str, object]` event payloads emitted by
 `Consciousness._emit()`. These tests pin the narrowing behavior of the
@@ -10,8 +10,10 @@ exceptions, which would silently freeze the displayed counters.
 from __future__ import annotations
 
 import asyncio
+import sys
+from pathlib import Path
 
-from interfaces.cli import ConsciousnessCLI, _as_int
+from interfaces.cli import INTERNAL_SPAWN_ENV, ConsciousnessCLI, _as_int
 
 
 class _FakeMind:
@@ -22,6 +24,8 @@ class _FakeMind:
         self.on_thought: list = []
         self.on_memory_stored: list = []
         self.on_reflection: list = []
+        self.name = "Aria"
+        self.config = {"llm": {"provider": "mock", "model": "mock-model"}}
 
 
 def _cli() -> ConsciousnessCLI:
@@ -86,3 +90,31 @@ def test_on_memory_keeps_previous_count_on_malformed_payload() -> None:
     asyncio.run(cli._on_memory({"long_term_count": None, "content": "a memory"}))
     assert cli.long_term_count == 9
     assert cli.memories == ["a memory"]
+
+
+def test_detach_relaunches_spawn_as_an_internal_child(monkeypatch, tmp_path) -> None:
+    """The child must skip spawn.py's duplicate check, or it refuses its own PID."""
+    launched: list[tuple[list[str], dict]] = []
+
+    class _FakePopen:
+        pid = 4242
+
+        def __init__(self, args: list[str], **kwargs: object) -> None:
+            launched.append((args, kwargs))
+
+    monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path))
+    monkeypatch.setenv("PARENT_ENV_SENTINEL", "inherited")
+    monkeypatch.delenv(INTERNAL_SPAWN_ENV, raising=False)
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+
+    _cli()._spawn_detached_background()
+
+    [(args, kwargs)] = launched
+    assert args[0] == sys.executable
+    assert Path(args[1]).name == "spawn.py"
+    assert args[2:] == [
+        "--name", "Aria", "--provider", "mock", "--model", "mock-model", "--headless",
+    ]
+    assert kwargs["env"][INTERNAL_SPAWN_ENV] == "1"
+    assert kwargs["env"]["PARENT_ENV_SENTINEL"] == "inherited"
+    assert (tmp_path / "Aria" / "pid").read_text() == "4242"

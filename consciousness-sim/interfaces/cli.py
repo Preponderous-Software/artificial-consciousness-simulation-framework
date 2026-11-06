@@ -32,6 +32,13 @@ from rich.table import Table
 from core.consciousness import Consciousness
 
 
+# Env var a parent sets on a `--headless` child of scripts/spawn.py that it
+# launched itself (`--bg`, or the TUI's detach key), so the child skips the
+# duplicate-name check: the parent has already claimed the slot and recorded
+# the child's PID in the pid file, so re-checking would self-match.
+INTERNAL_SPAWN_ENV: str = "_ACSF_SPAWN_INTERNAL"
+
+
 def _as_int(value: object, default: int) -> int:
     """Narrow a loosely-typed event-payload value to an int for display.
 
