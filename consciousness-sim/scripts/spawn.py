@@ -31,17 +31,11 @@ import click
 from dotenv import load_dotenv
 
 from core.consciousness import Consciousness
-from interfaces.cli import ConsciousnessCLI
+from interfaces.cli import INTERNAL_SPAWN_ENV, ConsciousnessCLI
 from interfaces.usage_reporting import report_startup, start_usage_reporting
 from persistence.paths import consciousness_dir
 from scripts._config import ConfigError, resolve_config_path
 from scripts._logging import configure_logging
-
-
-# Env var passed from a `--bg` parent to its `--headless` child so the child
-# skips the duplicate-name check (the parent has already claimed the slot and
-# written pid_path with the child's PID — re-checking would self-match).
-_INTERNAL_SPAWN_ENV: str = "_ACSF_SPAWN_INTERNAL"
 
 
 def _is_alive(pid: int) -> bool:
@@ -186,9 +180,10 @@ def main(
 ) -> None:
     load_dotenv()
 
-    # `--bg` re-invokes self with `_ACSF_SPAWN_INTERNAL=1` so the child skips
-    # this check (the parent already claimed the slot and recorded its PID).
-    internal_invocation = os.environ.get(_INTERNAL_SPAWN_ENV) == "1"
+    # `--bg` and the TUI's detach key relaunch this script with
+    # INTERNAL_SPAWN_ENV=1 so the child skips this check (the parent already
+    # claimed the slot and recorded the child's PID).
+    internal_invocation = os.environ.get(INTERNAL_SPAWN_ENV) == "1"
     if not internal_invocation:
         _check_duplicate_pid(name, force=force)
 
@@ -221,7 +216,7 @@ def main(
             a for a in sys.argv[1:] if a not in ("--bg",)
         ] + ["--headless"]
 
-        child_env = {**os.environ, _INTERNAL_SPAWN_ENV: "1"}
+        child_env = {**os.environ, INTERNAL_SPAWN_ENV: "1"}
         with open(log_path, "a") as log_fh:
             proc = subprocess.Popen(
                 args,

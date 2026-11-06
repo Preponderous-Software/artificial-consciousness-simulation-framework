@@ -275,3 +275,72 @@ def test_spawn_bg_rejects_invalid_config_before_detaching(monkeypatch, tmp_path)
     assert result.exit_code == 1
     assert "must be a YAML mapping" in result.output
     assert launched == []
+
+
+# --- internal child invocations (#239) -----------------------------------
+
+
+def _record_live_pid(tmp_path: Path) -> None:
+    agent_dir = tmp_path / "Aria"
+    agent_dir.mkdir(exist_ok=True)
+    (agent_dir / "pid").write_text(str(os.getpid()))
+
+
+def test_spawn_refuses_live_pid_without_the_internal_env(monkeypatch, tmp_path) -> None:
+    from click.testing import CliRunner
+
+    minds = _install_spawn(monkeypatch, tmp_path)
+    monkeypatch.delenv(spawn.INTERNAL_SPAWN_ENV, raising=False)
+    _record_live_pid(tmp_path)
+
+    result = CliRunner().invoke(spawn.main, ["--name", "Aria", "--headless"])
+
+    assert result.exit_code == 1
+    assert "already running" in result.output
+    assert minds == []
+
+
+def test_spawn_internal_child_takes_over_its_own_pid_file(monkeypatch, tmp_path) -> None:
+    from click.testing import CliRunner
+
+    minds = _install_spawn(monkeypatch, tmp_path)
+    monkeypatch.setenv(spawn.INTERNAL_SPAWN_ENV, "1")
+    _record_live_pid(tmp_path)
+
+    result = CliRunner().invoke(spawn.main, ["--name", "Aria", "--headless"])
+
+    assert result.exit_code == 0, result.output
+    assert [mind["name"] for mind in minds] == ["Aria"]
+
+
+def test_tui_detach_child_starts_against_the_recorded_pid(monkeypatch, tmp_path) -> None:
+    """Replays the detach command against spawn.main, as the real child would."""
+    from click.testing import CliRunner
+
+    launched: list[tuple[list[str], dict]] = []
+
+    class _FakePopen:
+        pid = os.getpid()  # A live PID, like the child reading its own record.
+
+        def __init__(self, args: list[str], **kwargs: object) -> None:
+            launched.append((args, kwargs))
+
+    class _Mind:
+        name = "Aria"
+        config = {"llm": {"provider": "mock", "model": "mock-model"}}
+        on_initialized: list = []
+        on_thought: list = []
+        on_memory_stored: list = []
+        on_reflection: list = []
+
+    minds = _install_spawn(monkeypatch, tmp_path)
+    monkeypatch.delenv(spawn.INTERNAL_SPAWN_ENV, raising=False)
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+
+    spawn.ConsciousnessCLI(_Mind())._spawn_detached_background()
+    [(args, kwargs)] = launched
+
+    result = CliRunner().invoke(spawn.main, args[2:], env=kwargs["env"])
+
+    assert result.exit_code == 0, result.output
+    assert [mind["name"] for mind in minds] == ["Aria"]
