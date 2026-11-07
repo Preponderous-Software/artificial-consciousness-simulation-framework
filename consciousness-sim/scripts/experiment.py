@@ -8,13 +8,14 @@ skills under `.claude/skills/` provide the narrative layer on top.
 
 Examples:
 
-    python scripts/experiment.py run experiments/manifests/sage-perception-baseline.yaml
+    python scripts/experiment.py run experiments/manifests/mock-smoke-baseline.yaml
     python scripts/experiment.py run <manifest> --detach   # fork; return immediately
     python scripts/experiment.py status experiments/<name>/<UTC-ts>/
     python scripts/experiment.py list
     python scripts/experiment.py replay-analysis experiments/<name>/<UTC-ts>/
     python scripts/experiment.py compare experiments/golden/Rafael/ experiments/golden/Echo/
     python scripts/experiment.py check-smoke experiments/mock-smoke-baseline/<UTC-ts>/
+    python scripts/experiment.py prune --keep-last 5 --yes
 """
 
 from __future__ import annotations

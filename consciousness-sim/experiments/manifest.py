@@ -111,7 +111,7 @@ class ExperimentManifest(BaseModel):
     )
     name: str = Field(..., description="Stable identifier; used as the directory under experiments/")
     description: str = ""
-    consciousness_name: str = Field(..., description="Used as spawn.py --name")
+    consciousness_name: str = Field(..., description="Instance name passed to Consciousness(name=...)")
     config_overrides: dict[str, Any] = Field(default_factory=dict)
     duration: Duration
     success_criteria: list[SuccessCriterion] = Field(default_factory=list)
