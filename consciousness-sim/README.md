@@ -82,8 +82,13 @@ so a checkout missing an optional third-party package still type-checks.
 `scripts/spawn.py` supports several composable modes:
 
 ```bash
-# Interactive TUI (default)
+# Interactive TUI (default). Keys: r reflect now, j journal preview,
+# d detach (the instance keeps running in the background), q quit
 python scripts/spawn.py --name Aria
+
+# run.log records WARNING and above unless --log-level says otherwise
+# (DEBUG/INFO/WARNING/ERROR); resume.py takes the same option
+python scripts/spawn.py --name Aria --log-level DEBUG
 
 # Headless foreground — log-only, no TUI
 python scripts/spawn.py --name Aria --headless
@@ -111,7 +116,8 @@ python scripts/stop.py --name Aria
 # Skip the grace window and send SIGKILL immediately
 python scripts/stop.py --name Aria --force
 
-# Attach a live TUI to a --bg instance via Unix socket (PR #59)
+# Attach a live TUI to a --bg instance via Unix socket (PR #59). Keys: r reflect
+# now, d disconnect (the instance keeps running), q stop the instance and exit
 python scripts/attach.py --name Aria
 
 # Enumerate every instance under CONSCIOUSNESS_HOME — alive / stopped / orphan,
@@ -176,7 +182,7 @@ A vanilla-JS SPA renders the thought stream, mood vector, identity, perception b
 
 **Talking to an instance (#198):** `POST /instances/<id>/messages` with `{"text": "...", "sender": "Dan"}` (localhost-only like spawn/stop; text ≤ 1,000 chars, sender ≤ 40; at most 6 per minute and 20 unheard per instance, else 429) queues a message in `<instance>/inbox.jsonl`. On its next cycle the instance hears the oldest unheard message as a `speech` perception — pre-empting the Wikipedia cadence — thinks, then replies: the reply is journaled as an `utterance` event (`to`, `in_reply_to`), streamed over SSE, and kept in the workspace so later thoughts can refer to it. A persisted read offset means a restart neither repeats nor drops messages. `GET /instances/<id>/conversation` returns messages (with `heard`) and replies in order. In the dashboard, the **Talk** view (third option of the Stream | Components | Talk switch) is a chat pane over these two endpoints: your messages show *waiting to be heard* → *heard* → *answered*, replies appear live as `utterance` events arrive, and your name is remembered per browser. Messages are untrusted text and get the same sanitization and framing as every other perception.
 
-The dashboard also acts as a **process manager**: the `+ New` tab spawns a fresh agent (`POST /instances`), and each running tab has a `Stop instance` button (`POST /instances/<id>/stop`). Spawn/stop/archive endpoints are localhost-only by default — pass `--allow-remote-spawn` to opt into remote process control (no auth — only behind a trusted proxy). Provider/model fields are restricted to a configurable allowlist surfaced via `GET /providers`.
+The dashboard also acts as a **process manager**: the `+ New` tab spawns a fresh agent (`POST /instances`), and each running tab has a `Stop instance` button (`POST /instances/<id>/stop`). `DELETE /instances/<id>` stops the instance if it is running and moves its directory to `<CONSCIOUSNESS_HOME>/.archive/<id>-<UTC-ts>/` rather than deleting it. Spawn/stop/archive endpoints are localhost-only by default — pass `--allow-remote-spawn` to opt into remote process control (no auth — only behind a trusted proxy). Provider/model fields are restricted to the `PROVIDER_ALLOWLIST` constant in `interfaces/web/server.py`, surfaced via `GET /providers`; there is no config key for it, so offering another model means editing that constant.
 
 A slow browser tab can silently miss SSE events without any indication that its view has diverged from reality. `GET /instances` reports `sse_events_total`, `sse_drops_total`, and `sse_clients` per instance (issue #94); the dashboard's status panel shows a ⚠ indicator with a hover tooltip once `sse_drops_total > 0`, and the server logs one throttled `WARNING` per minute while drops are occurring.
 
@@ -186,11 +192,15 @@ When enabled (`perception.enabled: true`, default), every Nth thought cycle fetc
 
 ### Experiment harness (issue #57)
 
-For reproducible empirical work, the `scripts/experiment.py` CLI runs a declarative YAML *manifest* — spawning a consciousness with config overrides, polling until a target, copying the journal/state into a versioned run directory, computing metrics, and rendering a markdown report. Every run is git-trackable.
+For reproducible empirical work, the `scripts/experiment.py` CLI runs a declarative YAML *manifest* — spawning a consciousness with config overrides, polling until a target, copying the journal/state into a versioned run directory, computing metrics, and rendering a markdown report. Run artifacts stay local unless promoted; see the storage contract below.
 
 ```bash
 # Run a manifest end-to-end
 python scripts/experiment.py run experiments/manifests/mock-smoke-baseline.yaml
+
+# A run is stopped at --max-wall-clock-minutes (default 30) whatever its manifest
+# asks for, so a longer duration.minutes or a slow thought target needs a higher cap
+python scripts/experiment.py run experiments/manifests/ollama-20min-atlas.yaml --max-wall-clock-minutes 60
 
 # Detached: fork the run as a background process, return immediately
 python scripts/experiment.py run <manifest> --detach
@@ -203,15 +213,21 @@ python scripts/experiment.py list
 # Re-compute metrics on a stored run with the current code
 python scripts/experiment.py replay-analysis experiments/<name>/<UTC-ts>/
 
-# Side-by-side comparison of two recorded runs (works against golden refs too)
+# Side-by-side comparison of two recorded runs (works against golden refs too).
+# --samples N sets the thoughts sampled from each run (default 3); --output FILE
+# writes the markdown to a file instead of stdout
 python scripts/experiment.py compare experiments/golden/Rafael experiments/golden/Echo
 
-# Garbage-collect old run dirs (dry-run by default; pass --yes to actually delete)
+# Garbage-collect old run dirs (dry-run by default; pass --yes to actually delete).
+# With no retention flag the policy is --keep-last 10; --manifest NAME limits
+# pruning to one manifest's runs
 python scripts/experiment.py prune --keep-last 5
 python scripts/experiment.py prune --older-than 30 --yes
+python scripts/experiment.py prune --manifest mock-smoke-baseline --keep-last 2 --yes
 
 # CI regression gate: compare a run's metrics.json against the pinned
-# mock-smoke-baseline snapshot (experiments/golden/_smoke_expected.json)
+# mock-smoke-baseline snapshot (experiments/golden/_smoke_expected.json, or
+# another file via --expected)
 python scripts/experiment.py check-smoke experiments/mock-smoke-baseline/<UTC-ts>/
 ```
 
@@ -224,7 +240,8 @@ python scripts/experiment.py check-smoke experiments/mock-smoke-baseline/<UTC-ts
 | Field | Purpose |
 |---|---|
 | `name` | Stable id; used as the dir under `experiments/` |
-| `consciousness_name` | Used as `spawn.py --name` |
+| `description` | Free text describing the experiment |
+| `consciousness_name` | Instance name. The runner constructs `Consciousness(name=...)` directly rather than going through `spawn.py` |
 | `config_overrides` | Deep-merged over `config/default_consciousness.yaml` |
 | `duration.thoughts: N` | Run until `state.json["thought_count"] >= N` (cumulative) |
 | `duration.minutes: M` | Run until M wall-clock minutes elapsed |
@@ -232,6 +249,8 @@ python scripts/experiment.py check-smoke experiments/mock-smoke-baseline/<UTC-ts
 | `resume_from: <name-or-path>` | Seed the new instance with an existing consciousness's journal + state instead of wiping. Source can be a consciousness name (resolved via `CONSCIOUSNESS_HOME`) or a path to a recorded run dir |
 | `replicates: N` | Run the manifest N times sequentially; each lands in `replicate-<i>/` under the parent run dir, plus a `replicates_index.md` |
 | `success_criteria[]` | Pass/fail checks evaluated against `metrics.json` after the run; dotted-path `kind` (e.g. `mood.dimensions_non_degenerate`) |
+| `tags` | Free-form labels |
+| `branch_sha` | Recorded in `meta.yaml`; captured from git at run time when absent |
 | `schema_version` | Manifest schema (currently 1); future bumps will trigger upgrade paths in the loader |
 
 Four canonical reference runs are committed under `experiments/golden/{Rafael,Sage,Echo,Wren}/` — used as fixtures for the metric library's regression tests and as the established baselines for vocabulary / mood / perception-influence comparisons.
@@ -260,13 +279,13 @@ The URL is masked in all logs (`https://discord.com/api/webhooks/***/***`). HTTP
 
 ## Configuration Guide (`config/default_consciousness.yaml`)
 
-Every instance runs against this shipped default unless it has been customized. `spawn.py --config FILE` (and `--provider` / `--model`) validate the result with `_validate_config()` and copy it to `<CONSCIOUSNESS_HOME>/<name>/config.yaml`; from then on `spawn.py` and `resume.py` prefer that file, and the resolved path is logged at INFO in `run.log`. The copy is a snapshot: later edits to the source file or to the shipped default do not reach it, so edit the instance's `config.yaml` directly (or pass `--config` again), and delete it to return the instance to the default. `${VAR}` references are kept as written, so secrets are never persisted. The pre-#187 `_spawn_config.yaml` is no longer written or read.
+Every instance runs against this shipped default unless it has been customized. `spawn.py --config FILE` (and `--provider` / `--model`) validate the result with `_validate_config()` and copy it to `<CONSCIOUSNESS_HOME>/<name>/config.yaml`; from then on `spawn.py` and `resume.py` prefer that file, and the resolved path is logged at INFO in `run.log`. The copy is a snapshot: later edits to the source file or to the shipped default do not reach it, so edit the instance's `config.yaml` directly (or pass `--config` again), and delete it to return the instance to the default. `${VAR}` references are kept as written, so secrets are never persisted. The pre-#187 `_spawn_config.yaml` in the instance directory is no longer written or read; the file of that name in an experiment run directory is the harness's own merged config for that run.
 
 - `consciousness.name`: default identity name (overridden by CLI)
 - `consciousness.origin_story`: initial narrative self-description
 - `consciousness.values`: core values for identity anchoring
 - `consciousness.purpose`: stated purpose guiding thought style
-- `llm.provider`: `anthropic | openai | ollama`
+- `llm.provider`: `anthropic | openai | ollama | mock` (`mock` is the deterministic offline `MockProvider` used by tests and the smoke manifest)
 - `llm.model`: provider-specific model name
 - `llm.temperature`: creativity level for generation
 - `llm.max_tokens`: max generation length
@@ -276,7 +295,7 @@ Every instance runs against this shipped default unless it has been customized. 
 - `thought_loop.min_interval_seconds / max_interval_seconds`: per-cycle cadence jitter
 - `thought_loop.reflection_probability`: base chance of reflection per cycle (0.0 disables all reflection including HOT-2/PP-1 boosts)
 - `thought_loop.existential_inquiry_every_n_thoughts`: deterministic existential cadence
-- `thought_loop.perf_log_every_n`: log per-component cycle timing (embed/search/generate/perception ms + prompt_chars + pred_error) every N thoughts at INFO level; 0 = off (default 10)
+- `thought_loop.perf_log_every_n`: log per-component cycle timing (embed/search/generate/critique/perception ms + prompt_chars + pred_error) every N thoughts at INFO level; 0 = off (default 10)
 - `thought_loop.rpt_critique`: optional, default `false`. RPT-2 (#93): when `true`, adds a second `provider.generate()` pass (`llm/prompts/critique.txt`) that critiques the raw thought against its context and rewrites it before rendering; the reply is requested as labelled `CRITIQUE:` / `REWRITE:` sections and only the rewrite is kept (#192) — literal feedback from a later stage modulating the earlier representation. Doubles LLM calls (and roughly doubles per-cycle latency) when enabled; a critique-pass failure, or a reply without a usable `REWRITE:` section, falls back to the raw thought, logged at WARNING.
 - `memory.short_term_capacity`: working-memory buffer size
 - `memory.short_term_prompt_chars`: optional, default `8000`. Character budget for the rendered workspace that every prompt and the retrieval embedding reread (#205): newest items are kept first and the newest is truncated if it alone is over budget. About half of `llama3.2:3b`'s 4,096-token context; raise it for larger-context models. `0` renders everything, under which a workspace of long reflections reached ~19k chars and embedding it timed out
@@ -313,15 +332,15 @@ Every instance runs against this shipped default unless it has been customized. 
 1. Build current context from short-term memory
 2. Embed context and retrieve similar long-term memories (O(log N) via compound index)
 3. If the instance's inbox holds an unheard message (#198), the oldest becomes a `speech` perception (title `"<sender> says"`) and pre-empts the cadence; otherwise every Nth cycle (per `perception.every_n_cycles`) fetches a perception. Either way it is added to short-term + episodic
-4. Inject identity anchor + mood + recent stream + perception block into prompt
+4. Inject identity anchor + mood + retrieved memories + recent stream + perception block into prompt
 5. Generate raw next thought through provider abstraction; a model refusal ("I can't help with that.") fails the cycle instead of being stored as a thought (#207)
 6. **RPT-2 (optional, `thought_loop.rpt_critique`, default off):** a second `provider.generate()` pass critiques the raw thought against its context and rewrites it, replacing the raw representation (#93); only the `REWRITE:` section is kept (#192), and a critique-pass failure, a reply without a usable `REWRITE:` section, or a refused rewrite falls back to the raw thought, logged at WARNING
 7. Apply `InnerVoice.render()` — registers (`questioning` / `remembering` / `wondering`) framing styled from the raw output before it enters the workspace
-8. **HOT-2:** `MetacognitiveMonitor` scores the rendered thought as `high`/`uncertain`/`noise` based on lexical overlap with recent *thought-kind* items in the workspace buffer; saves thought to short-term buffer (importance 1.0/0.75/0.5 by label) and episodic log. When the perception was a message, a `speak` pass (`llm/prompts/speak.txt`) then replies: the reply is added to short-term (kind `utterance`) + episodic and journaled as an `utterance` event (#198); a failed, empty or refused reply is logged at WARNING and nothing is said
-9. **PP-1:** compute `prediction_error` against prior cycle's predicted theme (continuity prior); update `_predicted_theme` for next cycle; every `perf_log_every_n` cycles log per-component timing at INFO level
+8. **PP-1:** compute `prediction_error` against prior cycle's predicted theme (continuity prior); update `_predicted_theme` for next cycle
+9. **HOT-2:** `MetacognitiveMonitor` scores the rendered thought as `high`/`uncertain`/`noise` based on lexical overlap with recent *thought-kind* items in the workspace buffer; saves thought to short-term buffer (importance 1.0/0.75/0.5 by label) and episodic log. When the perception was a message, a `speak` pass (`llm/prompts/speak.txt`) then replies: the reply is added to short-term (kind `utterance`) + episodic and journaled as an `utterance` event (#198); a failed, empty or refused reply is logged at WARNING and nothing is said. Every `perf_log_every_n` cycles per-component timing is logged at INFO level
 10. Reflection trigger: `effective_prob = base + HOT-2 boost + PP-1 boost` (capped at 1.0; base=0.0 disables entirely); the reflection text passes through `InnerVoice.scrub_reflection()` — leading meta-preambles and markdown headers stripped, second-person instructional drift replaced by a fallback — before it is saved to short-term + episodic (#132); a refused reflection is logged at WARNING and not saved (#207)
 11. Periodically trigger existential inquiry (deterministic, every N thoughts), scrubbed and refusal-checked the same way before it is saved
-12. Update `AttentionSchema` via `update()` on success (sets focus — `conversation` / `perception` / `existential` / `reflection` / `memory` / `introspection`, in that precedence — and theme, resets salience to 1.0); on a failed cycle the outer loop calls `decay_only()` instead so salience fades smoothly (#120). Mood is drifted via `IdentityDocument.drift_mood()` — trigger-driven drift plus additive homeostatic reversion (#119), with per-dimension trigger strengths taken either from the lexical `_MOOD_TRIGGERS` lists or, when `mood.semantic.enabled` is on, from `SemanticMoodScorer` embedding similarity (#21). Outer loop appends to journal and emits events to handlers, including `on_health_change` on status transitions (#117). After each thought it also journals one structured `cycle` event (#196) carrying that cycle's internals — retrieved long-term memories (summary + importance), the PP-1 prediction (`prior` / `next` / `error`), the HOT-2 label, the reflection odds (`base` + `hot2_boost` + `pp1_boost` → `effective`, `fired`), the attention schema, short-term size, per-component `timings_ms`, and the post-drift `mood` (#220; absent from journals written before it) — so the dashboard and experiment tooling can see how a thought was produced, not only the thought.
+12. Update `AttentionSchema` via `update()` on success (sets focus — `conversation` / `perception` / `existential` / `reflection` / `memory` / `introspection`, in that precedence — and theme, resets salience to 1.0); on a failed cycle the outer loop calls `decay_only()` instead so salience fades smoothly (#120). Mood is drifted via `IdentityDocument.drift_mood()` — trigger-driven drift plus additive homeostatic reversion (#119), with per-dimension trigger strengths taken either from the lexical `_MOOD_TRIGGERS` lists or, when `mood.semantic.enabled` is on, from `SemanticMoodScorer` embedding similarity (#21). Outer loop appends to journal and emits events to handlers, including `on_health_change` on status transitions (#117). After each thought it also journals one structured `cycle` event (#196) carrying that cycle's internals — retrieved long-term memories (summary + importance), the PP-1 prediction (`prior` / `next` / `error`), the HOT-2 label, the reflection odds (`base` + `hot2_boost` + `pp1_boost` → `effective`, `fired`), the attention schema, the perception title, short-term size, per-component `timings_ms`, `prompt_chars`, and the post-drift `mood` (#220; absent from journals written before it) — so the dashboard and experiment tooling can see how a thought was produced, not only the thought.
 13. Background consolidator compresses episodic traces it has not yet consolidated (#191) into durable long-term memories and emits one `on_consolidation` event per pass (#89), success or failure
 
 ## Extending the System
@@ -379,6 +398,7 @@ This repository is an experiment in computational self-modeling. It treats quest
 ## Assumptions and Limitations
 
 - **Provider failures raise** (issue #46 / commit 9649c5d). When a configured LLM provider is unreachable, returns empty content, or times out, the cycle logs a `WARNING` and is skipped; after 20 consecutive failures the run shuts down cleanly. No silent deterministic fallback in production providers — only `MockProvider` (used in tests) still generates canned output.
+- **Provider recovery runs inside that failure count.** Every third consecutive failure, at most three times between successful cycles, the loop calls `provider.try_ensure_running()`. `OllamaProvider` starts `ollama serve` if its health check fails and polls for up to 30s. A `True` result resets the consecutive-failure count and marks health `ok`. Providers with no recovery path (Anthropic, OpenAI) inherit a default that always returns `True`, as does Ollama when it answers health checks while generate/embed fail, so those cases shut down after 29 failed cycles (three recoveries at 3 each, then 20), not 20.
 - **Model refusals are never stored** (#207). `llm/refusal.py:is_refusal()` flags assistant-style refusals while allowing genuine openings like "I can't help but…". A refused thought counts as a failed cycle toward the 20-failure limit; a refused reflection, existential inquiry or reply is logged and dropped; a refused critique rewrite falls back to the raw thought; refusal-shaped consolidation summaries are skipped.
 - **Anthropic embeddings are unsupported.** `AnthropicProvider.embed` raises `NotImplementedError`. Use Ollama or OpenAI if you need embeddings (`provider.embed` is called every cycle for similarity retrieval).
 - This framework is designed for research iteration, not production-critical workloads.

@@ -20,7 +20,7 @@ for the original narrative analyses these journals support.
 
 ## Files
 
-- `journal.jsonl` — append-only event log (thoughts, reflections, perceptions, memory_stored)
+- `journal.jsonl` — append-only event log (thoughts, reflections, and, for Sage, Echo and Wren, perceptions)
 - `state.json` — final identity + mood + amendments snapshot
 - `_smoke_expected.json` (this directory's top level, not per-instance) — pinned
   metrics snapshot for `experiments/manifests/mock-smoke-baseline.yaml`, used by

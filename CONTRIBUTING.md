@@ -42,7 +42,7 @@ function it defines.
 ## Branch and commit conventions
 
 Branches are prefixed by kind: `feat/`, `fix/`, `docs/`, `infra/`, `test/`, `perf/`,
-`chore/`, `hardening/`. Commit subjects follow `type(scope): summary`, e.g.:
+`refactor/`, `chore/`, `hardening/`. Commit subjects follow `type(scope): summary`, e.g.:
 
 ```
 fix(memory): bound the long-term SQLite store with a row-count retention policy
