@@ -154,6 +154,30 @@ def test_run_detach_forks_and_returns_without_running(monkeypatch, tmp_path) -> 
     assert "Run complete" not in result.output
 
 
+def test_run_detach_child_env_includes_dotenv_values(monkeypatch, tmp_path) -> None:
+    """A provider key set only in .env must be in os.environ when the run child
+    is started, since the child inherits os.environ (#242)."""
+    _stub_usage_reporting(monkeypatch)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(
+        exp_mod, "load_dotenv",
+        lambda: monkeypatch.setenv("ANTHROPIC_API_KEY", "key-from-dotenv"),
+    )
+    seen: list[str | None] = []
+
+    def _fake_start_detached(manifest_path, max_wall_clock_minutes):
+        import os
+        seen.append(os.environ.get("ANTHROPIC_API_KEY"))
+        return tmp_path / "detached-run"
+
+    monkeypatch.setattr(exp_mod, "start_detached", _fake_start_detached)
+
+    result = _invoke(["run", str(_MANIFEST), "--detach"])
+
+    assert result.exit_code == 0, result.output
+    assert seen == ["key-from-dotenv"]
+
+
 def test_run_rejects_missing_manifest(tmp_path) -> None:
     result = _invoke(["run", str(tmp_path / "absent.yaml")])
 

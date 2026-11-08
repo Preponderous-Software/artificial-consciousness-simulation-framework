@@ -33,6 +33,7 @@ if str(ROOT_DIR) not in sys.path:
 
 import click
 import yaml
+from dotenv import load_dotenv
 
 from experiments.compare import compare_runs
 from experiments.manifest import ExperimentManifest
@@ -55,6 +56,10 @@ GOLDEN_DIR = ROOT_DIR / "experiments" / "golden"
 @click.group()
 def main() -> None:
     """Experiment harness for reproducible consciousness simulation runs."""
+    # Runs before every subcommand. The run child (foreground or --detach)
+    # inherits os.environ, so provider keys and webhook URLs set only in .env
+    # reach it (#242).
+    load_dotenv()
 
 
 @main.command("run")

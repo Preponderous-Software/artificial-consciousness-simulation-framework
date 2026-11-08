@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import click
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
@@ -242,6 +243,7 @@ class AttachCLI:
 @click.command()
 @click.option("--name", required=True, type=str, help="Consciousness name")
 def main(name: str) -> None:
+    load_dotenv()
     sock_path = consciousness_dir(name) / "events.sock"
 
     if not sock_path.exists():
