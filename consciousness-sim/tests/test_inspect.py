@@ -165,3 +165,22 @@ def test_inspect_skips_corrupted_and_non_object_lines(monkeypatch, tmp_path) -> 
         "2026-09-01T00:00:00+00:00 [thought] event 0",
         "2026-09-01T00:00:01+00:00 [thought] event 1",
     ]
+
+
+# --- .env loading -----------------------------------------------------------
+
+
+def test_inspect_reads_consciousness_home_from_dotenv(monkeypatch, tmp_path) -> None:
+    """CONSCIOUSNESS_HOME set only in .env is honoured, as it is by spawn.py,
+    so inspect reads the journal spawn wrote (#242)."""
+    monkeypatch.delenv("CONSCIOUSNESS_HOME", raising=False)
+    monkeypatch.setattr(
+        "scripts.inspect.load_dotenv",
+        lambda: monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path)),
+    )
+    _write_journal(tmp_path, "Aria", [json.dumps(_event(0))])
+
+    result = CliRunner().invoke(inspect_main, ["--name", "Aria"])
+
+    assert result.exit_code == 0
+    assert _output_lines(result.stdout) == ["2026-09-01T00:00:00+00:00 [thought] event 0"]

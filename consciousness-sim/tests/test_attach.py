@@ -369,3 +369,22 @@ def test_attach_main_errors_when_socket_missing_but_pid_present(
     result = runner.invoke(attach_main, ["--name", "Ghost"])
     assert result.exit_code != 0
     assert "no event socket found" in result.output or "PID file exists" in result.output
+
+
+def test_attach_main_reads_consciousness_home_from_dotenv(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """CONSCIOUSNESS_HOME set only in .env is honoured, as it is by spawn.py:
+    the pid file under the .env root is found, so the pid-present wording is
+    shown rather than "No background process" (#242)."""
+    monkeypatch.delenv("CONSCIOUSNESS_HOME", raising=False)
+    monkeypatch.setattr(
+        "scripts.attach.load_dotenv",
+        lambda: monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path)),
+    )
+    agent_dir = tmp_path / "Ghost"
+    agent_dir.mkdir()
+    (agent_dir / "pid").write_text("99999")
+    result = CliRunner().invoke(attach_main, ["--name", "Ghost"])
+    assert result.exit_code != 0
+    assert "PID file exists for 'Ghost'" in result.output

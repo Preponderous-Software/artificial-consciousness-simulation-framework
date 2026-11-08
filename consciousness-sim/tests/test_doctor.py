@@ -529,3 +529,21 @@ def test_main_prune_yes_reports_removal_and_recollects(tmp_path, monkeypatch) ->
     rows = json.loads(rest)
     assert [(r["name"], r["status"], r["pid"]) for r in rows] == [("Orphan", "stopped", None)]
     assert not (orphan_dir / "pid").exists()
+
+
+def test_main_reads_consciousness_home_from_dotenv(tmp_path, monkeypatch) -> None:
+    """CONSCIOUSNESS_HOME set only in .env is honoured, as it is by spawn.py,
+    so doctor surveys the same root the instances were written to (#242)."""
+    monkeypatch.delenv("CONSCIOUSNESS_HOME", raising=False)
+    monkeypatch.setattr(
+        "scripts.doctor.load_dotenv",
+        lambda: monkeypatch.setenv("CONSCIOUSNESS_HOME", str(tmp_path)),
+    )
+    stopped_dir = tmp_path / "FromDotenv"
+    stopped_dir.mkdir()
+    _write_state(stopped_dir, name="FromDotenv")
+
+    result = CliRunner().invoke(doctor_main, ["--json"])
+
+    assert result.exit_code == 0, result.output
+    assert [r["name"] for r in json.loads(result.output)] == ["FromDotenv"]

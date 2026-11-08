@@ -30,6 +30,7 @@ from datetime import datetime
 from typing import Any
 
 import click
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
@@ -320,6 +321,7 @@ def _render_table(instances: list[InstanceStatus], root: Path) -> None:
     help="Emit machine-readable JSON instead of a table.",
 )
 def main(do_prune: bool, assume_yes: bool, as_json: bool) -> None:
+    load_dotenv()
     root = consciousness_root()
     instances = collect_instances(root)
 
