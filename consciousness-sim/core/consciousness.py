@@ -928,10 +928,18 @@ class Consciousness:
                                 "Attempting provider recovery (attempt %d/%d)",
                                 recovery_attempts, _MAX_RECOVERY_ATTEMPTS,
                             )
+                            # True means only "not known to be down" — the base
+                            # default always returns True, and Ollama answers
+                            # its health check while generate/embed time out.
+                            # So retry at once, but leave the failure count and
+                            # health alone: only a successful cycle resets them,
+                            # keeping the 20-failure shutdown at 20 cycles (#241).
                             if await self.provider.try_ensure_running():
-                                logging.info("Provider recovered; resuming thought loop")
-                                consecutive_failures = 0
-                                await self._record_success()
+                                logging.info(
+                                    "Provider health check passed; retrying "
+                                    "(%d consecutive failures so far)",
+                                    consecutive_failures,
+                                )
                                 continue
                         await asyncio.sleep(random.uniform(min_interval, max_interval))
                     continue
