@@ -371,6 +371,59 @@ def test_run_loop_triggers_provider_recovery_after_threshold(tmp_path, monkeypat
     assert recovery_calls >= 1
 
 
+def test_run_loop_passing_health_check_does_not_reset_failure_count(tmp_path, monkeypatch) -> None:
+    """#241: a True from try_ensure_running is not a recovery — a provider that
+    keeps failing still shuts down after exactly 20 failed cycles, not 29."""
+    mind = _make_mind(tmp_path, monkeypatch)
+    call_count = 0
+    recovery_calls = 0
+
+    async def _always_fails(n: int):
+        nonlocal call_count
+        call_count += 1
+        raise ConnectionError("generate timed out")
+
+    async def _health_ok() -> bool:
+        nonlocal recovery_calls
+        recovery_calls += 1
+        return True
+
+    mind.thought_loop.run_cycle = _always_fails
+    mind.provider.try_ensure_running = _health_ok
+
+    async def _run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    asyncio.run(_run())
+    assert call_count == 20
+    assert recovery_calls == 3
+
+
+def test_run_loop_passing_health_check_does_not_mark_health_ok(tmp_path, monkeypatch) -> None:
+    """#241: no health_change back to `ok` is emitted while every cycle fails."""
+    mind = _make_mind(tmp_path, monkeypatch)
+    transitions: list[str] = []
+    mind.on_health_change.append(lambda payload: transitions.append(payload["status"]))
+
+    async def _always_fails(n: int):
+        raise ConnectionError("generate timed out")
+
+    async def _health_ok() -> bool:
+        return True
+
+    mind.thought_loop.run_cycle = _always_fails
+    mind.provider.try_ensure_running = _health_ok
+
+    async def _run() -> None:
+        await mind.long_term.initialize()
+        await mind.run()
+
+    asyncio.run(_run())
+    assert "ok" not in transitions
+    assert mind.health["consecutive_failures"] == 20
+
+
 def test_run_loop_consolidator_cancelled_on_stop(tmp_path, monkeypatch) -> None:
     """The consolidator task must be cancelled when the run loop exits."""
     mind = _make_mind(tmp_path, monkeypatch)
