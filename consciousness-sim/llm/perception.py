@@ -55,15 +55,6 @@ class Perception:
     url: str | None = None       # for inspectability / journal trace
     fetched_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
-    def to_journal_dict(self) -> dict[str, str | None]:
-        return {
-            "source": self.source,
-            "title": self.title,
-            "content": self.content,
-            "url": self.url,
-            "fetched_at": self.fetched_at,
-        }
-
 
 class PerceptionProvider(ABC):
     """Abstract source of external stimulus.
