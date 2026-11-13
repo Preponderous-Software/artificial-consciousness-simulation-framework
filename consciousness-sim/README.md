@@ -108,6 +108,8 @@ python scripts/spawn.py --name Aria --bg --config my-aria.yaml
 # Standalone web dashboard — separate process, manages many instances
 python scripts/web.py --port 8080
 # Default bind is 127.0.0.1; opt into LAN with --host 0.0.0.0
+# Logs go to stderr (not a run.log) at INFO unless --log-level says otherwise
+python scripts/web.py --port 8080 --log-level DEBUG
 
 # Stop a --bg instance (SIGTERM, 5s grace window). A stale pid file is removed;
 # a malformed one, or a pid owned by another user, exits 1 with a message (#179).

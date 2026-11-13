@@ -902,12 +902,12 @@ class Consciousness:
                 except Exception as exc:
                     consecutive_failures += 1
                     # AST-1: even when no new thought is generated, attention
-                    # salience should continue to fade (#120). Calling decay
-                    # here is idempotent with the decay() call at the top of
-                    # ThoughtLoop.run_cycle — but that call may not have run
-                    # if the failure happened before it, so we apply it
-                    # explicitly on the failure branch to guarantee a smooth
-                    # per-cycle drop rather than a freeze-then-collapse.
+                    # salience should continue to fade (#120). This branch is
+                    # the only place per-cycle decay runs: ThoughtLoop.run_cycle
+                    # does not decay, and a successful cycle's update() resets
+                    # salience to 1.0. Decaying here gives a smooth per-cycle
+                    # drop across a failure burst rather than a
+                    # freeze-then-collapse.
                     self.identity.attention_schema.decay_only()
                     # #117: surface provider-degradation in state.json + events.
                     await self._record_failure(exc, consecutive_failures)
