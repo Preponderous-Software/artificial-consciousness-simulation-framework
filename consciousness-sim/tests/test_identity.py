@@ -591,3 +591,123 @@ def test_from_dict_coerces_well_formed_sequences_and_mappings() -> None:
     assert restored.values == ["curiosity", "3"]
     assert restored.amendments == ["grew"]
     assert restored.mood == {"curiosity": 1.0, "wonder": 0.25}
+
+
+def test_from_dict_non_mapping_attention_schema_falls_back_to_defaults() -> None:
+    """An `attention_schema` stored as a non-mapping (e.g. a list) is dropped
+    in favour of a fresh schema rather than raising during restore."""
+    restored = IdentityDocument.from_dict(
+        {"name": "Corrupt", "attention_schema": ["memory", "river"]}
+    )
+    assert restored.attention_schema.focus == "introspection"
+    assert restored.attention_schema.theme == ""
+    assert restored.attention_schema.salience == 1.0
+    assert restored.attention_schema.history == []
+
+
+def test_from_dict_empty_payload_uses_field_defaults() -> None:
+    """An empty payload restores to the documented defaults: the name
+    falls back to 'unnamed' and every text field to the empty string."""
+    restored = IdentityDocument.from_dict({})
+    assert restored.name == "unnamed"
+    assert restored.origin_story == ""
+    assert restored.purpose == ""
+    assert restored.self_concept == ""
+    assert restored.values == []
+    assert restored.mood == {}
+
+
+# --- summary / anchor_payload ----------------------------------------------
+
+
+def _ident(self_concept: str = "I am Aria") -> IdentityDocument:
+    return IdentityDocument(
+        name="Aria",
+        origin_story="origin",
+        values=["curiosity", "honesty"],
+        purpose="explore",
+        self_concept=self_concept,
+        mood={},
+    )
+
+
+def test_summary_renders_name_purpose_values_and_self_concept() -> None:
+    assert _ident().summary() == (
+        "Name: Aria; Purpose: explore; Values: curiosity, honesty; "
+        "Self-concept: I am Aria"
+    )
+
+
+def test_anchor_payload_joins_values_and_carries_core_fields() -> None:
+    payload = _ident().anchor_payload()
+    assert set(payload) == {"name", "values", "purpose", "self_concept", "attention_state"}
+    assert payload["name"] == "Aria"
+    assert payload["values"] == "curiosity, honesty"
+    assert payload["purpose"] == "explore"
+    assert payload["self_concept"] == "I am Aria"
+    assert payload["attention_state"] == "introspection (salience 1.00)"
+
+
+# --- apply_amendment edge cases ---------------------------------------------
+
+
+def test_apply_amendment_ignores_empty_and_whitespace_only_text() -> None:
+    ident = _ident()
+    ident.apply_amendment("")
+    ident.apply_amendment("   \n\t")
+    assert ident.amendments == []
+    assert ident.self_concept == "I am Aria"
+
+
+def test_apply_amendment_truncates_self_concept_keeping_the_tail() -> None:
+    """When the combined self_concept exceeds _MAX_SELF_CONCEPT_LEN, the
+    oldest text is dropped and an ellipsis prefix marks the cut."""
+    limit = IdentityDocument._MAX_SELF_CONCEPT_LEN
+    ident = _ident(self_concept="HEAD " + "x" * (limit - 10))
+    ident.apply_amendment("newest amendment")
+    assert ident.self_concept.startswith("...")
+    assert ident.self_concept.endswith("newest amendment")
+    assert "HEAD" not in ident.self_concept
+    assert len(ident.self_concept) == limit + len("...")
+
+
+def test_apply_amendment_jaccard_threshold_is_inclusive() -> None:
+    """A token overlap exactly at _DEDUP_JACCARD_THRESHOLD (4 of 5 tokens =
+    0.8) counts as a near-duplicate; one below it (4 of 6) is appended."""
+    assert IdentityDocument._DEDUP_JACCARD_THRESHOLD == 0.8
+    ident = _ident()
+    ident.apply_amendment("alpha beta gamma delta")
+    ident.apply_amendment("alpha beta gamma delta epsilon")
+    assert ident.amendments == ["alpha beta gamma delta"]
+    ident.apply_amendment("alpha beta gamma delta epsilon zeta")
+    assert ident.amendments == [
+        "alpha beta gamma delta",
+        "alpha beta gamma delta epsilon zeta",
+    ]
+
+
+def test_apply_amendment_near_duplicate_check_only_looks_back_dedup_window() -> None:
+    """The token-overlap check covers only the last _DEDUP_LOOKBACK
+    amendments, so a near-duplicate of an older one is appended."""
+    lookback = IdentityDocument._DEDUP_LOOKBACK
+    ident = _ident()
+    ident.apply_amendment("alpha beta gamma delta")
+    fillers = ["river", "stone", "lantern", "harbor", "meadow", "orchard", "comet"]
+    for word in fillers[:lookback]:
+        ident.apply_amendment(word)
+    assert len(ident.amendments) == lookback + 1
+    ident.apply_amendment("alpha beta gamma delta epsilon")
+    assert ident.amendments[-1] == "alpha beta gamma delta epsilon"
+
+
+def test_attention_schema_history_keeps_the_most_recent_prior_foci_in_order() -> None:
+    """history records each *previous* focus, oldest first, and the cap
+    drops the oldest entries."""
+    schema = AttentionSchema()
+    total = AttentionSchema._MAX_HISTORY + 3
+    for i in range(total):
+        schema.update(f"focus{i}", "")
+    # Prior foci were: introspection, focus0 .. focus{total-2}.
+    priors = ["introspection"] + [f"focus{i}" for i in range(total - 1)]
+    assert schema.history == priors[-AttentionSchema._MAX_HISTORY:]
+    assert schema.focus == f"focus{total - 1}"
