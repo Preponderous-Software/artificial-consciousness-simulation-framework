@@ -355,7 +355,7 @@ Every instance runs against this shipped default unless it has been customized. 
 
 Usage reporting is on by default: the framework sends its name (`artificial-consciousness-simulation-framework`) and its version from `pyproject.toml` to [trace](https://danielstephenson.dev/usage-reporting) at `https://trace.danielstephenson.dev`, as a `startup` event when `scripts/spawn.py`, `scripts/resume.py` or `scripts/web.py` starts (tagged `command` = `spawn` / `resume` / `web`; the dashboard's is also tagged `service=true`) and an `experiment-started` event when `scripts/experiment.py run` begins a manifest. Every event also carries a random installation ID (tag `install`) so installations can be counted rather than events; beyond that, nothing about you, your machine, your IP address, instance names, configuration, providers, models, thoughts, journals or any other content is sent. The report is made from a background thread, never blocks the run, and is dropped silently if the service is unreachable. A `spawn.py --bg` launch is counted once, by the background process.
 
-The first launch writes a `settings.json` in the persistence root (`~/.consciousness/`, or `$CONSCIOUSNESS_HOME`) and prints a one-line notice.
+The first launch writes a `settings.json` in the persistence root (`~/.consciousness/`, or `$CONSCIOUSNESS_HOME`) and prints a one-line notice. If `TRACE_USAGE_REPORTING` or `DO_NOT_TRACK` already turns reporting off on that first launch, the block is written with `"enabled": false`, so reporting stays off on later launches without the variable.
 
 The installation ID is a random UUID the client keeps in `trace-install-id` in the same persistence root, created the first time reporting runs. It identifies no person, account or address; delete the file to get a new one. Setting the environment variable `TRACE_INSTALL_ID` sends that value instead (useful to pin one for a container or service) and leaves the file alone. The file is only created while reporting is on, so every opt-out below also stops it.
 
@@ -371,10 +371,10 @@ To turn reporting off, any one of these is enough:
   }
   ```
 
-- the environment variable `TRACE_USAGE_REPORTING=off` (also `false`, `0`, `no`), which turns off every program that reports to trace
-- the environment variable `DO_NOT_TRACK=1` (see [consoledonottrack.com](https://consoledonottrack.com))
+- the environment variable `TRACE_USAGE_REPORTING=off` (any value other than blank, `true`, `on`, `yes` or `1` counts), which turns off every program that reports to trace
+- the environment variable `DO_NOT_TRACK=1` (any value other than blank, `0`, `false`, `off` or `no` counts; see [consoledonottrack.com](https://consoledonottrack.com))
 
-The environment variables win over `settings.json`. The `endpoint` and `key` entries in the same block select where reports go and the key they are sent with. The client is `interfaces/trace_client.py`, vendored from [trace-client-python](https://github.com/Stephenson-Software/trace-client-python); the settings handling is in `interfaces/usage_reporting.py`. The test suite (`tests/conftest.py`) and both CI workflows run with `TRACE_USAGE_REPORTING=off`.
+Every switch fails closed: `enabled` reports only when it is `true` (or the string `"true"`, `"on"`, `"yes"` or `"1"`), so `"false"`, `"off"`, `0`, `null` or a typo keep reporting off, and a `usage_reporting` entry that is not an object (such as `"usage_reporting": false`) is read as the switch itself and never overwritten. A `settings.json` that cannot be read turns reporting off and is left alone. The environment variables win over `settings.json`. The `endpoint` and `key` entries in the same block select where reports go and the key they are sent with. The client is `interfaces/trace_client.py`, vendored from [trace-client-python](https://github.com/Stephenson-Software/trace-client-python); the settings handling is in `interfaces/usage_reporting.py`. The test suite (`tests/conftest.py`) and both CI workflows run with `TRACE_USAGE_REPORTING=off`.
 
 Details: https://danielstephenson.dev/usage-reporting
 

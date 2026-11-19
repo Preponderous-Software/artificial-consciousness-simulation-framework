@@ -49,3 +49,10 @@ exclude = ["\\.venv/", "tests/"]
 [[tool.mypy.overrides]]
 module = "yaml.*"
 ignore_missing_imports = true
+
+# interfaces/trace_client.py is vendored unmodified from trace-client-python
+# (0.5.0), which is not written for mypy --strict; the two codes it trips are
+# relaxed for that module alone rather than editing the vendored file.
+[[tool.mypy.overrides]]
+module = "interfaces.trace_client"
+disable_error_code = ["no-untyped-def", "comparison-overlap"]

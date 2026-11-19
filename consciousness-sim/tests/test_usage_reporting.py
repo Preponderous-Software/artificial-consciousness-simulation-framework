@@ -139,6 +139,47 @@ def test_first_run_under_an_environment_opt_out_says_reporting_is_off(
     logged: list[str] = []
     load_settings(log=logged.append)
     assert logged == [FIRST_RUN_NOTICE_OFF_BY_ENVIRONMENT]
+    written = json.loads((home / "settings.json").read_text(encoding="utf-8"))
+    assert written["usage_reporting"]["enabled"] is False, "the first launch records the opt-out"
+
+
+def test_first_run_under_an_environment_opt_out_stays_off_without_the_variable(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRACE_USAGE_REPORTING", "off")
+    load_settings(log=lambda message: None)
+    monkeypatch.delenv("TRACE_USAGE_REPORTING")
+    client = build_client(load_settings(log=lambda message: None))
+    assert not client.enabled
+    assert client.disabled_reason == "config"
+
+
+@pytest.mark.parametrize("value", ["false", "False", "off", "no", "0", 0, 1, None, "", "flase"])
+def test_enabled_that_does_not_clearly_mean_on_reports_nothing(home: Path, value: Any) -> None:
+    # bool("false") and bool("off") are True, which used to report
+    client = build_client({"enabled": value, "key": "k"})
+    assert not client.enabled
+    assert client.disabled_reason == "config"
+
+
+@pytest.mark.parametrize("value", ["true", "on", "yes", "1", " TRUE "])
+def test_enabled_on_strings_report(home: Path, value: str) -> None:
+    client = build_client({"enabled": value, "key": "k"})
+    assert client.enabled
+    client.close()  # nothing was reported, so nothing is sent
+
+
+@pytest.mark.parametrize("value", [False, "off", "false", 0, None, []])
+def test_a_block_that_is_not_an_object_is_read_as_the_switch_and_not_rewritten(home: Path, value: Any) -> None:
+    # "usage_reporting": false used to be overwritten with the default block (on)
+    settings = {"usage_reporting": value, "other": 1}
+    (home / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+    logged: list[str] = []
+    client = build_client(load_settings(log=logged.append))
+    assert not client.enabled
+    assert client.disabled_reason == "config"
+    assert logged == []
+    assert json.loads((home / "settings.json").read_text(encoding="utf-8")) == settings
 
 
 def test_existing_settings_are_preserved_when_the_block_is_added(home: Path) -> None:
