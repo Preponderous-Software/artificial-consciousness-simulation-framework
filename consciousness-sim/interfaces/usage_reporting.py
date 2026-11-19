@@ -19,7 +19,10 @@ block to ``settings.json`` in the persistence root (``~/.consciousness/`` or
 turn it off; setting ``enabled`` to ``false`` there does. So do the
 ``TRACE_USAGE_REPORTING=off`` and ``DO_NOT_TRACK=1`` environment variables,
 which every trace client honours and which win over the settings file because
-the vendored client checks them first. Every call returns immediately and
+the vendored client checks them first. Every switch fails closed: only
+``true`` (or an "on" string) reports, ``"usage_reporting": false`` is read as
+the switch and never overwritten, and a first launch under an environment
+opt-out writes ``"enabled": false`` so the opt-out outlives the variable. Every call returns immediately and
 never raises: the network happens on a daemon thread owned by the client in
 ``interfaces/trace_client.py``.
 Details: https://danielstephenson.dev/usage-reporting
@@ -35,7 +38,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any, Callable
 
-from interfaces.trace_client import TraceClient, environment_opts_out
+from interfaces.trace_client import TraceClient, allows_reporting, environment_opts_out
 from persistence.paths import consciousness_root
 
 APPLICATION = "artificial-consciousness-simulation-framework"
@@ -66,9 +69,12 @@ FIRST_RUN_NOTICE = (
 )
 
 # Shown on the first launch instead when TRACE_USAGE_REPORTING=off or
-# DO_NOT_TRACK=1 is already set: the block is still written, but saying
-# reporting is on would mislead.
-FIRST_RUN_NOTICE_OFF_BY_ENVIRONMENT = "Usage reporting is off (environment). Details: " + DETAILS_URL
+# DO_NOT_TRACK=1 is already set: the block is written with "enabled": false,
+# so a later launch without the variable does not report either.
+FIRST_RUN_NOTICE_OFF_BY_ENVIRONMENT = (
+    'Usage reporting is off (environment), and "usage_reporting": {"enabled": false} was '
+    "written to settings.json so it stays off. Details: " + DETAILS_URL
+)
 
 
 def settings_file() -> Path:
@@ -107,9 +113,9 @@ def first_run_notice() -> str:
     return FIRST_RUN_NOTICE
 
 
-def default_settings() -> dict[str, Any]:
+def default_settings(enabled: bool = True) -> dict[str, Any]:
     """The usage_reporting block written to the settings file on the first launch."""
-    return {"enabled": True, "endpoint": DEFAULT_ENDPOINT, "key": DEFAULT_KEY}
+    return {"enabled": enabled, "endpoint": DEFAULT_ENDPOINT, "key": DEFAULT_KEY}
 
 
 def load_settings(path: Path | None = None, log: Callable[[str], None] = print) -> dict[str, Any] | None:
@@ -134,8 +140,15 @@ def load_settings(path: Path | None = None, log: Callable[[str], None] = print) 
     section = settings.get(SETTINGS_SECTION)
     if isinstance(section, dict):
         return section
+    if SETTINGS_SECTION in settings:
+        # "usage_reporting": false (or "off", or anything else that is not a
+        # block) is the switch itself: read it as such, and never write the
+        # default block (on) over it.
+        return {"enabled": section}
 
-    block = default_settings()
+    # Under an environment opt-out the first launch records "off", so a later
+    # launch without the variable does not quietly report.
+    block = default_settings(enabled=not environment_opts_out())
     settings[SETTINGS_SECTION] = block
     log(first_run_notice())
     try:
@@ -165,7 +178,9 @@ def build_client(section: dict[str, Any] | None) -> TraceClient:
             APPLICATION,
             read_version() or UNKNOWN_VERSION,
             key=str(section.get("key") or DEFAULT_KEY),
-            enabled=bool(section.get("enabled", True)),
+            # Not bool(): bool("false") is True. Only true or an "on" string
+            # reports; "false", "off", 0, null or a typo do not.
+            enabled=allows_reporting(section.get("enabled", True)),
             # Resolved by the client only after its opt-out checks: a disabled
             # client never creates the file.
             install_id=os.environ.get("TRACE_INSTALL_ID"),
