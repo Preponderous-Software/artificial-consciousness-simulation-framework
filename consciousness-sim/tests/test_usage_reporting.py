@@ -30,6 +30,7 @@ from interfaces.usage_reporting import (  # noqa: E402
     DETAILS_URL,
     FIRST_RUN_NOTICE,
     FIRST_RUN_NOTICE_OFF_BY_ENVIRONMENT,
+    FIRST_RUN_NOTICE_OFF_BY_SETTINGS,
     build_client,
     install_id_file,
     load_settings,
@@ -180,6 +181,53 @@ def test_a_block_that_is_not_an_object_is_read_as_the_switch_and_not_rewritten(h
     assert client.disabled_reason == "config"
     assert logged == []
     assert json.loads((home / "settings.json").read_text(encoding="utf-8")) == settings
+
+
+@pytest.mark.parametrize("settings", [
+    {"usage-reporting": {"enabled": False}},
+    {"usageReporting": {"enabled": "off"}},
+    {"UsageReporting": {"enabled": "false"}},
+    {"usage-reporting": "off"},
+    {"usage_reporting": {"enable": False}},
+    {"usage_reporting": {"Enabled": "no"}},
+    {"usage_reporting": {"disabled": True}},
+    {"usage_reporting": {"enabled": True, "disabled": "yes"}},
+    {"usage_reporting": True, "usageReporting": False},
+])
+def test_an_opt_out_written_under_a_near_miss_name_is_an_opt_out(home: Path, settings: dict[str, Any]) -> None:
+    # these used to be ignored, so the default block (on) was written next to them
+    (home / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+    logged: list[str] = []
+    client = build_client(load_settings(log=logged.append))
+    assert not client.enabled
+    assert client.disabled_reason == "config"
+    assert FIRST_RUN_NOTICE not in logged
+
+
+@pytest.mark.parametrize("settings", [
+    {"usage-reporting": {"enabled": True}},
+    {"usageReporting": "on"},
+    {"usage_reporting": {"enabled": True, "enable": "yes"}},
+    {"usage_reporting": {"enabled": True, "disabled": False}},
+    {"usage_reporting": {"enabled": True, "disabled": "no"}},
+])
+def test_near_miss_names_that_say_on_are_not_an_opt_out(home: Path, settings: dict[str, Any]) -> None:
+    (home / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+    client = build_client(load_settings(log=lambda message: None))
+    assert client.enabled
+    client.close()  # nothing was reported, so nothing is sent
+
+
+def test_a_first_launch_over_a_near_miss_opt_out_writes_the_real_switch_off(home: Path) -> None:
+    (home / "settings.json").write_text(json.dumps({"usage-reporting": {"enabled": False}}), encoding="utf-8")
+    logged: list[str] = []
+    load_settings(log=logged.append)
+    client = build_client(load_settings(log=logged.append))
+    assert not client.enabled
+    written = json.loads((home / "settings.json").read_text(encoding="utf-8"))
+    assert written["usage_reporting"]["enabled"] is False
+    assert written["usage-reporting"] == {"enabled": False}, "the operator's block is kept"
+    assert logged == [FIRST_RUN_NOTICE_OFF_BY_SETTINGS]
 
 
 def test_existing_settings_are_preserved_when_the_block_is_added(home: Path) -> None:

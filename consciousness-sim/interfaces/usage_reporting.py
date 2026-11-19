@@ -22,7 +22,11 @@ which every trace client honours and which win over the settings file because
 the vendored client checks them first. Every switch fails closed: only
 ``true`` (or an "on" string) reports, ``"usage_reporting": false`` is read as
 the switch and never overwritten, and a first launch under an environment
-opt-out writes ``"enabled": false`` so the opt-out outlives the variable. Every call returns immediately and
+opt-out writes ``"enabled": false`` so the opt-out outlives the variable. An
+opt-out written under another spelling (``usage-reporting``, ``usageReporting``,
+an ``enable``/``Enabled`` switch, ``"disabled": true``) also counts as off, and
+the first launch then writes ``"enabled": false`` next to it (see
+:func:`has_near_miss_opt_out`). Every call returns immediately and
 never raises: the network happens on a daemon thread owned by the client in
 ``interfaces/trace_client.py``.
 Details: https://danielstephenson.dev/usage-reporting
@@ -33,6 +37,7 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import re
 import tomllib
 from importlib import metadata
 from pathlib import Path
@@ -106,11 +111,61 @@ def read_version(pyproject: Path = _PYPROJECT) -> str | None:
         return None
 
 
-def first_run_notice() -> str:
-    """FIRST_RUN_NOTICE, unless the environment has already opted out."""
+# Shown on the first launch instead when settings.json already turns reporting
+# off under another spelling (see has_near_miss_opt_out): the real block is
+# written with "enabled": false next to it.
+FIRST_RUN_NOTICE_OFF_BY_SETTINGS = (
+    'Usage reporting is off (settings.json), and "usage_reporting": {"enabled": false} was '
+    "written to settings.json so it stays off. Details: " + DETAILS_URL
+)
+
+
+def first_run_notice(near_miss_opt_out: bool = False) -> str:
+    """FIRST_RUN_NOTICE, unless the environment or a near-miss opt-out in the
+    settings file has already turned reporting off."""
     if environment_opts_out():
         return FIRST_RUN_NOTICE_OFF_BY_ENVIRONMENT
+    if near_miss_opt_out:
+        return FIRST_RUN_NOTICE_OFF_BY_SETTINGS
     return FIRST_RUN_NOTICE
+
+
+def _normalise_key(key: object) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(key).lower())
+
+
+def has_near_miss_opt_out(settings: dict[str, Any], settings_key: str = SETTINGS_SECTION,
+                          switch_key: str = "enabled") -> bool:
+    """Whether ``settings`` holds an attempt to turn usage reporting off that is
+    not written exactly as ``usage_reporting`` -> ``enabled``. Such a setting
+    would not be recognised, the default block (``enabled: true``) would be
+    written next to it, and reporting would stay on. Whoever wrote any of these
+    did not ask for reporting, so each counts as off:
+
+    - a top-level key that spells "usage reporting" another way
+      (``usage-reporting``, ``usageReporting``, ``UsageReporting``, ...) holding
+      a value, or an ``enabled``-like key, that is not clearly on;
+    - ``"usage_reporting": "off"`` -- a value instead of a block;
+    - inside any such block, a key that spells "enabled" another way
+      (``enable``, ``Enabled``, ...) that is not clearly on, or one that spells
+      "disabled" whose value is on.
+    """
+    for key, value in settings.items():
+        if "usagereport" not in _normalise_key(key):
+            continue
+        if not isinstance(value, dict):
+            if not allows_reporting(value):
+                return True
+            continue
+        for child, child_value in value.items():
+            if key == settings_key and child == switch_key:
+                continue  # the switch itself, read by the caller
+            name = _normalise_key(child)
+            if "disabl" in name and allows_reporting(child_value):
+                return True
+            if "enabl" in name and not allows_reporting(child_value):
+                return True
+    return False
 
 
 def default_settings(enabled: bool = True) -> dict[str, Any]:
@@ -137,20 +192,23 @@ def load_settings(path: Path | None = None, log: Callable[[str], None] = print) 
             log(f"Could not read {target} ({e}); usage reporting is off until it is fixed.")
             return None
 
+    # An opt-out written under another spelling (usage-reporting, an "enable"
+    # switch, "disabled": true, ...) is an opt-out.
+    near_miss_opt_out = has_near_miss_opt_out(settings)
     section = settings.get(SETTINGS_SECTION)
     if isinstance(section, dict):
-        return section
+        return dict(section, enabled=False) if near_miss_opt_out else section
     if SETTINGS_SECTION in settings:
         # "usage_reporting": false (or "off", or anything else that is not a
         # block) is the switch itself: read it as such, and never write the
         # default block (on) over it.
-        return {"enabled": section}
+        return {"enabled": False if near_miss_opt_out else section}
 
-    # Under an environment opt-out the first launch records "off", so a later
-    # launch without the variable does not quietly report.
-    block = default_settings(enabled=not environment_opts_out())
+    # Under an environment or near-miss opt-out the first launch records
+    # "off", so a later launch does not quietly report.
+    block = default_settings(enabled=not (environment_opts_out() or near_miss_opt_out))
     settings[SETTINGS_SECTION] = block
-    log(first_run_notice())
+    log(first_run_notice(near_miss_opt_out))
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
